@@ -1,0 +1,27 @@
+{
+  "name": "Product on Retail Shelf",
+  "description": "Place a branded product on a realistic retail shelf (e.g. GNC, supplement store, supermarket). Optimized for Nano Banana 2 image-to-image.",
+  "model": "gemini-3.1-flash-image-preview",
+  "resolution": "2K",
+  "format": "product-on-shelf",
+  "input_image_required": true,
+  "prompt_template": "Place this exact {product_name} on a clean {shelf_material} retail shelf in a {store_type}. The {product_type} sits firmly with its base touching the shelf surface. Add a soft natural contact shadow directly beneath it. {lighting} lighting. {camera_angle} camera angle. {dof}. Surrounding products visible but blurred in background. Professional product photography.",
+  "placeholders": {
+    "product_name": "G FUEL Berry Bomb tub",
+    "product_type": "tub",
+    "shelf_material": "wooden",
+    "store_type": "GNC supplement store",
+    "lighting": "Warm overhead fluorescent",
+    "camera_angle": "Eye-level",
+    "dof": "Shallow depth of field"
+  },
+  "example_prompt": "Place this exact G FUEL Berry Bomb tub on a clean wooden retail shelf in a GNC store. The tub sits firmly with its base touching the shelf surface. Add a soft natural contact shadow directly beneath it. Warm overhead fluorescent lighting. Eye-level camera angle. Shallow depth of field. Surrounding supplement products visible but blurred in background. Professional product photography.",
+  "tips": [
+    "Always mention 'base touching shelf' to prevent floating products",
+    "Add 'contact shadow' for grounding",
+    "Specify camera angle (eye-level, 15° above, etc.)",
+    "Mention depth of field to keep product sharp and background soft",
+    "Use 2K resolution for detail; 4K if you need print quality",
+    "If label text gets garbled, switch to Pro model or use Photoshop composite"
+  ]
+}

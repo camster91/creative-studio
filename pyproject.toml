@@ -1,0 +1,9 @@
+[project]
+name = "creative-studio"
+version = "4.2.0"
+description = "Iterative AI image generation workflow for Pi"
+requires-python = ">=3.10"
+dependencies = [
+    "google-genai>=1.70",
+    "Pillow>=10.0",
+]

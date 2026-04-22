@@ -1,0 +1,25 @@
+{
+  "name": "Social Media Hero Banner",
+  "description": "Wide 16:9 hero image for website banners, landing pages, or social covers. Can be text-to-image or image-to-image with product.",
+  "model": "gemini-3.1-flash-image-preview",
+  "resolution": "2K",
+  "format": "social-media-hero",
+  "input_image_required": false,
+  "prompt_template": "{style} hero banner, {subject}, {background}, {mood} color palette. Clean negative space on the {negative_space_side} for text overlay. {lighting} lighting. Professional advertising photography. Aspect ratio 16:9.",
+  "placeholders": {
+    "style": "Modern lifestyle",
+    "subject": "person drinking from a shaker bottle at gym",
+    "background": "soft gradient studio backdrop",
+    "mood": "energetic blue and orange",
+    "negative_space_side": "left",
+    "lighting": "Dramatic side-light"
+  },
+  "example_prompt": "Modern lifestyle hero banner, person drinking from a shaker bottle at gym, soft gradient studio backdrop, energetic blue and orange color palette. Clean negative space on the left for text overlay. Dramatic side-light lighting. Professional advertising photography. Aspect ratio 16:9.",
+  "tips": [
+    "Request negative space explicitly — AI often fills the frame",
+    "Specify which side needs to stay empty for UI text/buttons",
+    "Use 'professional advertising photography' for sharper composition",
+    "2K is usually enough for web; 4K for retina displays",
+    "If using a product, do image-to-image and place the product in the negative space"
+  ]
+}
