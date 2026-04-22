@@ -58,9 +58,10 @@ _TIER_MAP = {
 }
 
 _DEFAULT_NEGATIVES = (
-    "blurry, out of focus, distorted, deformed, mutated, cropped, "
-    "low quality, watermark, signature, text error, gibberish text, "
-    "extra limbs, floating objects, unrealistic physics"
+    "blurry, out of focus, distorted, deformed, ugly, disfigured, mutated, cropped, "
+    "low quality, watermark, signature, text error, gibberish text, extra text, "
+    "extra limbs, floating objects, unrealistic physics, plastic look, doll-like, "
+    "oversaturated, overexposed, underexposed, chromatic aberration"
 )
 
 # Output directory — prefer Windows Downloads when in WSL
@@ -134,6 +135,23 @@ def _ensure_png(fname: str) -> str:
     if not fname.lower().endswith(".png"):
         return f"{fname}.png"
     return fname
+
+def crop_to_aspect_ratio(img, target_ratio: str):
+    """PIL center-crop image to target aspect ratio."""
+    from fractions import Fraction
+    w, h = img.size
+    r = Fraction(target_ratio.replace(":", "/"))
+    target_wh = float(r)
+    current_wh = w / h
+    if target_wh > current_wh:
+        new_h = int(w / target_wh)
+        top = (h - new_h) // 2
+        img = img.crop((0, top, w, top + new_h))
+    elif target_wh < current_wh:
+        new_w = int(h * target_wh)
+        left = (w - new_w) // 2
+        img = img.crop((left, 0, left + new_w, h))
+    return img
 
 
 
@@ -307,21 +325,24 @@ def smart_enhance_prompt(brief: str, has_reference_image: bool = False,
     enhancer_model = REASONING_MODEL if tier in ("quality", "ultra") else NANO_MODEL
 
     system_prompt = (
-        "You are a senior creative director and prompt engineer for AI image generation. "
-        "Your job is to turn a user's brief into a highly effective image generation prompt.\n\n"
+        "You are a senior CPG/DTC product photographer and prompt engineer. "
+        "Turn the user's brief into a professional image generation prompt using this exact structure:\n\n"
+        "[Subject] + [Environment/Setting] + [Style/Medium] + [Lighting] + [Composition/Camera] + [Mood/Atmosphere]\n\n"
         "RULES:\n"
-        "1. Add precise photographic direction: camera type, lens, angle, lighting setup, depth of field.\n"
-        "2. Add material/texture details for physical objects.\n"
-        "3. Describe the environment with exact mood words.\n"
-        "4. Specify color temperature (warm 3200K, neutral 5600K, cool 7500K).\n"
-        "5. CRITICAL: If products on shelves are shown, the shelf must be perfectly FLAT and LEVEL. Products must sit firmly with their flat base touching the shelf surface. No tilting, no floating, no falling.\n"
-        "6. Include a NEGATIVE prompt list for what to avoid.\n"
-        "7. Keep the user's core subject EXACTLY as they described — do NOT change the brand, product, or concept.\n"
-        "8. Output ONLY a JSON object with keys: prompt, negative_prompt, aspect_ratio, lighting_setup, camera_angle, notes.\n\n"
+        "1. Subject: Use the user's exact product name/brand. Do NOT change or rename it.\n"
+        "2. Environment: Describe precisely. 'Clean light wooden retail shelf' not 'nice background'.\n"
+        "3. Style: Use 'professional product photography', 'commercial editorial shot', or 'lifestyle product photography'.\n"
+        "4. Lighting: Name specific setups: 'softbox three-point studio lighting', 'warm golden hour backlight', 'overhead track lighting with soft shadows', 'Rembrandt side-lighting'.\n"
+        "5. Camera: Reference real equipment: 'Shot on Fujifilm X-T5 35mm f/1.4', 'Hasselblad H6D medium format', 'Canon EF 85mm f/1.4'.\n"
+        "6. Composition: 'eye-level angle', 'shallow depth of field', 'macro close-up', 'rule of thirds'.\n"
+        "7. Mood: Use precise atmosphere words: 'clean and minimalist', 'warm and inviting', 'premium and luxurious'.\n"
+        "8. CRITICAL shelf physics: Shelf must be perfectly FLAT and LEVEL. Products sit firmly with flat base touching shelf. No tilting, no floating, no falling. Add 'soft contact shadow beneath' to ground the product.\n"
+        "9. NEVER use: 'photorealistic' (causes plastic look), '8K'/'4K' (doesn't increase quality, adds noise), stacked superlatives like 'beautiful stunning gorgeous'.\n"
+        "10. Output ONLY JSON: {prompt, negative_prompt, aspect_ratio, lighting_setup, camera_angle, notes}.\n\n"
         f"User brief: {brief}\n"
         f"Reference image provided: {'yes' if has_reference_image else 'no'}. "
-        f"Use the reference image to preserve its subject exactly, but place it in the described scene.\n"
-        f"Target quality tier: {tier} ({model}, {resolution}).\n"
+        f"Preserve the reference subject exactly, place in described scene.\n"
+        f"Target tier: {tier} ({model}, {resolution}).\n"
         f"{design_notes}"
     )
 
@@ -445,6 +466,185 @@ def generate_imagen(prompt: str, output_path: Path, aspect_ratio: str = "1:1") -
     except Exception as e:
         print(f"  Imagen generation failed: {e}", file=sys.stderr)
     return None
+
+
+# ─── Composite Pipeline (Real Product + AI Environment) ─────────────────
+
+def remove_background_pil(input_path: str) -> str:
+    """Remove background from product photo using PIL edge detection."""
+    from PIL import Image, ImageFilter
+    img = Image.open(input_path).convert("RGBA")
+    gray = img.convert("L")
+    # Build mask: pure white bg gets removed, everything else kept
+    mask = gray.point(lambda x: 0 if x > 245 else 255, mode="L")
+    # Feather edges slightly to avoid hard white halos
+    mask = mask.filter(ImageFilter.GaussianBlur(2))
+    # Blend original alpha with computed mask
+    r, g, b, a = img.split()
+    # Only reduce alpha where mask is dark (near-white background was cut)
+    combined = ImageChops.multiply(a, mask)
+    img.putalpha(combined)
+    out = f"/tmp/cs_composite_fg_{hashlib.md5(input_path.encode()).hexdigest()[:8]}.png"
+    img.save(out)
+    print(f"  🧊 Background removed: {out}")
+    return out
+
+
+def _add_drop_shadow(bg, fg, pos_tuple, blur=8, alpha=80):
+    """Add a soft drop shadow beneath the pasted product."""
+    from PIL import ImageFilter, Image
+    shadow = fg.copy()
+    r, g, b, a = shadow.split()
+    shadow = Image.merge("RGBA", (Image.new("L", fg.size, 0), Image.new("L", fg.size, 0),
+                                  Image.new("L", fg.size, 0), a.point(lambda x: alpha if x > 50 else 0)))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(blur))
+    x, y = pos_tuple
+    bg.paste(shadow, (x + 4, y + 4), shadow)
+    return bg
+
+
+def cmd_composite(args):
+    """Generate AI environment WITHOUT product, then composite real product on top."""
+    from PIL import Image
+    product_path = _stage_input(args.product)
+    if not product_path:
+        print("ERROR: --product required", file=sys.stderr)
+        sys.exit(1)
+    print("\n── COMPOSITE MODE")
+    print("  Step 1: Remove background from product...")
+    fg_path = remove_background_pil(product_path)
+    fg = Image.open(fg_path)
+    fg_w, fg_h = fg.size
+    print("  Step 2: Generate clean environment...")
+    env_file = _OUT / datetime.now().strftime("%Y-%m-%d") / "composite" / f"env-{now_str()}.png"
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_prompt = (
+        f"{args.prompt}\n\n"
+        "IMPORTANT: The scene must contain NO products, NO bottles, NO containers, NO labels. "
+        "Only empty shelf surfaces and environmental elements."
+    )
+    result_env = generate_nano(env_prompt, env_file, input_image_path=None,
+                                 model_name=NANO_PRO, resolution="2K",
+                                 aspect_ratio=args.aspect_ratio)
+    if not result_env:
+        print("  ✗ Environment generation failed.", file=sys.stderr)
+        sys.exit(1)
+    print("  Step 3: Compositing product onto environment...")
+    bg = Image.open(env_file).convert("RGBA")
+    target_w = int(bg.size[0] * 0.22)
+    scale = target_w / fg_w
+    target_h = int(fg_h * scale)
+    fg = fg.resize((target_w, target_h), Image.LANCZOS)
+    x = int(bg.size[0] * 0.38)
+    y = int(bg.size[1] * 0.72)
+    bg = _add_drop_shadow(bg, fg, (x, y), blur=14, alpha=60)
+    bg.paste(fg, (x, y), fg)
+    outdir = ensure_dir(_OUT / datetime.now().strftime("%Y-%m-%d") / "composite")
+    fname = _ensure_png(args.filename or f"{now_str()}-composite-{hashlib.md5(args.prompt[:30].encode()).hexdigest()[:5]}.png")
+    outpath = outdir / fname
+    bg.convert("RGB").save(str(outpath), "PNG", quality=95)
+    print(f"\n✓ {outpath}")
+
+
+# ─── Export Pipeline (Multi-format crops) ─────────────────────────────
+
+def cmd_export(args):
+    """Crop a source image to multiple platform-specific formats."""
+    from PIL import Image
+    src = Path(args.input)
+    if not src.exists():
+        print(f"File not found: {src}", file=sys.stderr)
+        sys.exit(1)
+    presets = {
+        "amazon": {"ratio": "1:1", "w": 2000, "h": 2000, "bg": "white"},
+        "shopify": {"ratio": "1:1", "w": 2048, "h": 2048, "bg": "white"},
+        "meta-feed": {"ratio": "4:5", "w": 1080, "h": 1350, "bg": "transparent"},
+        "meta-stories": {"ratio": "9:16", "w": 1080, "h": 1920, "bg": "transparent"},
+        "web-hero": {"ratio": "16:9", "w": 1920, "h": 1080, "bg": "transparent"},
+        "pinterest": {"ratio": "2:3", "w": 1000, "h": 1500, "bg": "transparent"},
+        "print-dpi": {"ratio": "3:2", "dpi": 300, "bg": "white"},
+    }
+    selected = args.presets.split(",") if args.presets else list(presets.keys())
+    outdir = ensure_dir(_OUT / datetime.now().strftime("%Y-%m-%d") / "exports")
+    img = Image.open(str(src)).convert("RGBA")
+    print(f"\n── EXPORT")
+    print(f"  Source: {src.name} ({img.size[0]}x{img.size[1]})")
+    print(f"  Presets: {', '.join(selected)}\n")
+    for key in selected:
+        if key not in presets:
+            print(f"  ⚠ Unknown preset: {key}", file=sys.stderr)
+            continue
+        p = presets[key]
+        cropped = crop_to_aspect_ratio(img.copy(), p["ratio"])
+        if "w" in p and "h" in p:
+            cropped = cropped.resize((p["w"], p["h"]), Image.LANCZOS)
+        if p.get("bg") == "white":
+            base = Image.new("RGB", cropped.size, (255, 255, 255))
+            base.paste(cropped, mask=cropped.split()[3])
+            cropped = base
+        else:
+            cropped = cropped.convert("RGB")
+        dpi = p.get("dpi", 72)
+        fname = f"{src.stem}-{key}.png"
+        out = outdir / fname
+        cropped.save(str(out), "PNG", dpi=(dpi, dpi))
+        print(f"  ✓ {key}: {cropped.size[0]}x{cropped.size[1]} -> {fname}")
+    print(f"\n✓ All exports: {outdir}")
+
+
+# ─── Auto QC / Quality Gate ───────────────────────────────────────────
+
+def cmd_qc(args):
+    """Run vision-based quality checks on generated images."""
+    from PIL import Image
+    from google.genai import types
+    img_path = _stage_input(args.input)
+    if not img_path:
+        print("ERROR: --input required", file=sys.stderr)
+        sys.exit(1)
+    print(f"\n── QUALITY CHECK")
+    print(f"  File: {Path(img_path).name}")
+    img = Image.open(img_path)
+    w, h = img.size
+    print(f"  Dimensions: {w}x{h}")
+    score = 100
+    issues = []
+    if w < 1000 or h < 1000:
+        issues.append(f"Resolution too low ({w}x{h})")
+        score -= 20
+    if w / h > 2.5 or h / w > 2.5:
+        issues.append("Extreme aspect ratio")
+        score -= 10
+    print("  Running vision QC...")
+    client = get_genai_client()
+    vision_prompt = (
+        "You are a CPG/DTC product photography quality inspector. "
+        "Analyze this image and return ONLY JSON: "
+        "{\"floating_products\": bool, \"garbled_text\": bool, "
+        "\"detached_shadows\": bool, \"fake_products\": bool, \"readable_labels\": bool, "
+        "\"quality_score\": 1-10, \"issues\": [\"...\"]}"
+    )
+    try:
+        resp = client.models.generate_content(
+            model=NANO_MODEL, contents=[img, vision_prompt],
+            config=types.GenerateContentConfig(temperature=0.1),
+        )
+        raw = (resp.text or "{}").strip().replace("```json", "").replace("```", "").strip()
+        parsed = json.loads(raw)
+    except Exception as e:
+        parsed = {"error": str(e)}
+    print(f"\n{'='*50}")
+    print(f"  QC SCORE: {parsed.get('quality_score', 'N/A')}/10")
+    print(f"{'='*50}")
+    for key in ["floating_products", "garbled_text", "detached_shadows", "fake_products", "readable_labels"]:
+        val = parsed.get(key, "N/A")
+        status = "PASS" if val == False else ("FAIL" if val == True else "?")
+        print(f"  {status}: {key.replace('_', ' ').title()}")
+    for issue in parsed.get("issues", []):
+        print(f"  ⚠ {issue}")
+    if issues:
+        print(f"  ⚠ Basic: {', '.join(issues)}")
+    print(f"  Final: {max(0, score)}/100")
 
 
 # ─── Analyze ──────────────────────────────────────────────────────────
@@ -1128,6 +1328,23 @@ def main():
     p.add_argument("--changes", "-c", default="", help="What to change / refine")
     p.add_argument("--aspect-ratio", default="16:9", choices=["1:1", "16:9", "16:10", "4:3", "3:2", "2:3", "21:9", "4:5", "5:4", "9:16", "1:4", "4:1"])
 
+    # composite
+    p = sub.add_parser("composite", help="Generate AI background then composite real product on top. No hallucinated products.")
+    p.add_argument("--prompt", "-p", required=True, help="Scene description — must NOT include product, only environment")
+    p.add_argument("--product", "-i", required=True, help="Product photo (AI will NOT generate product, only environment)")
+    p.add_argument("--aspect-ratio", default="16:9", choices=["1:1", "16:9", "16:10", "4:3", "3:2", "2:3", "9:16", "4:5"])
+    p.add_argument("--filename", default=None, help="Custom output filename")
+    p.add_argument("--tier", default="quality", choices=["fast", "balanced", "quality", "ultra"])
+
+    # export
+    p = sub.add_parser("export", help="Crop source image into multiple platform-specific formats.")
+    p.add_argument("--input", required=True, help="Source image path")
+    p.add_argument("--presets", default=None, help="Comma-separated: amazon,shopify,meta-feed,meta-stories,web-hero,pinterest,print-dpi (default: all)")
+
+    # qc
+    p = sub.add_parser("qc", help="Run automatic quality checks on generated images.")
+    p.add_argument("--input", "-i", required=True, help="Image to inspect")
+
     args = parser.parse_args()
 
     if not API_KEY:
@@ -1152,6 +1369,12 @@ def main():
         cmd_variations(args)
     elif args.cmd == "refine":
         cmd_refine(args)
+    elif args.cmd == "composite":
+        cmd_composite(args)
+    elif args.cmd == "export":
+        cmd_export(args)
+    elif args.cmd == "qc":
+        cmd_qc(args)
 
 
 if __name__ == "__main__":
