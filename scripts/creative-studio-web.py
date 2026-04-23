@@ -28,7 +28,16 @@ API_KEY = os.environ.get("GEMINI_API_KEY")
 DATA_DIR = Path.home() / ".creative-studio-data"
 SESSIONS_DIR = DATA_DIR / "sessions"
 COST_DB = DATA_DIR / "costs.json"
-OUTPUT_DIR = Path.home() / "creative-studio-outputs"
+
+# Match CLI output directory logic exactly
+if os.environ.get("CREATIVE_OUTPUT_DIR"):
+    OUTPUT_DIR = Path(os.environ["CREATIVE_OUTPUT_DIR"])
+elif Path("/mnt/c/Users").exists():
+    _win_dl = Path("/mnt/c/Users/camst/Downloads/creative-studio-outputs")
+    _win_dl.mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR = _win_dl
+else:
+    OUTPUT_DIR = Path.home() / "creative-studio-outputs"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
