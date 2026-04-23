@@ -100,9 +100,13 @@ def image_url(path: str) -> str:
     if not path:
         return ""
     p = Path(path)
-    if p.exists():
-        return f"/image/{p.parent.name}/{p.name}"
-    return ""
+    try:
+        rel = p.relative_to(OUTPUT_DIR)
+        return f"/image/{rel}"
+    except (ValueError, NotImplementedError):
+        if p.exists():
+            return f"/image/{p.parent.name}/{p.name}"
+        return ""
 
 # ─── Image generation wrappers ────────────────────────────────────────
 
