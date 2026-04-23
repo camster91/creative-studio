@@ -262,351 +262,867 @@ app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32MB uploads
 
 # ── Frontend HTML ─────────────────────────────────────────────────────
 
-HTML_TEMPLATE = """
+HTML_TEMPLATE = '''
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Creative Studio — AI Image Generation</title>
+<title>Creative Studio v5 — AI Design Canvas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-:root { --bg:#0f172a; --surface:#1e293b; --border:#334155; --text:#e2e8f0; --muted:#94a3b8; --primary:#60a5fa; --accent:#f59e0b; --success:#34d399; --danger:#f87171; --font:system-ui,-apple-system,sans-serif; }
-html.light { --bg:#f8fafc; --surface:#fff; --border:#e2e8f0; --text:#0f172a; --muted:#64748b; }
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.5}
-.container{max-width:1400px;margin:0 auto;padding:1rem}
-header{display:flex;justify-content:space-between;align-items:center;padding:1rem 0;border-bottom:1px solid var(--border);margin-bottom:1.5rem}
-header h1{font-size:1.5rem;display:flex;align-items:center;gap:0.5rem}
-header h1 span{color:var(--accent)}
-.actions{display:flex;gap:0.75rem}
-.btn{padding:0.5rem 1rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:0.875rem;transition:all 0.15s}
-.btn:hover{border-color:var(--primary)}
-.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
-.btn.accent{background:var(--accent);border-color:var(--accent);color:#0f172a;font-weight:600}
-.btn.sm{padding:0.35rem 0.75rem;font-size:0.8125rem}
-.grid{display:grid;grid-template-columns:380px 1fr;gap:1.5rem}
-@media(max-width:900px){.grid{grid-template-columns:1fr}}
-.panel{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem}
-.panel h2{font-size:1rem;margin-bottom:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em}
-.form-group{margin-bottom:0.8rem}
-label{display:block;font-size:0.8125rem;color:var(--muted);margin-bottom:0.35rem}
-input,textarea,select{width:100%;padding:0.5rem;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.875rem}
-textarea{resize:vertical;min-height:80px;font-family:var(--font)}
-.tabs{display:flex;gap:0.25rem;margin-bottom:1rem;border-bottom:1px solid var(--border)}
-.tab{cursor:pointer;padding:0.5rem 1rem;border-bottom:2px solid transparent;color:var(--muted);font-size:0.875rem}
-.tab.active{color:var(--primary);border-bottom-color:var(--primary)}
-.tab-content{display:none}
-.tab-content.active{display:block}
-.dropzone{border:2px dashed var(--border);border-radius:8px;padding:2rem;text-align:center;cursor:pointer;transition:all 0.15s;margin-bottom:1rem}
-.dropzone:hover,.dropzone.dragover{border-color:var(--primary);background:rgba(96,165,250,0.05)}
-.dropzone img{max-width:100%;max-height:160px;border-radius:6px;margin-top:0.5rem}
-.preview-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:0.75rem;margin-top:0.75rem}
-.preview-item{position:relative;border:1px solid var(--border);border-radius:6px;overflow:hidden;cursor:pointer}
-.preview-item img{width:100%;height:auto;display:block}
-.preview-item.selected{outline:2px solid var(--primary);outline-offset:2px}
-.preview-item .badge{position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.75);color:#fff;font-size:0.7rem;padding:0.15rem 0.4rem;border-radius:4px}
-.preview-item .actions{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.8);opacity:0;transition:opacity 0.15s;padding:0.25rem;display:flex;gap:0.3rem}
-.preview-item:hover .actions{opacity:1}
-.status{font-size:0.8125rem;color:var(--muted);padding:0.5rem;border-radius:6px;background:rgba(0,0,0,0.2);display:none}
-.status.show{display:block}
-.status.error{color:var(--danger);background:rgba(248,113,113,0.1)}
-.status.success{color:var(--success);background:rgba(52,211,153,0.1)}
-.cost-bar{display:flex;gap:1rem;margin-top:1rem;font-size:0.8125rem;color:var(--muted)}
-.cost-bar strong{color:var(--accent)}
-.timeline{margin-top:1rem}
-.timeline-item{display:flex;gap:0.75rem;padding:0.6rem;border-bottom:1px solid var(--border);font-size:0.8125rem}
-.timeline-item:last-child{border-bottom:none}
-.timeline-item img{width:48px;height:48px;object-fit:cover;border-radius:4px}
-.timeline-item small{color:var(--muted)}
-.session-row{display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0;border-bottom:1px solid var(--border);cursor:pointer}
-.session-row:hover{color:var(--primary)}
-.export-list{display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.5rem}
-.export-label{font-size:0.75rem;padding:0.2rem 0.5rem;border-radius:4px;background:var(--bg);border:1px solid var(--border);color:var(--muted)}
-.export-label.checked{background:var(--primary);color:#fff;border-color:var(--primary)}
-.hidden{display:none!important}
-#dropzone-product img,#dropzone-ref img{max-height:120px}
-#canvas-area{position:relative;min-height:300px;background:#0a0f1a;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--muted)}
-#canvas-area img{max-width:90%;max-height:300px;border-radius:4px}
-.qc-grid{display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;font-size:0.8125rem;margin-top:0.5rem}
-.qc-pass{color:var(--success)}.qc-fail{color:var(--danger)}
+:root {
+  --bg: #0B0E14;
+  --bg-elevated: #121620;
+  --surface: rgba(18, 22, 32, 0.75);
+  --border: rgba(255,255,255,0.06);
+  --border-hover: rgba(255,255,255,0.12);
+  --text: #E8ECF1;
+  --text-muted: #64748B;
+  --primary: #FF7A59;
+  --primary-dim: rgba(255,122,89,0.15);
+  --accent: #FFD166;
+  --success: #06D6A0;
+  --danger: #EF476F;
+  --font: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius: 14px;
+  --radius-sm: 8px;
+  --shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+
+* { box-sizing:border-box; margin:0; padding:0 }
+html, body { height:100%; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  line-height: 1.5;
+}
+
+/* Animated background mesh */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 20% 40%, rgba(255,122,89,0.08) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 40% at 80% 60%, rgba(255,209,102,0.05) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+  animation: meshMove 20s ease-in-out infinite;
+}
+@keyframes meshMove {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+
+.app { display: grid; grid-template-rows: 52px 1fr; height: 100vh; position: relative; z-index: 1; }
+
+/* ── Header ────────────────────────────────────────── */
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+header .brand {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 700; font-size: 16px; letter-spacing: -0.3px;
+}
+header .brand .dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--primary); box-shadow: 0 0 12px var(--primary);
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(1.2); } }
+header .brand span { color: var(--text-muted); font-weight: 500; }
+
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 7px 14px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent; color: var(--text-muted);
+  font-family: var(--font); font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn:hover { border-color: var(--border-hover); color: var(--text); background: rgba(255,255,255,0.04); }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn.primary:hover { background: #ff6340; border-color: #ff6340; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(255,122,89,0.3); }
+.btn.accent { background: var(--accent); border-color: var(--accent); color: #0B0E14; font-weight: 600; }
+.btn.accent:hover { background: #ffc94d; transform: translateY(-1px); }
+.btn.sm { padding: 5px 10px; font-size: 12px; }
+.btn.ghost { border: none; background: transparent; }
+.btn.ghost:hover { background: rgba(255,255,255,0.06); }
+
+/* ── Main Grid ─────────────────────────────────────── */
+.main { display: grid; grid-template-columns: 340px 1fr 300px; overflow: hidden; }
+
+/* ── Panels ─────────────────────────────────────────── */
+.panel {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.panel:last-child { border-right: none; border-left: 1px solid var(--border); }
+
+.panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px 10px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.panel-body { flex: 1; overflow-y: auto; padding: 12px 16px 16px; }
+.panel-body::-webkit-scrollbar { width: 4px; }
+.panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+/* ── Nav Tabs ─────────────────────────────────────── */
+.nav-tabs {
+  display: flex; gap: 2px; padding: 4px;
+  background: rgba(255,255,255,0.03); border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+}
+.nav-tab {
+  flex: 1; text-align: center; padding: 7px 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  font-size: 12px; font-weight: 500; color: var(--text-muted);
+  cursor: pointer; transition: all 0.2s; border: none; background: transparent;
+}
+.nav-tab:hover { color: var(--text); }
+.nav-tab.active {
+  background: var(--bg-elevated); color: var(--text);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+.nav-tab .shortcut {
+  font-family: var(--font-mono); font-size: 9px; opacity: 0.5;
+  background: rgba(255,255,255,0.06); padding: 1px 4px; border-radius: 3px;
+  margin-left: 4px;
+}
+
+/* ── Form ──────────────────────────────────────────── */
+.form-group { margin-bottom: 14px; }
+.form-group label {
+  display: block; font-size: 11px; font-weight: 600;
+  color: var(--text-muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.05em;
+}
+input, textarea, select {
+  width: 100%; padding: 10px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--bg-elevated);
+  color: var(--text); font-family: var(--font); font-size: 13px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+input:focus, textarea:focus, select:focus {
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-dim);
+}
+textarea { resize: vertical; min-height: 90px; line-height: 1.5; }
+select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='12' height='12' fill='%2364748B' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5l3 3 3-3'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; }
+
+/* Checkbox */
+.checkbox {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-muted);
+}
+.checkbox input { width: auto; accent-color: var(--primary); }
+
+/* ── Dropzone ──────────────────────────────────────── */
+.dropzone {
+  border: 2px dashed var(--border); border-radius: var(--radius-sm);
+  padding: 24px 12px; text-align: center; cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); position: relative; overflow: hidden;
+}
+.dropzone::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(circle at center, var(--primary-dim) 0%, transparent 70%);
+  opacity: 0; transition: opacity 0.3s;
+}
+.dropzone:hover, .dropzone.dragover {
+  border-color: var(--primary); transform: scale(1.01);
+}
+.dropzone:hover::before, .dropzone.dragover::before { opacity: 1; }
+.dropzone .dz-inner { position: relative; z-index: 1; }
+.dropzone img { max-height: 120px; border-radius: 6px; display: block; margin: 8px auto 0; box-shadow: var(--shadow); }
+.dropzone .dz-icon { font-size: 28px; margin-bottom: 8px; opacity: 0.5; }
+
+/* ── Quick Tags ────────────────────────────────────── */
+.tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.tag {
+  padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 500;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  color: var(--text-muted); cursor: pointer; transition: all 0.15s;
+}
+.tag:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-dim); }
+.tag.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+/* ── Cost Bar ──────────────────────────────────────── */
+.cost-bar {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  background: rgba(255,209,102,0.08); border: 1px solid rgba(255,209,102,0.15);
+  border-radius: var(--radius-sm); font-size: 12px; color: var(--accent); margin-top: 10px;
+}
+.cost-bar .amount { font-family: var(--font-mono); font-weight: 700; font-size: 16px; color: var(--accent); }
+.cost-bar .sparkline {
+  flex: 1; height: 20px; display: flex; align-items: flex-end; gap: 2px; opacity: 0.5;
+}
+.cost-bar .sparkline .bar { flex: 1; background: var(--accent); border-radius: 1px; min-height: 2px; }
+
+/* ── Model Cards ───────────────────────────────────── */
+.model-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+.model-card {
+  padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--bg-elevated); cursor: pointer; transition: all 0.2s;
+}
+.model-card:hover { border-color: var(--border-hover); }
+.model-card.selected { border-color: var(--primary); background: var(--primary-dim); }
+.model-card .name { font-size: 12px; font-weight: 600; }
+.model-card .price { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+/* ── Center Canvas ────────────────────────────────── */
+.canvas-area {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 300px; position: relative; overflow: hidden;
+}
+.canvas-area.empty {
+  background: var(--bg-elevated); border-radius: var(--radius); border: 1px dashed var(--border);
+}
+.canvas-area img {
+  max-width: 90%; max-height: 400px; border-radius: 8px;
+  box-shadow: var(--shadow);
+  animation: appear 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes appear {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Shimmer loading */
+.shimmer {
+  position: absolute; inset: 0; overflow: hidden;
+}
+.shimmer::after {
+  content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.03), transparent);
+  animation: shimmerSlide 1.5s infinite;
+}
+@keyframes shimmerSlide { to { left: 100%; } }
+
+/* ── Preview Grid ──────────────────────────────────── */
+.preview-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px;
+}
+.preview-item {
+  position: relative; border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--border); cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  background: var(--bg-elevated);
+}
+.preview-item:hover { transform: translateY(-3px); border-color: var(--border-hover); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+.preview-item.selected { outline: 2px solid var(--primary); outline-offset: 2px; }
+.preview-item img { width: 100%; height: auto; display: block; }
+.preview-item .meta {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  padding: 6px 8px; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
+  font-size: 10px; color: var(--text-muted); display: flex; justify-content: space-between;
+  opacity: 0; transition: opacity 0.2s;
+}
+.preview-item:hover .meta { opacity: 1; }
+.preview-item .cost-tag {
+  position: absolute; top: 6px; right: 6px;
+  background: rgba(0,0,0,0.6); backdrop-filter: blur(8px);
+  padding: 2px 6px; border-radius: 10px; font-size: 10px; color: var(--accent); font-weight: 600;
+}
+
+/* ── QC Dashboard ─────────────────────────────────── */
+.qc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.qc-item {
+  padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--bg-elevated); text-align: center; transition: all 0.2s;
+}
+.qc-item.pass { border-color: rgba(6,214,160,0.3); background: rgba(6,214,160,0.06); }
+.qc-item.fail { border-color: rgba(239,71,111,0.3); background: rgba(239,71,111,0.06); }
+.qc-item .status-icon { font-size: 20px; margin-bottom: 4px; }
+.qc-item .label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.qc-score-ring {
+  width: 80px; height: 80px; border-radius: 50%;
+  border: 4px solid var(--border); position: relative; margin: 0 auto 12px;
+  display: flex; align-items: center; justify-content: center;
+}
+.qc-score-ring .score { font-family: var(--font-mono); font-size: 24px; font-weight: 700; }
+
+/* ── Export Presets ────────────────────────────────── */
+.preset-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 8px; }
+.preset-card {
+  padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--bg-elevated); cursor: pointer; position: relative;
+  transition: all 0.2s; text-align: center;
+}
+.preset-card:hover { border-color: var(--border-hover); }
+.preset-card.checked { border-color: var(--primary); background: var(--primary-dim); }
+.preset-card .aspect-box {
+  width: 36px; height: 28px; border: 2px solid var(--text-muted); border-radius: 3px;
+  margin: 0 auto 6px; opacity: 0.5;
+}
+.preset-card.checked .aspect-box { border-color: var(--primary); opacity: 1; }
+.preset-card .name { font-size: 11px; font-weight: 600; }
+.preset-card .dims { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+/* ── Export preset aspect boxes ────────────────────── */
+.aspect-1-1 { width: 28px !important; height: 28px !important; }
+.aspect-4-5 { width: 22px !important; height: 28px !important; }
+.aspect-9-16 { width: 16px !important; height: 28px !important; }
+.aspect-16-9 { width: 36px !important; height: 20px !important; }
+.aspect-2-3 { width: 20px !important; height: 30px !important; }
+.aspect-3-2 { width: 30px !important; height: 20px !important; }
+
+/* ── Status Toast ──────────────────────────────────── */
+.status-toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(100px);
+  padding: 10px 20px; border-radius: 30px; font-size: 13px; font-weight: 500;
+  z-index: 1000; transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+.status-toast.show { transform: translateX(-50%) translateY(0); }
+.status-toast.success { background: rgba(6,214,160,0.15); border: 1px solid rgba(6,214,160,0.3); color: var(--success); }
+.status-toast.error { background: rgba(239,71,111,0.15); border: 1px solid rgba(239,71,111,0.3); color: var(--danger); }
+.status-toast.info { background: var(--surface); border: 1px solid var(--border); color: var(--text-muted); }
+
+/* ── Session Row ────────────────────────────────────── */
+.session-row {
+  display: flex; gap: 10px; align-items: center; padding: 8px 0;
+  border-bottom: 1px solid var(--border); cursor: pointer; transition: all 0.15s;
+}
+.session-row:hover { color: var(--primary); }
+.session-row:last-child { border-bottom: none; }
+.session-row img { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; }
+.session-row .meta { flex: 1; }
+.session-row .meta .id { font-size: 12px; font-weight: 600; }
+.session-row .meta .sub { font-size: 11px; color: var(--text-muted); }
+
+/* ── Empty State ───────────────────────────────────── */
+.empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
+.empty-state .icon { font-size: 48px; margin-bottom: 12px; opacity: 0.3; }
+.empty-state h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+.empty-state p { font-size: 13px; max-width: 280px; margin: 0 auto; line-height: 1.6; }
+
+/* ── Bottom Bar ───────────────────────────────────── */
+.bottom-bar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 20px; background: var(--bg-elevated);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  z-index: 100; font-size: 12px; color: var(--text-muted);
+}
+.bottom-bar .keys { display: flex; gap: 12px; }
+.bottom-bar kbd {
+  font-family: var(--font-mono); font-size: 10px; padding: 2px 6px;
+  background: rgba(255,255,255,0.06); border-radius: 4px; border: 1px solid var(--border);
+}
+
+/* ── Responsive ──────────────────────────────────── */
+@media (max-width: 1100px) {
+  .main { grid-template-columns: 1fr; }
+  .panel { display: none; }
+  .panel.active { display: flex; position: fixed; inset: 52px 0 0 0; z-index: 50; }
+  .canvas-area { min-height: 50vh; }
+}
+
+/* ── Loading spinner ──────────────────────────────── */
+.spinner {
+  width: 40px; height: 40px; border: 3px solid var(--border);
+  border-top-color: var(--primary); border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Confetti (simple CSS particles) ──────────────── */
+.confetti { position: absolute; width: 6px; height: 6px; border-radius: 2px; pointer-events: none; }
 </style>
 </head>
 <body>
-<div class="container">
+<div class="app">
+
+<!-- ═══════ HEADER ═══════ -->
 <header>
-<h1>🎨 Creative <span>Studio</span></h1>
-<div class="actions">
-<button class="btn sm" id="theme-toggle">🌙</button>
-</div>
+  <div class="brand">
+    <div class="dot"></div>
+    Creative <span>Studio</span>
+  </div>
+  <div class="header-actions">
+    <button class="btn ghost" id="btn-theme" title="Theme">◐</button>
+    <button class="btn primary" id="btn-generate-top">⚡ Generate</button>
+  </div>
 </header>
-<div class="grid">
-<div class="left-col">
-<div class="tabs">
-<div class="tab active" data-tab="generate">Generate</div>
-<div class="tab" data-tab="composite">Composite</div>
-<div class="tab" data-tab="export">Export</div>
-<div class="tab" data-tab="qc">QC</div>
-<div class="tab" data-tab="history">Sessions</div>
+
+<!-- ═══════ MAIN ═══════ -->
+<div class="main" id="main-grid">
+
+<!-- ═══════ LEFT PANEL ═══════ -->
+<div class="panel" id="panel-left">
+  <div class="panel-header">Input</div>
+  <div class="panel-body">
+
+    <!-- Mode Tabs -->
+    <div class="nav-tabs" id="mode-tabs">
+      <button class="nav-tab active" data-mode="generate">Generate <span class="shortcut">G</span></button>
+      <button class="nav-tab" data-mode="composite">Composite</button>
+      <button class="nav-tab" data-mode="export">Export</button>
+      <button class="nav-tab" data-mode="qc">QC</button>
+    </div>
+
+    <!-- MODE: GENERATE -->
+    <div id="mode-generate">
+      <div class="form-group">
+        <label>Prompt</label>
+        <textarea id="prompt-input" placeholder="A single red apple on a white table, product photography, overhead softbox lighting, shallow depth of field, Shot on Hasselblad H6D, 100mm f/2.8..."></textarea>
+      </div>
+
+      <div class="form-group">
+        <label>Quick Tags</label>
+        <div class="tag-list" id="quick-tags">
+          <span class="tag" data-text="overhead softbox lighting">💡 Lighting</span>
+          <span class="tag" data-text="shallow depth of field">🎬 DoF</span>
+          <span class="tag" data-text="Shot on Hasselblad H6D">📷 Camera</span>
+          <span class="tag" data-text="clean white background">⬜ White BG</span>
+          <span class="tag" data-text="eye-level angle">👁️ Eye Level</span>
+          <span class="tag" data-text="professional product photography">🏢 Studio</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Mode</label>
+        <select id="gen-mode">
+          <option value="direct">Direct (one-shot)</option>
+          <option value="variations">Variations (4-pack)</option>
+        </select>
+      </div>
+      <div class="form-group hidden" id="variations-count-group">
+        <label>Count</label>
+        <input type="number" id="variations-count" value="4" min="1" max="8">
+      </div>
+
+      <div class="form-group">
+        <label>Tier</label>
+        <div class="model-grid" id="tier-grid">
+          <div class="model-card" data-tier="fast">
+            <div class="name">Flash</div>
+            <div class="price">~$0.07 · 1K</div>
+          </div>
+          <div class="model-card selected" data-tier="balanced">
+            <div class="name">Balanced</div>
+            <div class="price">~$0.07 · 2K</div>
+          </div>
+          <div class="model-card" data-tier="quality">
+            <div class="name">Quality</div>
+            <div class="price">~$0.20 · 2K</div>
+          </div>
+          <div class="model-card" data-tier="ultra">
+            <div class="name">Ultra</div>
+            <div class="price">~$0.40 · 4K</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Aspect Ratio</label>
+        <select id="aspect-select">
+          <option value="16:9">16:9 Widescreen</option>
+          <option value="1:1">1:1 Square</option>
+          <option value="4:5">4:5 Instagram</option>
+          <option value="9:16">9:16 Stories</option>
+          <option value="3:2">3:2 Print</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Reference Image</label>
+        <div class="dropzone" id="dz-ref">
+          <div class="dz-inner">
+            <div class="dz-icon">🖼️</div>
+            <div>Drop reference image</div>
+            <small style="color:var(--text-muted)">Optional — helps preserve subject</small>
+          </div>
+          <input type="file" id="ref-file" accept="image/*" style="display:none">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="checkbox"><input type="checkbox" id="smart-check" checked> Smart prompt enhancement</label>
+      </div>
+
+      <button class="btn primary" id="btn-generate" style="width:100%;padding:12px">⚡ Generate</button>
+    </div>
+
+    <!-- MODE: COMPOSITE -->
+    <div id="mode-composite" class="hidden">
+      <div class="form-group">
+        <label>Product Photo</label>
+        <div class="dropzone" id="dz-product">
+          <div class="dz-inner">
+            <div class="dz-icon">📦</div>
+            <div>Drop your product photo</div>
+            <small style="color:var(--text-muted)">AI will composite onto background</small>
+          </div>
+          <input type="file" id="product-file" accept="image/*" style="display:none">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Environment Prompt</label>
+        <textarea id="composite-prompt" placeholder="Empty clean light wooden retail shelves in a premium supplement store. Warm overhead track lighting. No products anywhere."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Aspect Ratio</label>
+        <select id="composite-aspect">
+          <option value="16:9">16:9</option>
+          <option value="1:1">1:1</option>
+          <option value="4:5">4:5</option>
+          <option value="9:16">9:16</option>
+        </select>
+      </div>
+      <button class="btn primary" id="btn-composite" style="width:100%;padding:12px">🔧 Generate Composite</button>
+    </div>
+
+    <!-- MODE: EXPORT -->
+    <div id="mode-export" class="hidden">
+      <div class="form-group">
+        <label>Source Image</label>
+        <div class="dropzone" id="dz-export">
+          <div class="dz-inner">
+            <div class="dz-icon">📤</div>
+            <div>Drop image to export</div>
+          </div>
+          <input type="file" id="export-file" accept="image/*" style="display:none">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Platform Presets</label>
+        <div class="preset-grid" id="preset-grid">
+          <div class="preset-card checked" data-preset="amazon">
+            <div class="aspect-box aspect-1-1"></div>
+            <div class="name">Amazon</div>
+            <div class="dims">2000×2000</div>
+          </div>
+          <div class="preset-card checked" data-preset="shopify">
+            <div class="aspect-box aspect-1-1"></div>
+            <div class="name">Shopify</div>
+            <div class="dims">2048×2048</div>
+          </div>
+          <div class="preset-card checked" data-preset="meta-feed">
+            <div class="aspect-box aspect-4-5"></div>
+            <div class="name">Meta Feed</div>
+            <div class="dims">1080×1350</div>
+          </div>
+          <div class="preset-card" data-preset="meta-stories">
+            <div class="aspect-box aspect-9-16"></div>
+            <div class="name">Stories</div>
+            <div class="dims">1080×1920</div>
+          </div>
+          <div class="preset-card checked" data-preset="web-hero">
+            <div class="aspect-box aspect-16-9"></div>
+            <div class="name">Web Hero</div>
+            <div class="dims">1920×1080</div>
+          </div>
+          <div class="preset-card" data-preset="pinterest">
+            <div class="aspect-box aspect-2-3"></div>
+            <div class="name">Pinterest</div>
+            <div class="dims">1000×1500</div>
+          </div>
+        </div>
+      </div>
+      <button class="btn primary" id="btn-export" style="width:100%;padding:12px">📦 Export</button>
+    </div>
+
+    <!-- MODE: QC -->
+    <div id="mode-qc" class="hidden">
+      <div class="form-group">
+        <label>Image to Inspect</label>
+        <div class="dropzone" id="dz-qc">
+          <div class="dz-inner">
+            <div class="dz-icon">🔍</div>
+            <div>Drop image to check</div>
+          </div>
+          <input type="file" id="qc-file" accept="image/*" style="display:none">
+        </div>
+      </div>
+      <button class="btn primary" id="btn-qc" style="width:100%;padding:12px">🔍 Run Quality Check</button>
+      <div id="qc-results"></div>
+    </div>
+
+    <!-- Cost Bar -->
+    <div class="cost-bar" id="cost-bar">
+      <div class="amount" id="cost-amount">$0.00</div>
+      <div style="flex:1">
+        <div style="font-size:11px;color:var(--text-muted)">Today</div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px"><span id="cost-images">0</span> images · <span id="cost-sessions">0</span> sessions</div>
+      </div>
+      <div class="sparkline" id="cost-sparkline"></div>
+    </div>
+
+  </div>
 </div>
 
-<div class="tab-content active" id="tab-generate">
-<div class="panel">
-<h2>🖼️ Generation</h2>
-<div class="form-group">
-<label>Prompt</label>
-<textarea id="prompt-input" placeholder="Your exact prompt..."></textarea>
-</div>
-<div class="form-group">
-<label>Mode</label>
-<select id="mode-select">
-<option value="direct">Direct (one-shot)</option>
-<option value="variations">Variations (4 pack)</option>
-</select>
-</div>
-<div class="form-group hidden" id="variations-opts">
-<label>Variation Count</label>
-<input type="number" id="variations-count" value="4" min="1" max="8">
-</div>
-<div class="form-group">
-<label>Tier</label>
-<select id="tier-select">
-<option value="fast">Fast (~$0.07)</option>
-<option value="balanced" selected>Balanced (~$0.07)</option>
-<option value="quality">Quality (~$0.20)</option>
-<option value="ultra">Ultra (~$0.40)</option>
-</select>
-</div>
-<div class="form-group">
-<label>Aspect Ratio</label>
-<select id="aspect-select">
-<option value="16:9">16:9 (widescreen)</option>
-<option value="1:1">1:1 (square)</option>
-<option value="4:5">4:5 (Instagram)</option>
-<option value="9:16">9:16 (stories)</option>
-<option value="3:2">3:2 (print)</option>
-</select>
-</div>
-<div class="form-group">
-<label>Reference Image</label>
-<div class="dropzone" id="dropzone-ref">
-<div class="dz-text">Drop reference image here (optional)</div>
-<input type="file" id="ref-file" accept="image/*" style="display:none">
-</div>
-</div>
-<div class="form-group">
-<label><input type="checkbox" id="smart-check" checked> Smart prompt enhancement</label>
-</div>
-<button class="btn primary" id="btn-generate" style="width:100%">Generate</button>
-<div class="status" id="status-generate"></div>
-</div>
-<div class="panel" style="margin-top:1rem" id="refine-panel">
-<h2>✏️ Refine Selected</h2>
-<div class="form-group">
-<label>Changes</label>
-<textarea id="refine-changes" placeholder="What to change..."></textarea>
-</div>
-<div class="form-group">
-<label>Tier</label>
-<select id="refine-tier">
-<option value="fast">Fast</option>
-<option value="balanced">Balanced</option>
-<option value="quality" selected>Quality</option>
-</select>
-</div>
-<button class="btn accent" id="btn-refine" style="width:100%">Refine Selected</button>
-<div class="status" id="status-refine"></div>
-</div>
+<!-- ═══════ CENTER CANVAS ═══════ -->
+<div class="panel" style="border-right:none;border-left:none;background:transparent;backdrop-filter:none;">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);">
+    <span>Canvas</span>
+    <span id="canvas-meta"></span>
+  </div>
+  <div class="panel-body" style="display:flex;flex-direction:column;gap:16px;">
+
+    <!-- Main Preview -->
+    <div class="canvas-area empty" id="canvas-main">
+      <div class="empty-state" id="canvas-empty">
+        <div class="icon">🎨</div>
+        <h3>Your canvas is ready</h3>
+        <p>Enter a prompt on the left, drop a reference image, and hit Generate to see your creation here.</p>
+      </div>
+    </div>
+
+    <!-- Refine Box -->
+    <div id="refine-box" class="hidden" style="padding:14px;background:var(--bg-elevated);border-radius:var(--radius-sm);border:1px solid var(--border);">
+      <label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Refine Selected</label>
+      <textarea id="refine-changes" placeholder="What to change? e.g. ' warmer lighting, add a shadow beneath the product'" style="min-height:50px;margin-bottom:8px;"></textarea>
+      <div style="display:flex;gap:8px;">
+        <select id="refine-tier" style="flex:0 0 120px;">
+          <option value="fast">Fast</option>
+          <option value="balanced">Balanced</option>
+          <option value="quality" selected>Quality</option>
+        </select>
+        <button class="btn accent" id="btn-refine" style="flex:1;">✨ Refine</button>
+      </div>
+    </div>
+
+    <!-- Preview Grid -->
+    <div class="preview-grid" id="output-grid"></div>
+
+  </div>
 </div>
 
-<div class="tab-content" id="tab-composite">
-<div class="panel">
-<h2>🔧 Composite (Zero Hallucinations)</h2>
-<p style="font-size:0.8125rem;color:var(--muted);margin-bottom:0.75rem">AI generates only the background. Your real product is composited on top.</p>
-<div class="form-group">
-<label>Product Photo</label>
-<div class="dropzone" id="dropzone-product">
-<div class="dz-text">Drop your product photo here</div>
-<input type="file" id="product-file" accept="image/*" style="display:none">
-</div>
-</div>
-<div class="form-group">
-<label>Environment Prompt</label>
-<textarea id="composite-prompt" placeholder="Empty clean wooden retail shelves in a premium store. No products, no bottles..."></textarea>
-</div>
-<div class="form-group">
-<label>Aspect Ratio</label>
-<select id="composite-aspect">
-<option value="16:9">16:9</option>
-<option value="1:1">1:1</option>
-<option value="4:5">4:5</option>
-<option value="9:16">9:16</option>
-</select>
-</div>
-<button class="btn primary" id="btn-composite" style="width:100%">Generate Composite</button>
-<div class="status" id="status-composite"></div>
-</div>
+<!-- ═══════ RIGHT PANEL ═══════ -->
+<div class="panel" id="panel-right">
+  <div class="panel-header">Inspector</div>
+  <div class="panel-body">
+    <div class="empty-state" style="padding:20px 0;">
+      <div class="icon" style="font-size:32px;">📋</div>
+      <p style="font-size:12px;">Generate or select an image to see details, QC results, and export options.</p>
+    </div>
+  </div>
 </div>
 
-<div class="tab-content" id="tab-export">
-<div class="panel">
-<h2>📦 Export Multi-Format</h2>
-<div class="form-group">
-<label>Source Image</label>
-<div class="dropzone" id="dropzone-export">
-<div class="dz-text">Drop image to export</div>
-<input type="file" id="export-file" accept="image/*" style="display:none">
-</div>
-</div>
-<p style="font-size:0.8125rem;color:var(--muted);margin-bottom:0.5rem">Select platforms:</p>
-<div class="export-list" id="export-presets">
-<span class="export-label checked" data-preset="amazon">Amazon</span>
-<span class="export-label checked" data-preset="shopify">Shopify</span>
-<span class="export-label checked" data-preset="meta-feed">Meta Feed</span>
-<span class="export-label" data-preset="meta-stories">Meta Stories</span>
-<span class="export-label checked" data-preset="web-hero">Web Hero</span>
-<span class="export-label" data-preset="pinterest">Pinterest</span>
-<span class="export-label" data-preset="print-dpi">Print 300DPI</span>
-</div>
-<button class="btn primary" id="btn-export" style="width:100%;margin-top:1rem">Export</button>
-<div class="status" id="status-export"></div>
-</div>
-</div>
+</div><!-- /main -->
 
-<div class="tab-content" id="tab-qc">
-<div class="panel">
-<h2>🔍 Quality Check</h2>
-<div class="form-group">
-<label>Image to Inspect</label>
-<div class="dropzone" id="dropzone-qc">
-<div class="dz-text">Drop image to check</div>
-<input type="file" id="qc-file" accept="image/*" style="display:none">
-</div>
-</div>
-<button class="btn primary" id="btn-qc" style="width:100%">Run QC</button>
-<div class="status" id="status-qc"></div>
-<div id="qc-results"></div>
-</div>
-</div>
+</div><!-- /app -->
 
-<div class="tab-content" id="tab-history">
-<div class="panel">
-<h2>📁 Sessions</h2>
-<div id="sessions-list"><div style="text-align:center;color:var(--muted);padding:2rem">Loading sessions...</div></div>
-</div>
-<div class="panel" style="margin-top:1rem">
-<h2>💰 Cost Tracker</h2>
-<div id="cost-display" style="text-align:center;padding:1rem;color:var(--muted)">Loading costs...</div>
-</div>
-</div>
-</div>
+<!-- Toast -->
+<div class="status-toast info" id="toast"></div>
 
-<div class="right-col">
-<div class="panel" id="output-panel" style="min-height:420px">
-<h2>🖼️ Output Canvas</h2>
-<div id="status-main" class="status" style="margin-bottom:0.5rem"></div>
-<div id="canvas-area">
-<div style="text-align:center">
-<p>Generated images appear here</p>
-<p style="font-size:0.8125rem;color:var(--muted)">Select a generation mode on the left</p>
-</div>
-</div>
-<div class="preview-grid" id="output-grid"></div>
-</div>
-<div class="panel" id="session-timeline" style="display:none">
-<h2>⏱️ Timeline</h2>
-<div class="timeline" id="timeline-content"></div>
-</div>
-</div>
-</div>
+<!-- Bottom Bar -->
+<div class="bottom-bar">
+  <div class="keys">
+    <span><kbd>G</kbd> Generate</span>
+    <span><kbd>C</kbd> Composite</span>
+    <span><kbd>E</kbd> Export</span>
+    <span><kbd>Q</kbd> QC</span>
+  </div>
+  <div>Creative Studio v5 · <span style="color:var(--primary)">●</span> Ready</div>
 </div>
 
 <script>
+// ──────────────── STATE ──────────────────────────
 let sessionId = 'sess_' + Math.random().toString(36).substr(2, 9);
 let selectedImage = null;
+let selectedTier = 'balanced';
 let uploadedFiles = { ref: null, product: null, export: null, qc: null };
+let currentMode = 'generate';
+
+// ──────────────── HELPERS ────────────────────────
 const $ = (q, el=document) => el.querySelector(q);
-const $$ = (q, el=document) => [...el.querySelectorAll(q)];
+const $$ = (q, el=document) => Array.from(el.querySelectorAll(q));
 
-$('#theme-toggle').onclick = () => {
-  document.documentElement.classList.toggle('light');
-  document.documentElement.classList.toggle('dark');
-};
+function showToast(text, type='info') {
+  const t = $('#toast');
+  t.textContent = text;
+  t.className = 'status-toast show ' + type;
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
 
-$$('.tab').forEach(t => t.onclick = () => {
-  $$('.tab').forEach(x => x.classList.remove('active'));
-  $$('.tab-content').forEach(x => x.classList.remove('active'));
-  t.classList.add('active');
-  $(`#tab-${t.dataset.tab}`).classList.add('active');
+function setLoading(id, loading) {
+  const btn = $(id);
+  if (!btn) return;
+  if (loading) { btn.dataset.orig = btn.textContent; btn.textContent = '⏳ Working...'; btn.disabled = true; }
+  else { btn.textContent = btn.dataset.orig || btn.textContent; btn.disabled = false; }
+}
+
+function formatCost(n) { return '$' + (typeof n === 'number' ? n.toFixed(2) : '0.00'); }
+
+async function post(url, body, isForm=false) {
+  const opts = { method: 'POST' };
+  if (isForm) opts.body = body;
+  else { opts.headers = {'Content-Type':'application/json'}; opts.body = JSON.stringify(body); }
+  const r = await fetch(url, opts);
+  if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.error || 'HTTP ' + r.status); }
+  return r.json();
+}
+
+// ──────────────── MODE SWITCHING ────────────────
+$$('#mode-tabs .nav-tab').forEach(tab => {
+  tab.onclick = () => {
+    $$('#mode-tabs .nav-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const mode = tab.dataset.mode;
+    currentMode = mode;
+    ['generate','composite','export','qc'].forEach(m => $(`#mode-${m}`).classList.add('hidden'));
+    $(`#mode-${mode}`).classList.remove('hidden');
+  };
 });
 
-$('#mode-select').onchange = (e) => {
-  $('#variations-opts').classList.toggle('hidden', e.target.value !== 'variations');
-};
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+  const key = e.key.toLowerCase();
+  if (key === 'g') $$('#mode-tabs .nav-tab')[0].click();
+  if (key === 'c') { e.preventDefault(); $$('#mode-tabs .nav-tab')[1].click(); }
+  if (key === 'e') { e.preventDefault(); $$('#mode-tabs .nav-tab')[2].click(); }
+  if (key === 'q') { e.preventDefault(); $$('#mode-tabs .nav-tab')[3].click(); }
+});
 
-function setupDropzone(id, key) {
-  const dz = $(`#${id}`);
+// ──────────────── DROPZONES ────────────────────
+function setupDz(id, key) {
+  const dz = $(id);
+  if (!dz) return;
   const inp = dz.querySelector('input[type="file"]');
   dz.addEventListener('click', () => inp.click());
   dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
   dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
-  dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('dragover'); handleFiles(e.dataTransfer.files, key); });
-  inp.addEventListener('change', e => handleFiles(e.target.files, key));
+  dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('dragover'); handleFile(e.dataTransfer.files[0], key, dz); });
+  inp.addEventListener('change', e => handleFile(e.target.files[0], key, dz));
 }
-function handleFiles(files, key) {
-  if (!files.length) return;
-  const f = files[0]; uploadedFiles[key] = f;
-  const dz = $(`#dropzone-${key}`);
+function handleFile(file, key, dz) {
+  if (!file) return;
+  uploadedFiles[key] = file;
   const reader = new FileReader();
   reader.onload = e => {
-    dz.querySelector('.dz-text').innerHTML = `<img src="${e.target.result}"><br><small>${f.name} (${(f.size/1024).toFixed(0)}KB)</small>`;
+    dz.querySelector('.dz-inner').innerHTML = `<img src="${e.target.result}"><div style="margin-top:6px;font-size:12px;color:var(--text-muted)">${file.name}</div>`;
   };
-  reader.readAsDataURL(f);
+  reader.readAsDataURL(file);
 }
-setupDropzone('dropzone-ref', 'ref');
-setupDropzone('dropzone-product', 'product');
-setupDropzone('dropzone-export', 'export');
-setupDropzone('dropzone-qc', 'qc');
+setupDz('#dz-ref', 'ref');
+setupDz('#dz-product', 'product');
+setupDz('#dz-export', 'export');
+setupDz('#dz-qc', 'qc');
 
-$$('#export-presets .export-label').forEach(el => {
-  el.onclick = () => el.classList.toggle('checked');
-});
-
-function showStatus(id, text, type='') {
-  const el = $(`#${id}`);
-  el.textContent = text; el.className = 'status show ' + type;
-  if (!text) el.classList.remove('show');
-}
-
-async function post(url, body, isForm=false) {
-  const opts = { method: 'POST' };
-  if (isForm) { opts.body = body; }
-  else { opts.headers = {'Content-Type':'application/json'}; opts.body = JSON.stringify(body); }
-  const r = await fetch(url, opts);
-  if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
-  return r.json();
-}
-
-$('#btn-generate').onclick = async () => {
-  const prompt = $('#prompt-input').value.trim();
-  if (!prompt) return showStatus('status-generate', 'Enter a prompt', 'error');
-  showStatus('status-generate', 'Generating...');
-  try {
-    const data = await post('/api/generate', {
-      prompt, mode: $('#mode-select').value, tier: $('#tier-select').value,
-      aspect_ratio: $('#aspect-select').value, smart: $('#smart-check').checked,
-      variations: parseInt($('#variations-count').value) || 4, session_id: sessionId,
-    });
-    showStatus('status-generate', data.message, 'success');
-    renderOutputs(data.images);
-    refreshSessions();
-  } catch(e) { showStatus('status-generate', e.message, 'error'); }
+// Gen mode toggle
+$('#gen-mode').onchange = e => {
+  $('#variations-count-group').classList.toggle('hidden', e.target.value !== 'variations');
 };
 
+// Tier selection
+$$('.model-card').forEach(card => {
+  card.onclick = () => {
+    $$('.model-card').forEach(c => c.classList.remove('selected'));
+    card.classList.add('selected');
+    selectedTier = card.dataset.tier;
+  };
+});
+
+// Quick tags
+$$('.tag').forEach(tag => {
+  tag.onclick = () => {
+    const input = $('#prompt-input');
+    const text = tag.dataset.text;
+    if (tag.classList.toggle('active')) {
+      input.value = input.value.trim() ? input.value.trim() + ', ' + text : text;
+    } else {
+      input.value = input.value.replace(new RegExp(',?\\s*' + text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), '').trim().replace(/,\s*$/, '');
+    }
+  };
+});
+
+// Export preset toggles
+$$('.preset-card').forEach(p => {
+  p.onclick = () => p.classList.toggle('checked');
+});
+
+// ──────────────── RENDER OUTPUTS ───────────────
+function renderOutputs(images) {
+  const grid = $('#output-grid');
+  const canvas = $('#canvas-main');
+  const empty = $('#canvas-empty');
+
+  if (!images || !images.length) return;
+
+  // Show first image in canvas
+  const first = images[0];
+  empty.classList.add('hidden');
+  canvas.classList.remove('empty');
+  canvas.innerHTML = `<img src="${first.url}" alt="${first.name}" id="main-image">`;
+  $('#canvas-meta').textContent = `${first.model} · ${first.name}`;
+
+  // Show images in grid
+  images.forEach((img, i) => {
+    if ($(`[data-path="${img.path}"]`)) return; // skip dupes
+    const el = document.createElement('div');
+    el.className = 'preview-item';
+    el.dataset.path = img.path;
+    el.innerHTML = `
+      <img src="${img.url}" alt="${img.name}" loading="lazy">
+      <span class="cost-tag">${formatCost(img.cost)}</span>
+      <div class="meta">
+        <span>${img.name}</span>
+        <span>${img.model?.split('-').pop() || ''}</span>
+      </div>`;
+    el.onclick = () => selectImage(img.path, img.url);
+    grid.insertBefore(el, grid.firstChild);
+  });
+
+  $('#refine-box').classList.remove('hidden');
+}
+
+function selectImage(path, url) {
+  selectedImage = path;
+  $$('.preview-item').forEach(el => el.classList.remove('selected'));
+  const item = $(`[data-path="${path}"]`);
+  if (item) item.classList.add('selected');
+  // Update main canvas
+  $('#main-image')?.remove();
+  const canvas = $('#canvas-main');
+  canvas.classList.remove('empty');
+  $('#canvas-empty').classList.add('hidden');
+  canvas.insertAdjacentHTML('afterbegin', `<img src="${url}" id="main-image" alt="selected">`);
+}
+
+// ──────────────── API CALLS ────────────────────
+$('#btn-generate').onclick = async () => {
+  const prompt = $('#prompt-input').value.trim();
+  if (!prompt) { showToast('Enter a prompt first', 'error'); return; }
+  setLoading('#btn-generate', true);
+  try {
+    const data = await post('/api/generate', {
+      prompt, mode: $('#gen-mode').value, tier: selectedTier,
+      aspect_ratio: $('#aspect-select').value, smart: $('#smart-check').checked,
+      variations: parseInt($('#variations-count')?.value || 4), session_id: sessionId,
+    });
+    renderOutputs(data.images);
+    showToast(data.message, 'success');
+    refreshCosts();
+  } catch(e) { showToast(e.message, 'error'); }
+  setLoading('#btn-generate', false);
+};
+
+$('#btn-generate-top').onclick = () => $('#btn-generate').click();
+
 $('#btn-composite').onclick = async () => {
-  if (!uploadedFiles.product) return showStatus('status-composite', 'Upload product photo', 'error');
+  if (!uploadedFiles.product) { showToast('Upload product photo', 'error'); return; }
   const prompt = $('#composite-prompt').value.trim();
-  if (!prompt) return showStatus('status-composite', 'Enter environment prompt', 'error');
-  showStatus('status-composite', 'Generating composite...');
+  if (!prompt) { showToast('Enter environment prompt', 'error'); return; }
+  setLoading('#btn-composite', true);
   const fd = new FormData();
   fd.append('product', uploadedFiles.product);
   fd.append('prompt', prompt);
@@ -614,146 +1130,112 @@ $('#btn-composite').onclick = async () => {
   fd.append('session_id', sessionId);
   try {
     const data = await post('/api/composite', fd, true);
-    showStatus('status-composite', data.message, 'success');
     renderOutputs(data.images);
-    refreshSessions();
-  } catch(e) { showStatus('status-composite', e.message, 'error'); }
+    showToast(data.message, 'success');
+    refreshCosts();
+  } catch(e) { showToast(e.message, 'error'); }
+  setLoading('#btn-composite', false);
 };
 
 $('#btn-export').onclick = async () => {
-  if (!uploadedFiles.export) return showStatus('status-export', 'Upload image first', 'error');
-  const presets = $$('#export-presets .export-label.checked').map(el => el.dataset.preset).join(',');
-  if (!presets) return showStatus('status-export', 'Select at least one preset', 'error');
-  showStatus('status-export', 'Exporting...');
+  if (!uploadedFiles.export) { showToast('Upload image first', 'error'); return; }
+  const presets = $$('.preset-card.checked').map(el => el.dataset.preset).join(',');
+  if (!presets) { showToast('Select at least one preset', 'error'); return; }
+  setLoading('#btn-export', true);
   const fd = new FormData();
   fd.append('image', uploadedFiles.export);
   fd.append('presets', presets);
   fd.append('session_id', sessionId);
   try {
     const data = await post('/api/export', fd, true);
-    showStatus('status-export', data.message, 'success');
     renderOutputs(data.images);
-    refreshSessions();
-  } catch(e) { showStatus('status-export', e.message, 'error'); }
+    showToast(data.message, 'success');
+    refreshCosts();
+  } catch(e) { showToast(e.message, 'error'); }
+  setLoading('#btn-export', false);
 };
 
 $('#btn-qc').onclick = async () => {
-  if (!uploadedFiles.qc) return showStatus('status-qc', 'Upload image first', 'error');
-  showStatus('status-qc', 'Running QC...');
+  if (!uploadedFiles.qc) { showToast('Upload image first', 'error'); return; }
+  setLoading('#btn-qc', true);
   const fd = new FormData();
   fd.append('image', uploadedFiles.qc);
   try {
     const data = await post('/api/qc', fd, true);
-    showStatus('status-qc', data.message, data.qc.quality_score >= 7 ? 'success' : 'error');
+    showToast(data.message, data.qc.quality_score >= 7 ? 'success' : 'error');
     renderQC(data.qc);
-  } catch(e) { showStatus('status-qc', e.message, 'error'); }
+  } catch(e) { showToast(e.message, 'error'); }
+  setLoading('#btn-qc', false);
 };
 
 $('#btn-refine').onclick = async () => {
-  if (!selectedImage) return showStatus('status-refine', 'Select an image first', 'error');
+  if (!selectedImage) { showToast('Select an image first', 'error'); return; }
   const changes = $('#refine-changes').value.trim();
-  if (!changes) return showStatus('status-refine', 'Enter changes', 'error');
-  showStatus('status-refine', 'Refining...');
+  if (!changes) { showToast('Enter changes', 'error'); return; }
+  setLoading('#btn-refine', true);
   try {
     const data = await post('/api/refine', {
       image_path: selectedImage, changes,
       tier: $('#refine-tier').value, session_id: sessionId,
     });
-    showStatus('status-refine', data.message, 'success');
     renderOutputs(data.images);
-    refreshSessions();
-  } catch(e) { showStatus('status-refine', e.message, 'error'); }
+    showToast(data.message, 'success');
+    refreshCosts();
+  } catch(e) { showToast(e.message, 'error'); }
+  setLoading('#btn-refine', false);
 };
 
-function renderOutputs(images) {
-  const grid = $('#output-grid');
-  const area = $('#canvas-area');
-  area.innerHTML = '';
-  if (!images || !images.length) return;
-  images.forEach((img, i) => {
-    const el = document.createElement('div');
-    el.className = 'preview-item';
-    el.innerHTML = `<img src="${img.url}"><span class="badge">${img.name}</span>
-      <div class="actions">
-        <button class="btn sm" onclick="downloadImage('${img.url}', '${img.name}')">⬇️</button>
-        <button class="btn sm" onclick="selectImage('${img.path}', this)">✓ Select</button>
-      </div>`;
-    grid.appendChild(el);
-    if (i === 0) { area.innerHTML = `<img src="${img.url}" style="max-height:280px">`; }
-  });
-}
-window.downloadImage = (url, name) => {
-  const a = document.createElement('a'); a.href = url; a.download = name; a.click();
-};
-window.selectImage = (path, btn) => {
-  selectedImage = path;
-  $$('.preview-item').forEach(el => el.classList.remove('selected'));
-  btn.closest('.preview-item').classList.add('selected');
-  showStatus('status-main', `Selected: ${path.split('/').pop()}`, 'success');
-};
-
+// ──────────────── QC RENDER ──────────────────────
 function renderQC(qc) {
   const el = $('#qc-results');
-  el.innerHTML = `<div style="margin-top:0.75rem">
-    <h3 style="font-size:1rem;margin-bottom:0.5rem">QC Score: ${qc.quality_score}/10</h3>
-    <div class="qc-grid">
-      <div class="${qc.floating_products?'qc-fail':'qc-pass'}">Floating: ${qc.floating_products?'FAIL':'PASS'}</div>
-      <div class="${qc.garbled_text?'qc-fail':'qc-pass'}">Text: ${qc.garbled_text?'FAIL':'PASS'}</div>
-      <div class="${qc.detached_shadows?'qc-fail':'qc-pass'}">Shadows: ${qc.detached_shadows?'FAIL':'PASS'}</div>
-      <div class="${qc.fake_products?'qc-fail':'qc-pass'}">Fake Products: ${qc.fake_products?'FAIL':'PASS'}</div>
-      <div class="${qc.readable_labels?'qc-fail':'qc-pass'}">Labels: ${qc.readable_labels?'PASS':'FAIL'}</div>
-    </div>
-    ${qc.issues.length ? '<ul style="margin-top:0.5rem;font-size:0.8125rem">'+qc.issues.map(i=>`<li>${i}</li>`).join('')+'</ul>' : ''}
-  </div>`;
+  const score = qc.quality_score || 0;
+  const status = score >= 7 ? 'pass' : score >= 4 ? '' : 'fail';
+  el.innerHTML = `
+    <div style="margin-top:16px">
+      <div class="qc-score-ring" style="border-color:${score>=7?'var(--success)':score>=4?'var(--accent)':'var(--danger)'};">
+        <span class="score" style="color:${score>=7?'var(--success)':score>=4?'var(--accent)':'var(--danger)'}">${score}</span>
+      </div>
+      <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-bottom:12px;">/10</div>
+      <div class="qc-grid">
+        <div class="qc-item ${qc.floating_products?'fail':'pass'}"><div class="status-icon">${qc.floating_products?'✗':'✓'}</div><div class="label">Floating</div></div>
+        <div class="qc-item ${qc.garbled_text?'fail':'pass'}"><div class="status-icon">${qc.garbled_text?'✗':'✓'}</div><div class="label">Text</div></div>
+        <div class="qc-item ${qc.detached_shadows?'fail':'pass'}"><div class="status-icon">${qc.detached_shadows?'✗':'✓'}</div><div class="label">Shadows</div></div>
+        <div class="qc-item ${qc.fake_products?'fail':'pass'}"><div class="status-icon">${qc.fake_products?'✗':'✓'}</div><div class="label">Fake Products</div></div>
+        <div class="qc-item ${!qc.readable_labels?'fail':'pass'}"><div class="status-icon">${!qc.readable_labels?'✗':'✓'}</div><div class="label">Labels</div></div>
+      </div>
+      ${qc.issues?.length ? '<ul style="margin-top:12px;font-size:12px;color:var(--text-muted);list-style:none">' + qc.issues.map(i=>`<li style="padding:4px 0;border-bottom:1px solid var(--border)">⚠ ${i}</li>`).join('') + '</ul>' : ''}
+    </div>`;
 }
 
-async function refreshSessions() {
+// ──────────────── COSTS ──────────────────────────
+async function refreshCosts() {
   try {
-    const data = await fetch('/api/sessions').then(r => r.json());
-    const container = $('#sessions-list');
-    if (!data.sessions.length) { container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:2rem">No sessions yet</div>'; }
-    else {
-      container.innerHTML = data.sessions.map(s =>
-        `<div class="session-row" data-id="${s.id}">
-          <div><strong>${s.id}</strong><br><small>${s.entries.length} entries · ${s.created_at}</small></div>
-          <span style="color:var(--muted)">$${s.cost.toFixed(2)}</span>
-        </div>`
-      ).join('');
-      $$('.session-row').forEach(row => row.onclick = () => loadSession(row.dataset.id));
-    }
-    fetch('/api/costs').then(r => r.json()).then(c => {
-      $('#cost-display').innerHTML = `
-        <div style="font-size:2rem;color:var(--accent)">$${c.total.toFixed(2)}</div>
-        <div style="font-size:0.8125rem;color:var(--muted)">${c.image_count} images across ${c.session_count} sessions</div>
-        <div class="cost-bar" style="justify-content:center">
-          ${Object.entries(c.by_model).map(([k,v])=>`<div><strong>${k}</strong>: $${v.toFixed(2)}</div>`).join('')}
-        </div>`;
-    });
-  } catch(e) { console.error('sessions', e); }
-}
-async function loadSession(id) {
-  try {
-    const data = await fetch(`/api/session/${id}`).then(r => r.json());
-    sessionId = id;
-    $('#session-timeline').style.display = 'block';
-    $('#timeline-content').innerHTML = data.entries.map(e =>
-      `<div class="timeline-item">
-        ${e.image_url ? `<img src="${e.image_url}">` : ''}
-        <div>
-          <div><strong>${e.type}</strong> <span style="color:var(--accent)">$${e.cost.toFixed(3)}</span></div>
-          <small>${e.created_at}</small>
-          <div style="font-size:0.75rem;color:var(--muted);margin-top:0.25rem">${e.note}</div>
-        </div>
-      </div>`
-    ).join('');
+    const c = await fetch('/api/costs').then(r => r.json());
+    $('#cost-amount').textContent = formatCost(c.total);
+    $('#cost-images').textContent = c.image_count;
+    $('#cost-sessions').textContent = c.session_count;
+    // Sparkline
+    const bars = Object.values(c.by_date || {}).map(v => Math.max(1, Math.round(v * 50)));
+    $('#cost-sparkline').innerHTML = bars.map(h => `<div class="bar" style="height:${Math.min(20, h)}px"></div>`).join('') || '<div style="font-size:10px;color:var(--text-muted)">No data</div>';
   } catch(e) { console.error(e); }
 }
 
-refreshSessions();
+// ──────────────── INIT ───────────────────────────
+refreshCosts();
+
+// Theme toggle
+let dark = true;
+$('#btn-theme').onclick = () => {
+  dark = !dark;
+  document.body.style.background = dark ? 'var(--bg)' : '#f5f7fa';
+  document.body.style.color = dark ? 'var(--text)' : '#1a1a2e';
+  // Would need full theme class swap for everything — simplified for now
+};
 </script>
 </body>
 </html>
-"""
+
+'''
 
 @app.route("/")
 def index():
