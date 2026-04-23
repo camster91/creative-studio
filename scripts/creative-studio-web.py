@@ -23,6 +23,8 @@ from flask import Flask, render_template_string, request, jsonify, send_from_dir
 
 # ─── Config ────────────────────────────────────────────────────────────
 API_KEY = os.environ.get("GEMINI_API_KEY")
+if not API_KEY:
+    raise RuntimeError("GEMINI_API_KEY environment variable is required")
 
 # Session / cost / output dirs
 DATA_DIR = Path.home() / ".creative-studio-data"
