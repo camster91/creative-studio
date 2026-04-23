@@ -1677,11 +1677,15 @@ def api_pins_add():
 
 @app.route("/api/pins/<path:image_path>", methods=["GET"])
 def api_pins_get(image_path):
+    if image_path and not image_path.startswith('/'):
+        image_path = '/' + image_path
     return jsonify({"pins": load_pins(image_path)})
 
 
 @app.route("/api/pins/<path:image_path>/<pin_id>", methods=["DELETE"])
 def api_pins_delete(image_path, pin_id):
+    if image_path and not image_path.startswith('/'):
+        image_path = '/' + image_path
     pins = [p for p in load_pins(image_path) if p.get("id") != pin_id]
     save_pins(image_path, pins)
     return jsonify({"pins": pins})
@@ -1689,6 +1693,8 @@ def api_pins_delete(image_path, pin_id):
 
 @app.route("/api/pins/<path:image_path>", methods=["DELETE"])
 def api_pins_clear(image_path):
+    if image_path and not image_path.startswith('/'):
+        image_path = '/' + image_path
     save_pins(image_path, [])
     return jsonify({"pins": []})
 
