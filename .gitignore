@@ -1,1 +1,23 @@
-.venv\n__pycache__\n*.pyc\n*.bak\n*.bak2\n*.bak3\nuv.lock\n.env\ncreative-studio-outputs/\n*.png\n*.jpg\n*.jpeg\nsessions/\n.creative-studio.json\n
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Outputs
+Downloads/
+creative-studio-outputs/
+
+# Env
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
