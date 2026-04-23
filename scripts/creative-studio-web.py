@@ -318,7 +318,7 @@ app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32MB uploads
 
 # ── Frontend HTML ─────────────────────────────────────────────────────
 
-HTML_TEMPLATE = '''
+HTML_TEMPLATE = r'''
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -380,15 +380,15 @@ body::before {
 /* ── Header ────────────────────────────────────────── */
 header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 20px;
+  padding: 0 24px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
 header .brand {
-  display: flex; align-items: center; gap: 10px;
-  font-weight: 700; font-size: 16px; letter-spacing: -0.3px;
+  display: flex; align-items: center; gap: 12px;
+  font-weight: 700; font-size: 18px; letter-spacing: -0.3px;
 }
 header .brand .dot {
   width: 10px; height: 10px; border-radius: 50%;
@@ -396,91 +396,109 @@ header .brand .dot {
   animation: pulse 2s ease-in-out infinite;
 }
 @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(1.2); } }
-header .brand span { color: var(--text-muted); font-weight: 500; }
+header .brand span { color: #94a3b8; font-weight: 500; font-size: 14px; }
 
-.header-actions { display: flex; align-items: center; gap: 8px; }
+.header-actions { display: flex; align-items: center; gap: 10px; }
 .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 7px 14px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: transparent; color: var(--text-muted);
-  font-family: var(--font); font-size: 13px; font-weight: 500;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 8px 16px; border-radius: var(--radius-sm);
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.04); color: #e2e8f0;
+  font-family: var(--font); font-size: 14px; font-weight: 500;
   cursor: pointer; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.btn:hover { border-color: var(--border-hover); color: var(--text); background: rgba(255,255,255,0.04); }
-.btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn:hover { border-color: rgba(255,255,255,0.2); color: #fff; background: rgba(255,255,255,0.08); }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
 .btn.primary:hover { background: #ff6340; border-color: #ff6340; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(255,122,89,0.3); }
 .btn.accent { background: var(--accent); border-color: var(--accent); color: #0B0E14; font-weight: 600; }
 .btn.accent:hover { background: #ffc94d; transform: translateY(-1px); }
-.btn.sm { padding: 5px 10px; font-size: 12px; }
-.btn.ghost { border: none; background: transparent; }
-.btn.ghost:hover { background: rgba(255,255,255,0.06); }
+.btn.sm { padding: 6px 12px; font-size: 13px; }
+.btn.ghost { border: none; background: transparent; color: #94a3b8; }
+.btn.ghost:hover { background: rgba(255,255,255,0.06); color: #e2e8f0; }
 
 /* ── Main Grid ─────────────────────────────────────── */
 .main { display: grid; grid-template-columns: 340px 1fr 300px; overflow: hidden; }
 
 /* ── Panels ─────────────────────────────────────────── */
 .panel {
-  background: var(--surface);
-  border-right: 1px solid var(--border);
+  background: rgba(18, 22, 32, 0.7);
+  border-right: 1px solid rgba(255,255,255,0.06);
   backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   display: flex; flex-direction: column;
   overflow: hidden;
 }
-.panel:last-child { border-right: none; border-left: 1px solid var(--border); }
+.panel:last-child { border-right: none; border-left: 1px solid rgba(255,255,255,0.06); }
 
 .panel-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 16px 10px;
-  font-size: 11px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: 0.08em; color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
+  padding: 16px 20px 12px;
+  font-size: 13px; font-weight: 700;
+  letter-spacing: 0.02em; color: #e2e8f0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.15);
 }
-.panel-body { flex: 1; overflow-y: auto; padding: 12px 16px 16px; }
-.panel-body::-webkit-scrollbar { width: 4px; }
-.panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.panel-header .icon { font-size: 15px; margin-right: 6px; opacity: 0.7; }
+.panel-body { flex: 1; overflow-y: auto; padding: 16px 20px 20px; }
+.panel-body::-webkit-scrollbar { width: 5px; }
+.panel-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+.panel-body::-webkit-scrollbar-track { background: transparent; }
 
 /* ── Nav Tabs ─────────────────────────────────────── */
 .nav-tabs {
-  display: flex; gap: 2px; padding: 4px;
-  background: rgba(255,255,255,0.03); border-radius: var(--radius-sm);
-  margin-bottom: 16px;
+  display: flex; gap: 3px; padding: 4px;
+  background: rgba(0,0,0,0.25); border-radius: var(--radius-sm);
+  margin-bottom: 20px;
+  border: 1px solid rgba(255,255,255,0.05);
 }
 .nav-tab {
-  flex: 1; text-align: center; padding: 7px 0;
+  flex: 1; text-align: center; padding: 8px 0;
   border-radius: calc(var(--radius-sm) - 2px);
-  font-size: 12px; font-weight: 500; color: var(--text-muted);
+  font-size: 13px; font-weight: 500; color: #64748B;
   cursor: pointer; transition: all 0.2s; border: none; background: transparent;
 }
-.nav-tab:hover { color: var(--text); }
+.nav-tab:hover { color: #e2e8f0; }
 .nav-tab.active {
-  background: var(--bg-elevated); color: var(--text);
+  background: rgba(255,255,255,0.08); color: #e2e8f0;
   box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  font-weight: 600;
 }
 .nav-tab .shortcut {
-  font-family: var(--font-mono); font-size: 9px; opacity: 0.5;
-  background: rgba(255,255,255,0.06); padding: 1px 4px; border-radius: 3px;
-  margin-left: 4px;
+  font-family: var(--font-mono); font-size: 10px; opacity: 0.5;
+  background: rgba(255,255,255,0.08); padding: 2px 5px; border-radius: 4px;
+  margin-left: 5px;
 }
 
 /* ── Form ──────────────────────────────────────────── */
-.form-group { margin-bottom: 14px; }
+.form-group { margin-bottom: 18px; }
 .form-group label {
-  display: block; font-size: 11px; font-weight: 600;
-  color: var(--text-muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.05em;
+  display: block; font-size: 12px; font-weight: 600;
+  color: #94a3b8; margin-bottom: 6px;
+}
+.form-group .help {
+  font-size: 11px; color: #475569; margin-top: 4px; line-height: 1.4;
 }
 input, textarea, select {
   width: 100%; padding: 10px 12px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border); background: var(--bg-elevated);
-  color: var(--text); font-family: var(--font); font-size: 13px;
+  border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.3);
+  color: var(--text); font-family: var(--font); font-size: 14px;
   transition: border-color 0.2s, box-shadow 0.2s;
+  line-height: 1.5;
 }
 input:focus, textarea:focus, select:focus {
-  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-dim);
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(255,122,89,0.15);
 }
-textarea { resize: vertical; min-height: 90px; line-height: 1.5; }
-select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='12' height='12' fill='%2364748B' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5l3 3 3-3'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; }
+input::placeholder, textarea::placeholder { color: #475569; }
+select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='12' height='12' fill='%2394a3b8' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5l3 3 3-3'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; }
 
+/* Section divider */
+.section-divider {
+  height: 1px; background: var(--border); margin: 16px 0; position: relative;
+}
+.section-divider span {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  background: var(--surface); padding: 0 10px;
+  font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: 0.1em;
+}
 /* Checkbox */
 .checkbox {
   display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-muted);
@@ -778,7 +796,7 @@ select { cursor: pointer; appearance: none; background-image: url("data:image/sv
 
 <!-- ═══════ LEFT PANEL ═══════ -->
 <div class="panel" id="panel-left">
-  <div class="panel-header">Input</div>
+  <div class="panel-header"><span class="icon">&#9881;</span> Generation Settings</div>
   <div class="panel-body">
 
     <!-- Mode Tabs -->
@@ -792,12 +810,13 @@ select { cursor: pointer; appearance: none; background-image: url("data:image/sv
     <!-- MODE: GENERATE -->
     <div id="mode-generate">
       <div class="form-group">
-        <label>Prompt</label>
+        <label>Describe what you want</label>
         <textarea id="prompt-input" placeholder="A single red apple on a white table, product photography, overhead softbox lighting, shallow depth of field, Shot on Hasselblad H6D, 100mm f/2.8..."></textarea>
+        <div class="help">Be specific about subject, lighting, camera angle, and style. Click tags below to add common photo terms.</div>
       </div>
 
       <div class="form-group">
-        <label>Quick Tags</label>
+        <label>Quick Tags <span style="font-weight:400;color:#475569;">— click to add</span></label>
         <div class="tag-list" id="quick-tags">
           <span class="tag" data-text="overhead softbox lighting">💡 Lighting</span>
           <span class="tag" data-text="shallow depth of field">🎬 DoF</span>
@@ -807,6 +826,8 @@ select { cursor: pointer; appearance: none; background-image: url("data:image/sv
           <span class="tag" data-text="professional product photography">🏢 Studio</span>
         </div>
       </div>
+
+      <div class="section-divider"><span>Model Settings</span></div>
 
       <div class="form-group">
         <label>Mode</label>
@@ -999,8 +1020,8 @@ select { cursor: pointer; appearance: none; background-image: url("data:image/sv
     <div class="canvas-area empty" id="canvas-main-empty">
       <div class="empty-state" id="canvas-empty">
         <div class="icon">🎨</div>
-        <h3>Your canvas is ready</h3>
-        <p>Enter a prompt on the left, drop a reference image, and hit Generate to see your creation here.</p>
+        <h3>Ready to create</h3>
+        <p>Enter a prompt and click <b style="color:var(--primary);font-weight:600;">Generate</b> to create your first image.</p>
       </div>
     </div>
 
@@ -1031,11 +1052,11 @@ select { cursor: pointer; appearance: none; background-image: url("data:image/sv
 
 <!-- ═══════ RIGHT PANEL ═══════ -->
 <div class="panel" id="panel-right">
-  <div class="panel-header">Inspector</div>
+  <div class="panel-header"><span class="icon">&#128221;</span> Inspector</div>
   <div class="panel-body" id="inspector-body">
     <div class="empty-state" style="padding:20px 0;">
       <div class="icon" style="font-size:32px;">📋</div>
-      <p style="font-size:12px;">Generate or select an image to see details, QC results, and export options.</p>
+      <p style="font-size:13px;color:#94a3b8;line-height:1.6;">Generate an image to see details, QC results, and export options here.</p>
     </div>
     <!-- Pins Section (shown when image selected) -->
     <div id="inspector-pins" class="hidden" style="margin-top:12px;">
@@ -1064,7 +1085,7 @@ select { cursor: pointer; appearance: none; background-image: url("data:image/sv
     <span><kbd>E</kbd> Export</span>
     <span><kbd>Q</kbd> QC</span>
   </div>
-  <div>Creative Studio v5 · <span style="color:var(--primary)">●</span> Ready</div>
+  <div><span style="color:var(--primary)">●</span> Creative Studio v5</div>
 </div>
 
 <script>
