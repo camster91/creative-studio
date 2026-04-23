@@ -117,6 +117,47 @@ def image_url(path: str) -> str:
             return f"/image/{p.parent.name}/{p.name}"
         return ""
 
+# ─── Pin Annotations ────────────────────────────────────────────────────
+PINS_DB = DATA_DIR / "pins.json"
+
+def load_pins(image_path: str) -> List[Dict]:
+    data = load_json(PINS_DB, {})
+    return data.get(image_path, [])
+
+def save_pins(image_path: str, pins: List[Dict]):
+    data = load_json(PINS_DB, {})
+    data[image_path] = pins
+    save_json(PINS_DB, data)
+
+def pin_id() -> str:
+    return uuid.uuid4().hex[:8]
+
+def pin_to_region(x: float, y: float) -> str:
+    """Convert normalized coords (0..1) to human-readable region."""
+    h = "top" if y < 0.33 else "middle" if y < 0.66 else "bottom"
+    w = "left" if x < 0.33 else "center" if x < 0.66 else "right"
+    if h == "middle" and w == "center":
+        return "center"
+    return f"{h}-{w}" if h != "middle" else w
+
+def build_pin_prompt(pins: List[Dict]) -> str:
+    """Build a spatially-aware refinement prompt from pins."""
+    if not pins:
+        return ""
+    lines = []
+    for i, p in enumerate(pins, 1):
+        region = pin_to_region(p.get("x", 0.5), p.get("y", 0.5))
+        text = p.get("text", "").strip()
+        if text:
+            lines.append(f"[{i}] {region}: {text}")
+    if not lines:
+        return ""
+    return (
+        "Make these targeted changes to specific areas of the image: "
+        + "; ".join(lines) +
+        ". Apply each change only to its specified region. Preserve all other areas exactly as they are."
+    )
+
 # ─── Image generation wrappers ────────────────────────────────────────
 
 def run_cli_generate(prompt: str, mode: str, tier: str, aspect: str, smart: bool,
@@ -659,6 +700,62 @@ select { cursor: pointer; appearance: none; background-image: url("data:image/sv
 
 /* ── Confetti (simple CSS particles) ──────────────── */
 .confetti { position: absolute; width: 6px; height: 6px; border-radius: 2px; pointer-events: none; }
+/* ── Pin Annotations ───────────────────────────────── */
+.pin-layer { position: absolute; inset: 0; pointer-events: none; z-index: 10; }
+.pin-layer.active { pointer-events: all; cursor: crosshair; }
+.pin-marker {
+  position: absolute; width: 22px; height: 22px; transform: translate(-50%, -100%);
+  cursor: pointer; pointer-events: all; z-index: 20; transition: transform 0.15s;
+}
+.pin-marker:hover { transform: translate(-50%, -100%) scale(1.2); }
+.pin-marker .dot {
+  width: 14px; height: 14px; border-radius: 50%; background: var(--primary);
+  border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+}
+.pin-marker .tip {
+  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  padding: 6px 10px; border-radius: 8px; font-size: 11px; color: var(--text);
+  white-space: nowrap; opacity: 0; transition: opacity 0.2s; pointer-events: none;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.pin-marker:hover .tip { opacity: 1; }
+.pin-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 30;
+  background: rgba(0,0,0,0.5); backdrop-filter: blur(8px);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; font-size: 11px; color: var(--text-muted);
+  cursor: pointer; transition: all 0.2s;
+}
+.pin-btn:hover { color: var(--primary); border-color: var(--primary); }
+.pin-btn.active { color: var(--primary); background: var(--primary-dim); border-color: var(--primary); }
+.canvas-wrap { position: relative; display: inline-block; }
+.pin-confirm {
+  position: absolute; background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  z-index: 40; display: flex; gap: 6px; min-width: 220px;
+}
+.pin-confirm input {
+  flex: 1; padding: 6px 10px; font-size: 12px; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+}
+.pin-confirm input:focus { outline: none; border-color: var(--primary); }
+.pin-confirm .btn { padding: 5px 10px; font-size: 11px; }
+
+/* ── Pin List in Inspector ─────────────────────────── */
+.pin-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.pin-row {
+  display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px;
+  background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px;
+  font-size: 12px; color: var(--text); transition: all 0.15s;
+}
+.pin-row:hover { border-color: var(--border-hover); }
+.pin-row .region { font-weight: 600; color: var(--primary); flex: 0 0 auto; }
+.pin-row .text { flex: 1; }
+.pin-row .del { cursor: pointer; color: var(--text-muted); font-size: 14px; opacity: 0; transition: opacity 0.15s; }
+.pin-row:hover .del { opacity: 1; }
+.pin-row .del:hover { color: var(--danger); }
 </style>
 </head>
 <body>
@@ -892,12 +989,24 @@ select { cursor: pointer; appearance: none; background-image: url("data:image/sv
   <div class="panel-body" style="display:flex;flex-direction:column;gap:16px;">
 
     <!-- Main Preview -->
-    <div class="canvas-area empty" id="canvas-main">
+    <div style="position:relative;" id="canvas-wrapper" class="hidden">
+      <button class="pin-btn" id="btn-pin-mode" title="Click to drop comment pins on image">📌 Pin Mode</button>
+      <div class="canvas-wrap" id="canvas-wrap">
+        <div class="canvas-area" id="canvas-main"></div>
+        <div class="pin-layer" id="pin-layer"></div>
+      </div>
+    </div>
+    <div class="canvas-area empty" id="canvas-main-empty">
       <div class="empty-state" id="canvas-empty">
         <div class="icon">🎨</div>
         <h3>Your canvas is ready</h3>
         <p>Enter a prompt on the left, drop a reference image, and hit Generate to see your creation here.</p>
       </div>
+    </div>
+
+    <!-- Pin Toolbar -->
+    <div id="pin-toolbar" class="hidden" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <span style="font-size:11px;color:var(--text-muted);">💡 Click anywhere on the image to add a comment pin. The AI will use pin locations to know which area to change.</span>
     </div>
 
     <!-- Refine Box -->
@@ -923,10 +1032,19 @@ select { cursor: pointer; appearance: none; background-image: url("data:image/sv
 <!-- ═══════ RIGHT PANEL ═══════ -->
 <div class="panel" id="panel-right">
   <div class="panel-header">Inspector</div>
-  <div class="panel-body">
+  <div class="panel-body" id="inspector-body">
     <div class="empty-state" style="padding:20px 0;">
       <div class="icon" style="font-size:32px;">📋</div>
       <p style="font-size:12px;">Generate or select an image to see details, QC results, and export options.</p>
+    </div>
+    <!-- Pins Section (shown when image selected) -->
+    <div id="inspector-pins" class="hidden" style="margin-top:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">📝 Pins (<span id="pin-count">0</span>)</span>
+        <button class="btn sm ghost" id="btn-clear-pins">Clear</button>
+      </div>
+      <div class="pin-list" id="pin-list"></div>
+      <button class="btn primary" id="btn-refine-pins" style="width:100%;margin-top:8px;padding:10px;">🔧 Refine with Pins</button>
     </div>
   </div>
 </div>
@@ -1068,16 +1186,15 @@ $$('.preset-card').forEach(p => {
 // ──────────────── RENDER OUTPUTS ───────────────
 function renderOutputs(images) {
   const grid = $('#output-grid');
-  const canvas = $('#canvas-main');
-  const empty = $('#canvas-empty');
-
   if (!images || !images.length) return;
+
+  // Show canvas wrapper, hide empty state
+  $('#canvas-main-empty').classList.add('hidden');
+  $('#canvas-wrapper').classList.remove('hidden');
 
   // Show first image in canvas
   const first = images[0];
-  empty.classList.add('hidden');
-  canvas.classList.remove('empty');
-  canvas.innerHTML = `<img src="${first.url}" alt="${first.name}" id="main-image">`;
+  $('#canvas-main').innerHTML = `<img src="${first.url}" alt="${first.name}" id="main-image" style="max-width:100%;display:block;">`;
   $('#canvas-meta').textContent = `${first.model} · ${first.name}`;
 
   // Show images in grid
@@ -1098,6 +1215,7 @@ function renderOutputs(images) {
   });
 
   $('#refine-box').classList.remove('hidden');
+  $('#inspector-pins').classList.remove('hidden');
 }
 
 function selectImage(path, url) {
@@ -1107,10 +1225,9 @@ function selectImage(path, url) {
   if (item) item.classList.add('selected');
   // Update main canvas
   $('#main-image')?.remove();
-  const canvas = $('#canvas-main');
-  canvas.classList.remove('empty');
-  $('#canvas-empty').classList.add('hidden');
-  canvas.insertAdjacentHTML('afterbegin', `<img src="${url}" id="main-image" alt="selected">`);
+  $('#canvas-main').innerHTML = `<img src="${url}" id="main-image" alt="selected" style="max-width:100%;display:block;">`;
+  // Load pins for this image
+  loadPinsForImage(path);
 }
 
 // ──────────────── API CALLS ────────────────────
@@ -1244,8 +1361,144 @@ $('#btn-theme').onclick = () => {
   dark = !dark;
   document.body.style.background = dark ? 'var(--bg)' : '#f5f7fa';
   document.body.style.color = dark ? 'var(--text)' : '#1a1a2e';
-  // Would need full theme class swap for everything — simplified for now
 };
+
+// ─── PIN ANNOTATION SYSTEM ────────────────────────────
+let pinMode = false;
+let activePins = [];
+let tempPin = null;
+
+function setPinMode(on) {
+  pinMode = on;
+  const btn = $('#btn-pin-mode');
+  const layer = $('#pin-layer');
+  const toolbar = $('#pin-toolbar');
+  if (on) { btn.classList.add('active'); btn.textContent = '📌 Pin Mode ON'; layer.classList.add('active'); toolbar.classList.remove('hidden'); showToast('Click anywhere on the image to drop a comment pin', 'info'); }
+  else { btn.classList.remove('active'); btn.textContent = '📌 Pin Mode'; layer.classList.remove('active'); toolbar.classList.add('hidden'); cancelTempPin(); }
+}
+
+$('#btn-pin-mode').onclick = () => setPinMode(!pinMode);
+
+function cancelTempPin() { if (tempPin) { tempPin.remove(); tempPin = null; } }
+
+function showPinConfirm(vx, vy, nx, ny) {
+  cancelTempPin();
+  const wrap = $('#canvas-wrap');
+  if (!wrap) return;
+  const el = document.createElement('div');
+  el.className = 'pin-confirm';
+  el.style.left = (vx - 100) + 'px';
+  el.style.top = (vy - 70) + 'px';
+  el.innerHTML = `<input id="pin-text-input" placeholder="What to change here?" style="flex:1;padding:6px 8px;font-size:12px;"><button class="btn primary sm" id="pin-ok">Add</button><button class="btn ghost sm" id="pin-cancel">✕</button>`;
+  wrap.appendChild(el);
+  tempPin = el;
+  setTimeout(() => $('#pin-text-input')?.focus(), 50);
+  $('#pin-ok').onclick = async () => { const t = $('#pin-text-input')?.value?.trim(); if (!t) return; cancelTempPin(); await addPin(selectedImage, nx, ny, t); };
+  $('#pin-cancel').onclick = () => cancelTempPin();
+  $('#pin-text-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#pin-ok').click(); if (e.key === 'Escape') cancelTempPin(); });
+}
+
+$('#pin-layer').onclick = (e) => {
+  if (!pinMode) return;
+  e.stopPropagation();
+  const img = $('#main-image');
+  if (!img) return;
+  const r = img.getBoundingClientRect();
+  const nx = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  const ny = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+  showPinConfirm(e.clientX, e.clientY, nx, ny);
+};
+
+async function addPin(imagePath, x, y, text) {
+  if (!imagePath) { showToast('Select an image first', 'error'); return; }
+  try {
+    const d = await post('/api/pins', { image_path: imagePath, x, y, text });
+    activePins = d.pins || [];
+    renderPinsOnImage();
+    renderPinList();
+    showToast('Pin added', 'success');
+  } catch(e) { showToast(e.message, 'error'); }
+}
+
+async function loadPinsForImage(imagePath) {
+  if (!imagePath) { activePins = []; renderPinsOnImage(); renderPinList(); return; }
+  try {
+    const d = await (await fetch('/api/pins/' + encodeURIComponent(imagePath))).json();
+    activePins = d.pins || [];
+    renderPinsOnImage();
+    renderPinList();
+  } catch(e) { activePins = []; }
+}
+
+async function deletePin(pid) {
+  if (!selectedImage || !pid) return;
+  try { const d = await (await fetch('/api/pins/' + encodeURIComponent(selectedImage) + '/' + pid, { method: 'DELETE' })).json(); activePins = d.pins || []; renderPinsOnImage(); renderPinList(); } catch(e) {}
+}
+
+async function clearPins() {
+  if (!selectedImage) return;
+  try { const d = await (await fetch('/api/pins/' + encodeURIComponent(selectedImage), { method: 'DELETE' })).json(); activePins = d.pins || []; renderPinsOnImage(); renderPinList(); showToast('All pins cleared', 'info'); } catch(e) {}
+}
+
+function renderPinsOnImage() {
+  const layer = $('#pin-layer');
+  const img = $('#main-image');
+  if (!layer || !img) return;
+  layer.innerHTML = '';
+  const r = img.getBoundingClientRect();
+  const pr = img.parentElement.getBoundingClientRect();
+  const ox = r.left - pr.left;
+  const oy = r.top - pr.top;
+  activePins.forEach(p => {
+    const m = document.createElement('div');
+    m.className = 'pin-marker';
+    m.style.left = (ox + p.x * r.width) + 'px';
+    m.style.top = (oy + p.y * r.height) + 'px';
+    m.innerHTML = `<div class="tip">${escapeHtml(p.text)}</div><div class="dot" style="background:${pinMode?'var(--primary)':'#06D6A0'}"></div>`;
+    m.onclick = (e) => { e.stopPropagation(); deletePin(p.id); };
+    layer.appendChild(m);
+  });
+}
+
+function renderPinList() {
+  const list = $('#pin-list');
+  const count = $('#pin-count');
+  if (!list) return;
+  count.textContent = activePins.length;
+  if (!activePins.length) { list.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px 0;">No pins. Enable Pin Mode and click the image to add area-specific feedback.</div>'; return; }
+  list.innerHTML = activePins.map(p => `<div class="pin-row"><span class="region">${regionLabel(p.x,p.y)}</span><span class="text">${escapeHtml(p.text)}</span><span class="del" data-pid="${p.id}">✕</span></div>`).join('');
+  list.querySelectorAll('.del').forEach(el => { el.onclick = () => deletePin(el.dataset.pid); });
+}
+
+function regionLabel(x, y) {
+  const h = y < 0.33 ? 'top' : y < 0.66 ? 'mid' : 'bot';
+  const w = x < 0.33 ? 'left' : x < 0.66 ? 'ctr' : 'right';
+  if (h === 'mid' && w === 'ctr') return 'center';
+  return h + '-' + w;
+}
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+$('#btn-clear-pins').onclick = clearPins;
+
+$('#btn-refine-pins').onclick = async () => {
+  if (!selectedImage) { showToast('Select an image first', 'error'); return; }
+  if (!activePins.length) { showToast('Add at least one pin first', 'error'); return; }
+  const tier = $('#refine-tier')?.value || 'quality';
+  setLoading('#btn-refine-pins', true);
+  try {
+    const data = await post('/api/refine', {
+      image_path: selectedImage, changes: '',
+      pins: activePins.map(p => ({ x: p.x, y: p.y, text: p.text })),
+      tier, session_id: sessionId,
+    });
+    renderOutputs(data.images);
+    showToast(data.message, 'success');
+    refreshCosts();
+  } catch(e) { showToast(e.message, 'error'); }
+  setLoading('#btn-refine-pins', false);
+};
+
+window.addEventListener('resize', () => { if (activePins.length) renderPinsOnImage(); });
 </script>
 </body>
 </html>
@@ -1359,19 +1612,64 @@ def api_refine():
     data = request.json or {}
     image_path = data.get("image_path", "")
     changes = data.get("changes", "").strip()
+    pins = data.get("pins", [])
     tier = data.get("tier", "quality")
     session_id = data.get("session_id", new_session_id())
-    if not image_path or not changes:
-        return jsonify({"error": "image_path and changes required"}), 400
 
-    images = run_cli_refine(image_path, changes, tier)
+    # Build spatial prompt from pins + user text
+    pin_text = build_pin_prompt(pins) if pins else ""
+    if pin_text and changes:
+        full_changes = f"{changes}. Also: {pin_text}"
+    elif pin_text:
+        full_changes = pin_text
+    elif changes:
+        full_changes = changes
+    else:
+        return jsonify({"error": "changes or pins required"}), 400
+
+    images = run_cli_refine(image_path, full_changes, tier)
     for img in images:
         add_entry(session_id, {
             "type": "refine", "cost": img.get("cost", 0), "image_url": img.get("url", ""),
-            "model": img.get("model", ""), "note": changes[:100]
+            "model": img.get("model", ""), "note": full_changes[:200]
         })
 
     return jsonify({"message": "Refined", "images": images, "session_id": session_id})
+
+
+# ── Pin Annotation Routes ───────────────────────────────────────────────
+
+@app.route("/api/pins", methods=["POST"])
+def api_pins_add():
+    data = request.json or {}
+    image_path = data.get("image_path", "")
+    x = float(data.get("x", 0.5))
+    y = float(data.get("y", 0.5))
+    text = data.get("text", "").strip()
+    if not image_path or not text:
+        return jsonify({"error": "image_path and text required"}), 400
+    pins = load_pins(image_path)
+    pins.append({"id": pin_id(), "x": x, "y": y, "text": text, "time": now_str()})
+    save_pins(image_path, pins)
+    return jsonify({"pins": pins})
+
+
+@app.route("/api/pins/<path:image_path>", methods=["GET"])
+def api_pins_get(image_path):
+    return jsonify({"pins": load_pins(image_path)})
+
+
+@app.route("/api/pins/<path:image_path>/<pin_id>", methods=["DELETE"])
+def api_pins_delete(image_path, pin_id):
+    pins = [p for p in load_pins(image_path) if p.get("id") != pin_id]
+    save_pins(image_path, pins)
+    return jsonify({"pins": pins})
+
+
+@app.route("/api/pins/<path:image_path>", methods=["DELETE"])
+def api_pins_clear(image_path):
+    save_pins(image_path, [])
+    return jsonify({"pins": []})
 
 
 @app.route("/api/sessions", methods=["GET"])
