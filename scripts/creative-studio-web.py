@@ -129,10 +129,12 @@ def run_cli_generate(prompt: str, mode: str, tier: str, aspect: str, smart: bool
     if mode == "variations":
         args = ["bash", str(Path(__file__).parent.parent / "launch.sh"), "variations",
                 "--prompt", prompt, "--tier", tier, "--aspect-ratio", aspect,
+                "--format", mode,
                 "-v", str(variations)]
     else:
         args = ["bash", str(Path(__file__).parent.parent / "launch.sh"), "direct",
-                "--prompt", prompt, "--tier", tier, "--aspect-ratio", aspect]
+                "--prompt", prompt, "--tier", tier, "--aspect-ratio", aspect,
+                "--format", mode]
         if smart:
             args.append("--smart")
     if input_image:
