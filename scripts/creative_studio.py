@@ -29,14 +29,20 @@ import json
 import os
 import re
 import sys
-import time
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
-from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma, post_figma_comment
+from figma_utils import (
+    parse_figma_url,
+    fetch_figma_context,
+    enhance_prompt_with_figma,
+    post_figma_comment,
+)
 
-REASONING_MODEL = "gemini-3.1-pro-preview"  # Latest reasoning model for planning/analysis
+REASONING_MODEL = (
+    "gemini-3.1-pro-preview"  # Latest reasoning model for planning/analysis
+)
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
 # ─── Config ──────────────────────────────────────────────────────────
@@ -71,7 +77,13 @@ elif Path("/mnt/c/Users").exists():
     # WSL: try to find the user's Downloads folder
     try:
         import subprocess as _sp
-        _user = _sp.run(["cmd.exe", "/c", "echo %USERNAME%"], capture_output=True, text=True, timeout=5).stdout.strip()
+
+        _user = _sp.run(
+            ["cmd.exe", "/c", "echo %USERNAME%"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
         _win_dl = Path(f"/mnt/c/Users/{_user}/Downloads/creative-studio-outputs")
         if _win_dl.parent.exists():
             _OUT = _win_dl
@@ -96,6 +108,7 @@ def _stage_input(input_path: Optional[str]) -> Optional[str]:
     if not src.exists():
         # Try shell glob for special-character filenames
         import glob
+
         matches = glob.glob(str(src))
         if matches:
             src = Path(matches[0])
@@ -109,6 +122,7 @@ def _stage_input(input_path: Optional[str]) -> Optional[str]:
     # Copy to clean temp path
     try:
         import shutil
+
         ext = src.suffix.lower() if src.suffix else ".png"
         dest = f"/tmp/cs_input_{hashlib.md5(str(src).encode()).hexdigest()[:8]}{ext}"
         shutil.copy2(str(src), dest)
@@ -122,6 +136,7 @@ def get_genai_client():
     global GENAI_CLIENT
     if GENAI_CLIENT is None:
         from google import genai
+
         GENAI_CLIENT = genai.Client(api_key=API_KEY)
     return GENAI_CLIENT
 
@@ -136,9 +151,11 @@ def _ensure_png(fname: str) -> str:
         return f"{fname}.png"
     return fname
 
+
 def crop_to_aspect_ratio(img, target_ratio: str):
     """PIL center-crop image to target aspect ratio."""
     from fractions import Fraction
+
     w, h = img.size
     r = Fraction(target_ratio.replace(":", "/"))
     target_wh = float(r)
@@ -154,12 +171,12 @@ def crop_to_aspect_ratio(img, target_ratio: str):
     return img
 
 
-
-
 # ─── Config persistence ────────────────────────────────────────────────
+
 
 class Config:
     """Persistent preferences in ~/.creative-studio.json"""
+
     PATH = Path.home() / ".creative-studio.json"
 
     def __init__(self):
@@ -195,7 +212,9 @@ class Config:
 
     def add_brand(self, name: str, colors, products, logo_path=""):
         self._data["brand_profiles"][name] = {
-            "colors": colors, "products": products, "logo_path": logo_path,
+            "colors": colors,
+            "products": products,
+            "logo_path": logo_path,
             "updated": __import__("datetime").datetime.now().isoformat(),
         }
         self.save()
@@ -234,16 +253,32 @@ PRICE_CARD = {
 }
 
 
-
 # Supported Gemini image aspect ratios (for validation)
-_VALID_RATIOS = {"1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"}
+_VALID_RATIOS = {
+    "1:1",
+    "1:4",
+    "1:8",
+    "2:3",
+    "3:2",
+    "3:4",
+    "4:1",
+    "4:3",
+    "4:5",
+    "5:4",
+    "8:1",
+    "9:16",
+    "16:9",
+    "21:9",
+}
 _RATIO_FALLBACK = {"16:10": "16:9"}
+
 
 def resolve_aspect_ratio(raw: str) -> str:
     r = raw.strip()
     if r in _VALID_RATIOS:
         return r
     return _RATIO_FALLBACK.get(r, "16:9")
+
 
 def estimate_cost(model: str, resolution: str) -> float:
     m = PRICE_CARD.get(model, PRICE_CARD["__default__"])
@@ -252,10 +287,10 @@ def estimate_cost(model: str, resolution: str) -> float:
     return m
 
 
-
 # ─── Prompt Enhancement Engine ────────────────────────────────────────
 
 # ─── Vision Pre-Analysis ──────────────────────────────────────────────
+
 
 def vision_analyze(input_image_path: str) -> dict:
     """Analyze the input reference image before generation."""
@@ -298,10 +333,12 @@ def vision_analyze(input_image_path: str) -> dict:
         return {"error": str(e), "width": w, "height": h, "orientation": orientation}
 
 
-
-def smart_enhance_prompt(brief: str, has_reference_image: bool = False,
-                         figma_context: Optional[dict] = None,
-                         tier: str = "balanced") -> dict:
+def smart_enhance_prompt(
+    brief: str,
+    has_reference_image: bool = False,
+    figma_context: Optional[dict] = None,
+    tier: str = "balanced",
+) -> dict:
     """
     Use the reasoning model to craft a professional generation prompt.
     Returns a dict with: prompt, negative_prompt, model, resolution, aspect_ratio, notes
@@ -349,15 +386,15 @@ def smart_enhance_prompt(brief: str, has_reference_image: bool = False,
     client = get_genai_client()
     try:
         resp = client.models.generate_content(
-            model=enhancer_model,
-            contents=system_prompt,
-            config={"temperature": 0.3}
+            model=enhancer_model, contents=system_prompt, config={"temperature": 0.3}
         )
         text = (resp.text or "{}").strip()
         text = re.sub(r"```json\s*|```\s*", "", text)
         parsed = json.loads(text)
     except Exception as e:
-        print(f"  ⚠ Prompt enhancement failed ({e}), using raw prompt.", file=sys.stderr)
+        print(
+            f"  ⚠ Prompt enhancement failed ({e}), using raw prompt.", file=sys.stderr
+        )
         parsed = {}
 
     result = {
@@ -375,9 +412,15 @@ def smart_enhance_prompt(brief: str, has_reference_image: bool = False,
 
 # ─── Core Generation ──────────────────────────────────────────────────
 
-def generate_nano(prompt: str, output_path: Path, input_image_path: Optional[str] = None,
-                  model_name: str = NANO_MODEL, resolution: str = "2K",
-                  aspect_ratio: str = "16:9") -> Optional[str]:
+
+def generate_nano(
+    prompt: str,
+    output_path: Path,
+    input_image_path: Optional[str] = None,
+    model_name: str = NANO_MODEL,
+    resolution: str = "2K",
+    aspect_ratio: str = "16:9",
+) -> Optional[str]:
     """Image-to-image or text-to-image via Nano Banana chat model."""
     from google.genai import types
     from PIL import Image
@@ -403,14 +446,14 @@ def generate_nano(prompt: str, output_path: Path, input_image_path: Optional[str
             img_cfg.image_size = resolution
         except Exception:
             pass
-        
+
         resp = client.models.generate_content(
             model=model_name,
             contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"],
                 image_config=img_cfg,
-            )
+            ),
         )
         for part in resp.parts:
             if part.inline_data is not None:
@@ -434,7 +477,9 @@ def generate_nano(prompt: str, output_path: Path, input_image_path: Optional[str
     return None
 
 
-def generate_imagen(prompt: str, output_path: Path, aspect_ratio: str = "1:1") -> Optional[str]:
+def generate_imagen(
+    prompt: str, output_path: Path, aspect_ratio: str = "1:1"
+) -> Optional[str]:
     """Pure text-to-image via Imagen 4 using Google GenAI SDK (latest method)."""
     from google.genai import types
 
@@ -470,9 +515,11 @@ def generate_imagen(prompt: str, output_path: Path, aspect_ratio: str = "1:1") -
 
 # ─── Composite Pipeline (Real Product + AI Environment) ─────────────────
 
+
 def remove_background_pil(input_path: str) -> str:
     """Remove background from product photo using PIL edge detection."""
-    from PIL import Image, ImageFilter
+    from PIL import Image, ImageFilter, ImageChops
+
     img = Image.open(input_path).convert("RGBA")
     gray = img.convert("L")
     # Build mask: pure white bg gets removed, everything else kept
@@ -493,10 +540,18 @@ def remove_background_pil(input_path: str) -> str:
 def _add_drop_shadow(bg, fg, pos_tuple, blur=8, alpha=80):
     """Add a soft drop shadow beneath the pasted product."""
     from PIL import ImageFilter, Image
+
     shadow = fg.copy()
     r, g, b, a = shadow.split()
-    shadow = Image.merge("RGBA", (Image.new("L", fg.size, 0), Image.new("L", fg.size, 0),
-                                  Image.new("L", fg.size, 0), a.point(lambda x: alpha if x > 50 else 0)))
+    shadow = Image.merge(
+        "RGBA",
+        (
+            Image.new("L", fg.size, 0),
+            Image.new("L", fg.size, 0),
+            Image.new("L", fg.size, 0),
+            a.point(lambda x: alpha if x > 50 else 0),
+        ),
+    )
     shadow = shadow.filter(ImageFilter.GaussianBlur(blur))
     x, y = pos_tuple
     bg.paste(shadow, (x + 4, y + 4), shadow)
@@ -506,6 +561,7 @@ def _add_drop_shadow(bg, fg, pos_tuple, blur=8, alpha=80):
 def cmd_composite(args):
     """Generate AI environment WITHOUT product, then composite real product on top."""
     from PIL import Image
+
     product_path = _stage_input(args.product)
     if not product_path:
         print("ERROR: --product required", file=sys.stderr)
@@ -516,16 +572,26 @@ def cmd_composite(args):
     fg = Image.open(fg_path)
     fg_w, fg_h = fg.size
     print("  Step 2: Generate clean environment...")
-    env_file = _OUT / datetime.now().strftime("%Y-%m-%d") / "composite" / f"env-{now_str()}.png"
+    env_file = (
+        _OUT
+        / datetime.now().strftime("%Y-%m-%d")
+        / "composite"
+        / f"env-{now_str()}.png"
+    )
     env_file.parent.mkdir(parents=True, exist_ok=True)
     env_prompt = (
         f"{args.prompt}\n\n"
         "IMPORTANT: The scene must contain NO products, NO bottles, NO containers, NO labels. "
         "Only empty shelf surfaces and environmental elements."
     )
-    result_env = generate_nano(env_prompt, env_file, input_image_path=None,
-                                 model_name=NANO_PRO, resolution="2K",
-                                 aspect_ratio=args.aspect_ratio)
+    result_env = generate_nano(
+        env_prompt,
+        env_file,
+        input_image_path=None,
+        model_name=NANO_PRO,
+        resolution="2K",
+        aspect_ratio=args.aspect_ratio,
+    )
     if not result_env:
         print("  ✗ Environment generation failed.", file=sys.stderr)
         sys.exit(1)
@@ -540,7 +606,10 @@ def cmd_composite(args):
     bg = _add_drop_shadow(bg, fg, (x, y), blur=14, alpha=60)
     bg.paste(fg, (x, y), fg)
     outdir = ensure_dir(_OUT / datetime.now().strftime("%Y-%m-%d") / "composite")
-    fname = _ensure_png(args.filename or f"{now_str()}-composite-{hashlib.md5(args.prompt[:30].encode()).hexdigest()[:5]}.png")
+    fname = _ensure_png(
+        args.filename
+        or f"{now_str()}-composite-{hashlib.md5(args.prompt[:30].encode()).hexdigest()[:5]}.png"
+    )
     outpath = outdir / fname
     bg.convert("RGB").save(str(outpath), "PNG", quality=95)
     print(f"\n✓ {outpath}")
@@ -548,9 +617,11 @@ def cmd_composite(args):
 
 # ─── Export Pipeline (Multi-format crops) ─────────────────────────────
 
+
 def cmd_export(args):
     """Crop a source image to multiple platform-specific formats."""
     from PIL import Image
+
     src = Path(args.input)
     if not src.exists():
         print(f"File not found: {src}", file=sys.stderr)
@@ -567,7 +638,7 @@ def cmd_export(args):
     selected = args.presets.split(",") if args.presets else list(presets.keys())
     outdir = ensure_dir(_OUT / datetime.now().strftime("%Y-%m-%d") / "exports")
     img = Image.open(str(src)).convert("RGBA")
-    print(f"\n── EXPORT")
+    print("\n── EXPORT")
     print(f"  Source: {src.name} ({img.size[0]}x{img.size[1]})")
     print(f"  Presets: {', '.join(selected)}\n")
     for key in selected:
@@ -594,15 +665,17 @@ def cmd_export(args):
 
 # ─── Auto QC / Quality Gate ───────────────────────────────────────────
 
+
 def cmd_qc(args):
     """Run vision-based quality checks on generated images."""
     from PIL import Image
     from google.genai import types
+
     img_path = _stage_input(args.input)
     if not img_path:
         print("ERROR: --input required", file=sys.stderr)
         sys.exit(1)
-    print(f"\n── QUALITY CHECK")
+    print("\n── QUALITY CHECK")
     print(f"  File: {Path(img_path).name}")
     img = Image.open(img_path)
     w, h = img.size
@@ -620,25 +693,38 @@ def cmd_qc(args):
     vision_prompt = (
         "You are a CPG/DTC product photography quality inspector. "
         "Analyze this image and return ONLY JSON: "
-        "{\"floating_products\": bool, \"garbled_text\": bool, "
-        "\"detached_shadows\": bool, \"fake_products\": bool, \"readable_labels\": bool, "
-        "\"quality_score\": 1-10, \"issues\": [\"...\"]}"
+        '{"floating_products": bool, "garbled_text": bool, '
+        '"detached_shadows": bool, "fake_products": bool, "readable_labels": bool, '
+        '"quality_score": 1-10, "issues": ["..."]}'
     )
     try:
         resp = client.models.generate_content(
-            model=NANO_MODEL, contents=[img, vision_prompt],
+            model=NANO_MODEL,
+            contents=[img, vision_prompt],
             config=types.GenerateContentConfig(temperature=0.1),
         )
-        raw = (resp.text or "{}").strip().replace("```json", "").replace("```", "").strip()
+        raw = (
+            (resp.text or "{}")
+            .strip()
+            .replace("```json", "")
+            .replace("```", "")
+            .strip()
+        )
         parsed = json.loads(raw)
     except Exception as e:
         parsed = {"error": str(e)}
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"  QC SCORE: {parsed.get('quality_score', 'N/A')}/10")
-    print(f"{'='*50}")
-    for key in ["floating_products", "garbled_text", "detached_shadows", "fake_products", "readable_labels"]:
+    print(f"{'=' * 50}")
+    for key in [
+        "floating_products",
+        "garbled_text",
+        "detached_shadows",
+        "fake_products",
+        "readable_labels",
+    ]:
         val = parsed.get(key, "N/A")
-        status = "PASS" if val == False else ("FAIL" if val == True else "?")
+        status = "PASS" if val is False else ("FAIL" if val is True else "?")
         print(f"  {status}: {key.replace('_', ' ').title()}")
     for issue in parsed.get("issues", []):
         print(f"  ⚠ {issue}")
@@ -648,6 +734,7 @@ def cmd_qc(args):
 
 
 # ─── Analyze ──────────────────────────────────────────────────────────
+
 
 def cmd_analyze(args):
     from google.genai import types
@@ -675,8 +762,9 @@ def cmd_analyze(args):
     print(f"\n── Analyzing: {Path(staged).name}\n")
     try:
         resp = client.models.generate_content(
-            model=REASONING_MODEL, contents=[img, prompt],
-            config=types.GenerateContentConfig(temperature=0.1)
+            model=REASONING_MODEL,
+            contents=[img, prompt],
+            config=types.GenerateContentConfig(temperature=0.1),
         )
         text = resp.text.strip() if resp.text else "{}"
         # strip markdown fences
@@ -689,8 +777,10 @@ def cmd_analyze(args):
 
 # ─── Quality Check ─────────────────────────────────────────────────────
 
+
 def cmd_quality(args):
     from PIL import Image, ImageStat
+
     staged = _stage_input(args.input)
     if not staged:
         print(f"File not found: {args.input}", file=sys.stderr)
@@ -707,6 +797,7 @@ def cmd_quality(args):
 
 
 # ─── Review ───────────────────────────────────────────────────────────
+
 
 def cmd_review(args):
     root = _OUT
@@ -725,6 +816,7 @@ def cmd_review(args):
 
 # ─── Direct (one-shot) ───────────────────────────────────────────────
 
+
 def cmd_direct(args):
     """One-shot generation. Your prompt goes straight to the model. No rewriting."""
     prompt = args.prompt
@@ -736,7 +828,10 @@ def cmd_direct(args):
     else:
         model = NANO_MODEL
     outdir = ensure_dir(_OUT / datetime.now().strftime("%Y-%m-%d") / args.format)
-    filename = _ensure_png(args.filename or f"{now_str()}-{args.format}-{hashlib.md5(prompt[:50].encode()).hexdigest()[:5]}.png")
+    filename = _ensure_png(
+        args.filename
+        or f"{now_str()}-{args.format}-{hashlib.md5(prompt[:50].encode()).hexdigest()[:5]}.png"
+    )
     outpath = outdir / filename
 
     # Stage input if it has special characters
@@ -749,7 +844,9 @@ def cmd_direct(args):
         if "error" not in analysis:
             print(f"    Subject: {analysis.get('subject_type', 'unknown')}")
             print(f"    Shape:   {analysis.get('physical_shape', 'unknown')}")
-            print(f"    Size:    {analysis.get('width')}x{analysis.get('height')} ({analysis.get('orientation')})")
+            print(
+                f"    Size:    {analysis.get('width')}x{analysis.get('height')} ({analysis.get('orientation')})"
+            )
             print(f"    View:    {analysis.get('angle_view', 'unknown')}")
 
     # Smart prompt enhancement
@@ -771,7 +868,7 @@ def cmd_direct(args):
         if enhanced_data.get("notes"):
             print(f"  Notes: {enhanced_data['notes'][:120]}")
 
-    print(f"\n── DIRECT MODE")
+    print("\n── DIRECT MODE")
     print(f"  Prompt: {prompt[:80]}...")
     print(f"  Model:  {model}")
     print(f"  Input:  {staged_input or '(none)'}")
@@ -780,9 +877,14 @@ def cmd_direct(args):
     if model.startswith("imagen"):
         result = generate_imagen(prompt, outpath, aspect_ratio="16:9")
     else:
-        result = generate_nano(prompt, outpath, input_image_path=staged_input,
-                               model_name=model, resolution=args.resolution,
-                               aspect_ratio=args.aspect_ratio)
+        result = generate_nano(
+            prompt,
+            outpath,
+            input_image_path=staged_input,
+            model_name=model,
+            resolution=args.resolution,
+            aspect_ratio=args.aspect_ratio,
+        )
 
     if result:
         print(f"\n✓ {outpath}")
@@ -793,9 +895,9 @@ def cmd_direct(args):
 
 # ─── Chat (multi-turn iterative) ─────────────────────────────────────
 
+
 def cmd_chat(args):
     """Interactive multi-turn generation. Each result feeds the next prompt."""
-    from readline import set_startup_hook
 
     session_name = args.name or f"session-{now_str()}"
     session_dir = ensure_dir(_OUT / "sessions" / session_name)
@@ -803,11 +905,11 @@ def cmd_chat(args):
     current_input = initial_input
     turn = 0
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  CHAT SESSION: {session_name}")
     print(f"  Folder: {session_dir}")
     print(f"  Starting image: {current_input or '(none — text-to-image mode)'}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("\n  Type your prompt and press Enter.")
     print("  Commands: 'done' | 'restart' | 'back' | 'save <name>'\n")
 
@@ -836,6 +938,7 @@ def cmd_chat(args):
             name = prompt[5:].strip()
             if current_input and current_input != initial_input:
                 import shutil
+
                 dest = session_dir / f"{name}.png"
                 shutil.copy2(current_input, dest)
                 print(f"  Saved as {dest.name}")
@@ -859,15 +962,27 @@ def cmd_chat(args):
 
         # Generate
         out_file = session_dir / f"turn-{turn:02d}.png"
-        result = generate_nano(prompt, out_file, input_image_path=current_input,
-                               model_name=args.model, resolution=args.resolution,
-                               aspect_ratio=args.aspect_ratio)
+        result = generate_nano(
+            prompt,
+            out_file,
+            input_image_path=current_input,
+            model_name=args.model,
+            resolution=args.resolution,
+            aspect_ratio=args.aspect_ratio,
+        )
 
         if result:
-            history.append({"turn": turn, "prompt": prompt, "input": current_input, "output": result})
+            history.append(
+                {
+                    "turn": turn,
+                    "prompt": prompt,
+                    "input": current_input,
+                    "output": result,
+                }
+            )
             current_input = result  # Next turn uses this as input
             print(f"\n  → {out_file.name}")
-            print(f"  Next prompt will build on this result.")
+            print("  Next prompt will build on this result.")
         else:
             print("  Turn failed. Try again or type 'back'.")
             turn -= 1
@@ -878,24 +993,48 @@ def cmd_chat(args):
     print(f"  Log saved: {log}")
 
 
-
-
 # ─── Brainstorm ──────────────────────────────────────────────────────
+
 
 def cmd_brainstorm(args):
     """Collaborative reasoning: ask clarifying questions, surface 4 directions, then generate."""
     from google import genai
+
     client = get_genai_client()
     brief = args.prompt
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  BRAINSTORM SESSION")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Brief: {brief}\n")
 
     questions = [
-        {"q": "What platform is this for?", "options": ["A) Social media feed", "B) Website hero/banner", "C) Packaging/print", "D) Email/landing page"]},
-        {"q": "What mood should dominate?", "options": ["A) Premium/luxury", "B) Fun/energetic", "C) Clean/minimal", "D) Warm/authentic"]},
-        {"q": "How should the product be shown?", "options": ["A) Product only, no extras", "B) Hands using/holding", "C) Full lifestyle scene with person", "D) Product + ingredients/context props"]},
+        {
+            "q": "What platform is this for?",
+            "options": [
+                "A) Social media feed",
+                "B) Website hero/banner",
+                "C) Packaging/print",
+                "D) Email/landing page",
+            ],
+        },
+        {
+            "q": "What mood should dominate?",
+            "options": [
+                "A) Premium/luxury",
+                "B) Fun/energetic",
+                "C) Clean/minimal",
+                "D) Warm/authentic",
+            ],
+        },
+        {
+            "q": "How should the product be shown?",
+            "options": [
+                "A) Product only, no extras",
+                "B) Hands using/holding",
+                "C) Full lifestyle scene with person",
+                "D) Product + ingredients/context props",
+            ],
+        },
     ]
 
     answers = {}
@@ -904,16 +1043,16 @@ def cmd_brainstorm(args):
         for opt in q["options"]:
             print(f"    {opt}")
         try:
-            ans = input(f"  -> ").strip()
+            ans = input("  -> ").strip()
             answers[f"q{i}"] = ans
         except (EOFError, KeyboardInterrupt):
             print("\n  Aborted.")
             return None
         print()
 
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("  4 DIRECTIONS")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     dir_prompt = (
         f"You are a senior art director. Based on brief: '{brief}' and answers: {json.dumps(answers)}, "
@@ -925,19 +1064,42 @@ def cmd_brainstorm(args):
     directions = {}
     try:
         resp = client.models.generate_content(
-            model=REASONING_MODEL, contents=dir_prompt,
-            config=genai.types.GenerateContentConfig(temperature=0.6)
+            model=REASONING_MODEL,
+            contents=dir_prompt,
+            config=genai.types.GenerateContentConfig(temperature=0.6),
         )
-        text = (resp.text or "").strip().replace("```json", "").replace("```", "").strip()
+        text = (
+            (resp.text or "").strip().replace("```json", "").replace("```", "").strip()
+        )
         directions = json.loads(text)
     except Exception as e:
         print(f"  Reasoning issue: {e}", file=sys.stderr)
 
     defaults = {
-        "A": {"name": "Clean Hero", "description": "Premium product-forward, minimal distractions.", "prompt": brief + ", clean studio background, soft diffused overhead lighting, centered product, professional product photography, sharp focus"},
-        "B": {"name": "Lifestyle Moment", "description": "Warm, relatable, in-use scene.", "prompt": brief + ", natural lifestyle setting, warm golden hour side-lighting, shallow depth of field, authentic moment, aspirational"},
-        "C": {"name": "Bold Statement", "description": "High contrast, energetic, brand-forward.", "prompt": brief + ", bold graphic composition, dramatic directional lighting, deep saturated colors, editorial styling, strong shadows"},
-        "D": {"name": "Ingredient Story", "description": "Flavor-forward with real ingredients.", "prompt": brief + ", surrounded by fresh ingredients, clean bright lighting from above, colorful food photography style, detailed"},
+        "A": {
+            "name": "Clean Hero",
+            "description": "Premium product-forward, minimal distractions.",
+            "prompt": brief
+            + ", clean studio background, soft diffused overhead lighting, centered product, professional product photography, sharp focus",
+        },
+        "B": {
+            "name": "Lifestyle Moment",
+            "description": "Warm, relatable, in-use scene.",
+            "prompt": brief
+            + ", natural lifestyle setting, warm golden hour side-lighting, shallow depth of field, authentic moment, aspirational",
+        },
+        "C": {
+            "name": "Bold Statement",
+            "description": "High contrast, energetic, brand-forward.",
+            "prompt": brief
+            + ", bold graphic composition, dramatic directional lighting, deep saturated colors, editorial styling, strong shadows",
+        },
+        "D": {
+            "name": "Ingredient Story",
+            "description": "Flavor-forward with real ingredients.",
+            "prompt": brief
+            + ", surrounded by fresh ingredients, clean bright lighting from above, colorful food photography style, detailed",
+        },
     }
     for key in ["A", "B", "C", "D"]:
         if key not in directions or not directions.get(key, {}).get("prompt"):
@@ -956,13 +1118,18 @@ def cmd_brainstorm(args):
         return None
 
     chosen = directions.get("A", {}).get("prompt", brief)
-    if pick.upper() == "A": chosen = directions["A"]["prompt"]
-    elif pick.upper() == "B": chosen = directions["B"]["prompt"]
-    elif pick.upper() == "C": chosen = directions["C"]["prompt"]
-    elif pick.upper() == "D": chosen = directions["D"]["prompt"]
-    elif pick: chosen = pick
+    if pick.upper() == "A":
+        chosen = directions["A"]["prompt"]
+    elif pick.upper() == "B":
+        chosen = directions["B"]["prompt"]
+    elif pick.upper() == "C":
+        chosen = directions["C"]["prompt"]
+    elif pick.upper() == "D":
+        chosen = directions["D"]["prompt"]
+    elif pick:
+        chosen = pick
 
-    print(f"\n  Generating...\n")
+    print("\n  Generating...\n")
     outdir = ensure_dir(_OUT / datetime.now().strftime("%Y-%m-%d") / "brainstorm")
     fname = f"{now_str()}-brainstorm-{hashlib.md5(chosen[:50].encode()).hexdigest()[:5]}.png"
     outpath = outdir / fname
@@ -972,9 +1139,14 @@ def cmd_brainstorm(args):
     if model.startswith("imagen"):
         result = generate_imagen(chosen, outpath, aspect_ratio="16:9")
     else:
-        result = generate_nano(chosen, outpath, input_image_path=staged_input,
-                               model_name=model, resolution=args.resolution,
-                               aspect_ratio=args.aspect_ratio)
+        result = generate_nano(
+            chosen,
+            outpath,
+            input_image_path=staged_input,
+            model_name=model,
+            resolution=args.resolution,
+            aspect_ratio=args.aspect_ratio,
+        )
 
     if not result:
         print("  Generation failed.", file=sys.stderr)
@@ -983,14 +1155,24 @@ def cmd_brainstorm(args):
     print(f"✓ {outpath}\n")
 
     log = outdir / f"{fname}.json"
-    log.write_text(json.dumps({"brief": brief, "answers": answers, "directions": directions,
-                                "chosen_prompt": chosen, "output": str(outpath)}, indent=2))
+    log.write_text(
+        json.dumps(
+            {
+                "brief": brief,
+                "answers": answers,
+                "directions": directions,
+                "chosen_prompt": chosen,
+                "output": str(outpath),
+            },
+            indent=2,
+        )
+    )
     print(f"  Saved session log: {log}")
     return result
 
 
-
 # ─── Figma-Aware Generation ─────────────────────────────────────────────
+
 
 def cmd_figma(args):
     """Generate a new image asset informed by an existing Figma design context."""
@@ -1007,7 +1189,7 @@ def cmd_figma(args):
 
     if not os.environ.get("FIGMA_ACCESS_TOKEN"):
         print("  ERROR: FIGMA_ACCESS_TOKEN env var is required.")
-        print("  Set it with: export FIGMA_ACCESS_TOKEN=\"figd_...\"")
+        print('  Set it with: export FIGMA_ACCESS_TOKEN="figd_..."')
         sys.exit(1)
     print("  Reading design context from Figma...")
     ctx = fetch_figma_context(file_key, node_id)
@@ -1032,7 +1214,9 @@ def cmd_figma(args):
     if args.model:
         model = args.model
     else:
-        model, args.resolution = _TIER_MAP.get(args.tier or "balanced", (NANO_PRO, "2K"))
+        model, args.resolution = _TIER_MAP.get(
+            args.tier or "balanced", (NANO_PRO, "2K")
+        )
     if args.smart or args.tier:
         tier = args.tier or "balanced"
         print(f"  [Smart mode: {tier}] Analyzing with reasoning model...")
@@ -1059,7 +1243,10 @@ def cmd_figma(args):
     print()
 
     outdir = ensure_dir(_OUT / datetime.now().strftime("%Y-%m-%d") / "figma")
-    fname = _ensure_png(args.filename or f"{now_str()}-figma-{hashlib.md5(enhanced[:50].encode()).hexdigest()[:5]}.png")
+    fname = _ensure_png(
+        args.filename
+        or f"{now_str()}-figma-{hashlib.md5(enhanced[:50].encode()).hexdigest()[:5]}.png"
+    )
     outpath = outdir / fname
 
     staged_input = _stage_input(args.input_image)
@@ -1072,9 +1259,14 @@ def cmd_figma(args):
     if model.startswith("imagen"):
         result = generate_imagen(enhanced, outpath, aspect_ratio=args.aspect_ratio)
     else:
-        result = generate_nano(enhanced, outpath, input_image_path=staged_input,
-                               model_name=model, resolution=args.resolution,
-                               aspect_ratio=args.aspect_ratio)
+        result = generate_nano(
+            enhanced,
+            outpath,
+            input_image_path=staged_input,
+            model_name=model,
+            resolution=args.resolution,
+            aspect_ratio=args.aspect_ratio,
+        )
 
     if not result:
         print()
@@ -1106,13 +1298,14 @@ def cmd_figma(args):
         "model": model,
         "resolution": args.resolution,
     }
-    if 'enhanced_data' in dir() and enhanced_data:
+    if "enhanced_data" in dir() and enhanced_data:
         log_payload["prompt_plan"] = enhanced_data
     log.write_text(json.dumps(log_payload, indent=2, default=str))
     print(f"  Log saved: {log}")
 
 
 # ─── Variations (Midjourney-style 4-panel) ───────────────────────────
+
 
 def cmd_variations(args):
     """Generate N variations of the same brief for user to pick from."""
@@ -1143,12 +1336,29 @@ def cmd_variations(args):
     # Build prompts — same brief with slight creative variance per variation
     prompts = []
     for i in range(count):
-        angle = ['eye-level', 'slightly low angle hero shot', 'three-quarter view', 'straight-on'][i % 4]
-        light = ['warm 3200K overhead', 'neutral 5600K soft-diffused', 'crisp directional rim light', 'even flat ambient'][i % 4]
-        dof = ['shallow depth of field with creamy bokeh', 'deep depth of field', 'selective focus on hero product', 'sharp throughout with slight falloff'][i % 4]
+        angle = [
+            "eye-level",
+            "slightly low angle hero shot",
+            "three-quarter view",
+            "straight-on",
+        ][i % 4]
+        light = [
+            "warm 3200K overhead",
+            "neutral 5600K soft-diffused",
+            "crisp directional rim light",
+            "even flat ambient",
+        ][i % 4]
+        dof = [
+            "shallow depth of field with creamy bokeh",
+            "deep depth of field",
+            "selective focus on hero product",
+            "sharp throughout with slight falloff",
+        ][i % 4]
         # Shelf-specific: force flat level shelves
         shelf_note = " The shelf surface is perfectly flat and level. Products sit firmly with flat bases touching the shelf. No tilting, no floating, no falling."
-        prompts.append(f"{prompt}\n\nVariation {i+1}: {angle} composition. {light} lighting. {dof}. Professional product photography.{shelf_note}")
+        prompts.append(
+            f"{prompt}\n\nVariation {i + 1}: {angle} composition. {light} lighting. {dof}. Professional product photography.{shelf_note}"
+        )
 
     generated = []
     for i in range(count):
@@ -1160,9 +1370,14 @@ def cmd_variations(args):
         if model.startswith("imagen"):
             result = generate_imagen(prompts[i], vpath)
         else:
-            result = generate_nano(prompts[i], vpath, input_image_path=staged_input,
-                                   model_name=model, resolution=args.resolution,
-                                   aspect_ratio=args.aspect_ratio)
+            result = generate_nano(
+                prompts[i],
+                vpath,
+                input_image_path=staged_input,
+                model_name=model,
+                resolution=args.resolution,
+                aspect_ratio=args.aspect_ratio,
+            )
 
         if result:
             print(f"    ✓ {vname}")
@@ -1171,20 +1386,33 @@ def cmd_variations(args):
             print(f"    ✗ {vname} failed", file=sys.stderr)
 
     print(f"\n✓ All done: {session_dir}")
-    print(f"  Pick your favorite with:")
-    print(f"    bash launch.sh refine --session {session_dir} --pick v1 --changes \"...\"")
+    print("  Pick your favorite with:")
+    print(
+        f'    bash launch.sh refine --session {session_dir} --pick v1 --changes "..."'
+    )
 
     # Save manifest
     manifest_path = session_dir / "manifest.json"
-    manifest_path.write_text(json.dumps({
-        "count": count, "model": model, "resolution": args.resolution,
-        "original_prompt": prompt, "prompts": prompts, "files": generated, "aspect_ratio": args.aspect_ratio,
-    }, indent=2))
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "count": count,
+                "model": model,
+                "resolution": args.resolution,
+                "original_prompt": prompt,
+                "prompts": prompts,
+                "files": generated,
+                "aspect_ratio": args.aspect_ratio,
+            },
+            indent=2,
+        )
+    )
     print(f"  Manifest: {manifest_path}")
     return session_dir, generated
 
 
 # ─── Refine (pick + iterate) ────────────────────────────────────────────
+
 
 def cmd_refine(args):
     """Pick a variation and refine it with specific instruction."""
@@ -1192,8 +1420,10 @@ def cmd_refine(args):
     session_dir = Path(args.session)
     if not session_dir.exists():
         # Search by name
-        for fmt_dir in sorted(_OUT.glob(f"*/vars-*"), reverse=True):
-            if fmt_dir.name.endswith(session_dir.name) or session_dir.name in str(fmt_dir):
+        for fmt_dir in sorted(_OUT.glob("*/vars-*"), reverse=True):
+            if fmt_dir.name.endswith(session_dir.name) or session_dir.name in str(
+                fmt_dir
+            ):
                 session_dir = fmt_dir
                 break
 
@@ -1223,7 +1453,7 @@ def cmd_refine(args):
     rname = f"r{pick_num:02d}-{now_str()}.png"
     rout = outdir / rname
 
-    print(f"\n── REFINE")
+    print("\n── REFINE")
     print(f"  Session:  {session_dir}")
     print(f"  Pick:     {args.pick}")
     print(f"  Changes:  {changes[:80]}...")
@@ -1233,44 +1463,108 @@ def cmd_refine(args):
     if model.startswith("imagen"):
         result = generate_imagen(final_prompt, rout)
     else:
-        result = generate_nano(final_prompt, rout, input_image_path=base_image,
-                               model_name=model, resolution=manifest["resolution"],
-                               aspect_ratio=manifest.get("aspect_ratio", "16:9"))
+        result = generate_nano(
+            final_prompt,
+            rout,
+            input_image_path=base_image,
+            model_name=model,
+            resolution=manifest["resolution"],
+            aspect_ratio=manifest.get("aspect_ratio", "16:9"),
+        )
 
     if result:
         print(f"\n✓ {rout}")
     else:
         print("\n✗ Refinement failed.", file=sys.stderr)
 
+
 def main():
-    parser = argparse.ArgumentParser(prog="creative-studio",
-                                     description="Iterative AI image generation workflow.")
+    parser = argparse.ArgumentParser(
+        prog="creative-studio", description="Iterative AI image generation workflow."
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     # direct
-    p = sub.add_parser("direct", help="One-shot. Your exact prompt goes straight to the model.")
-    p.add_argument("--prompt", "-p", required=True, help="Exact prompt text — no rewriting.")
-    p.add_argument("--model", "-m", default=None,
-                   help=f"Override model. Defaults to tier selection.")
+    p = sub.add_parser(
+        "direct", help="One-shot. Your exact prompt goes straight to the model."
+    )
+    p.add_argument(
+        "--prompt", "-p", required=True, help="Exact prompt text — no rewriting."
+    )
+    p.add_argument(
+        "--model",
+        "-m",
+        default=None,
+        help="Override model. Defaults to tier selection.",
+    )
     p.add_argument("--format", "-f", default="web", help="Folder name for output")
-    p.add_argument("--input-image", "-i", default=None, help="Reference image for image-to-image")
+    p.add_argument(
+        "--input-image", "-i", default=None, help="Reference image for image-to-image"
+    )
     p.add_argument("--resolution", "-r", default="2K", help="1K, 2K, 4K (Nano only)")
     p.add_argument("--filename", default=None, help="Custom output filename")
-    p.add_argument("--aspect-ratio", default="16:9", choices=["1:1", "16:9", "16:10", "4:3", "3:2", "2:3", "21:9", "4:5", "5:4", "9:16", "1:4", "4:1"],
-                   help="Output aspect ratio (default 16:9)")
-    p.add_argument("--tier", default=None, choices=["fast", "balanced", "quality", "ultra"],
-                   help="Quality tier: fast=Flash-1K, balanced=Flash-2K, quality=Pro-2K, ultra=Pro-4K")
-    p.add_argument("--smart", action="store_true",
-                   help="Use reasoning model to enhance the prompt with photographic direction.")
+    p.add_argument(
+        "--aspect-ratio",
+        default="16:9",
+        choices=[
+            "1:1",
+            "16:9",
+            "16:10",
+            "4:3",
+            "3:2",
+            "2:3",
+            "21:9",
+            "4:5",
+            "5:4",
+            "9:16",
+            "1:4",
+            "4:1",
+        ],
+        help="Output aspect ratio (default 16:9)",
+    )
+    p.add_argument(
+        "--tier",
+        default=None,
+        choices=["fast", "balanced", "quality", "ultra"],
+        help="Quality tier: fast=Flash-1K, balanced=Flash-2K, quality=Pro-2K, ultra=Pro-4K",
+    )
+    p.add_argument(
+        "--smart",
+        action="store_true",
+        help="Use reasoning model to enhance the prompt with photographic direction.",
+    )
 
     # chat
-    p = sub.add_parser("chat", help="Multi-turn conversation. Each output feeds the next prompt.")
+    p = sub.add_parser(
+        "chat", help="Multi-turn conversation. Each output feeds the next prompt."
+    )
     p.add_argument("--name", "-n", default=None, help="Session name (creates a folder)")
-    p.add_argument("--input-image", "-i", default=None,
-                   help="Starting image for turn 1 (optional, can start text-to-image)")
+    p.add_argument(
+        "--input-image",
+        "-i",
+        default=None,
+        help="Starting image for turn 1 (optional, can start text-to-image)",
+    )
     p.add_argument("--model", "-m", default=NANO_MODEL)
     p.add_argument("--resolution", "-r", default="2K")
-    p.add_argument("--aspect-ratio", default="16:9", choices=["1:1", "16:9", "16:10", "4:3", "3:2", "2:3", "21:9", "4:5", "5:4", "9:16", "1:4", "4:1"])
+    p.add_argument(
+        "--aspect-ratio",
+        default="16:9",
+        choices=[
+            "1:1",
+            "16:9",
+            "16:10",
+            "4:3",
+            "3:2",
+            "2:3",
+            "21:9",
+            "4:5",
+            "5:4",
+            "9:16",
+            "1:4",
+            "4:1",
+        ],
+    )
 
     # analyze
     p = sub.add_parser("analyze", help="Analyze a reference image with vision model.")
@@ -1284,62 +1578,199 @@ def main():
     sub.add_parser("review", help="Browse all output folders.")
 
     # figma
-    p = sub.add_parser("figma", help="Generate from a Figma design. Reads layout/colors and creates matching asset.")
+    p = sub.add_parser(
+        "figma",
+        help="Generate from a Figma design. Reads layout/colors and creates matching asset.",
+    )
     p.add_argument("--url", "-u", required=True, help="Figma URL (file or design link)")
-    p.add_argument("--prompt", "-p", required=True, help="What to generate (your prompt)")
-    p.add_argument("--input-image", "-i", default=None, help="Reference image (optional)")
-    p.add_argument("--model", "-m", default=None, help="Override model (default from tier)")
+    p.add_argument(
+        "--prompt", "-p", required=True, help="What to generate (your prompt)"
+    )
+    p.add_argument(
+        "--input-image", "-i", default=None, help="Reference image (optional)"
+    )
+    p.add_argument(
+        "--model", "-m", default=None, help="Override model (default from tier)"
+    )
     p.add_argument("--resolution", "-r", default="2K", help="1K, 2K, 4K (Nano only)")
     p.add_argument("--filename", default=None, help="Custom output filename")
-    p.add_argument("--aspect-ratio", default="16:9", choices=["1:1", "16:9", "16:10", "4:3", "3:2", "2:3", "21:9", "4:5", "5:4", "9:16", "1:4", "4:1"],
-                   help="Output aspect ratio")
-    p.add_argument("--tier", default="balanced", choices=["fast", "balanced", "quality", "ultra"],
-                   help="Quality tier: fast=Flash 1K, balanced=Flash 2K, quality=Pro 2K, ultra=Pro 4K")
-    p.add_argument("--smart", action="store_true",
-                   help="Use reasoning model to enhance prompt with photographic direction.")
+    p.add_argument(
+        "--aspect-ratio",
+        default="16:9",
+        choices=[
+            "1:1",
+            "16:9",
+            "16:10",
+            "4:3",
+            "3:2",
+            "2:3",
+            "21:9",
+            "4:5",
+            "5:4",
+            "9:16",
+            "1:4",
+            "4:1",
+        ],
+        help="Output aspect ratio",
+    )
+    p.add_argument(
+        "--tier",
+        default="balanced",
+        choices=["fast", "balanced", "quality", "ultra"],
+        help="Quality tier: fast=Flash 1K, balanced=Flash 2K, quality=Pro 2K, ultra=Pro 4K",
+    )
+    p.add_argument(
+        "--smart",
+        action="store_true",
+        help="Use reasoning model to enhance prompt with photographic direction.",
+    )
 
     # brainstorm
-    p = sub.add_parser("brainstorm", help="Collaborative reasoning: ask questions, surface directions, then generate.")
+    p = sub.add_parser(
+        "brainstorm",
+        help="Collaborative reasoning: ask questions, surface directions, then generate.",
+    )
     p.add_argument("--prompt", "-p", required=True, help="Initial creative brief")
     p.add_argument("--model", "-m", default=NANO_MODEL, help="Model ID")
-    p.add_argument("--input-image", "-i", default=None, help="Reference image (optional)")
+    p.add_argument(
+        "--input-image", "-i", default=None, help="Reference image (optional)"
+    )
     p.add_argument("--resolution", "-r", default="2K", help="1K / 2K / 4K")
-    p.add_argument("--aspect-ratio", default="16:9", choices=["1:1", "16:9", "16:10", "4:3", "3:2", "2:3", "21:9", "4:5", "5:4", "9:16", "1:4", "4:1"])
+    p.add_argument(
+        "--aspect-ratio",
+        default="16:9",
+        choices=[
+            "1:1",
+            "16:9",
+            "16:10",
+            "4:3",
+            "3:2",
+            "2:3",
+            "21:9",
+            "4:5",
+            "5:4",
+            "9:16",
+            "1:4",
+            "4:1",
+        ],
+    )
 
     # variations
-    p = sub.add_parser("variations", help="Generate N variations for pick-and-refine workflow (like Midjourney).")
+    p = sub.add_parser(
+        "variations",
+        help="Generate N variations for pick-and-refine workflow (like Midjourney).",
+    )
     p.add_argument("--prompt", "-p", required=True, help="Your prompt / brief")
-    p.add_argument("--input-image", "-i", default=None, help="Reference image (optional)")
+    p.add_argument(
+        "--input-image", "-i", default=None, help="Reference image (optional)"
+    )
     p.add_argument("--model", "-m", default=None, help="Override model")
-    p.add_argument("--variations", "-v", type=int, default=4, help="Number of variations (1-8, default 4)")
+    p.add_argument(
+        "--variations",
+        "-v",
+        type=int,
+        default=4,
+        help="Number of variations (1-8, default 4)",
+    )
     p.add_argument("--format", "-f", default="web", help="Folder name for output")
     p.add_argument("--resolution", "-r", default="2K", help="1K, 2K, 4K")
-    p.add_argument("--aspect-ratio", default="16:9", choices=["1:1", "16:9", "16:10", "4:3", "3:2", "2:3", "21:9", "4:5", "5:4", "9:16", "1:4", "4:1"],
-                     help="Output aspect ratio")
-    p.add_argument("--tier", default=None, choices=["fast", "balanced", "quality", "ultra"],
-                     help="Quality tier")
+    p.add_argument(
+        "--aspect-ratio",
+        default="16:9",
+        choices=[
+            "1:1",
+            "16:9",
+            "16:10",
+            "4:3",
+            "3:2",
+            "2:3",
+            "21:9",
+            "4:5",
+            "5:4",
+            "9:16",
+            "1:4",
+            "4:1",
+        ],
+        help="Output aspect ratio",
+    )
+    p.add_argument(
+        "--tier",
+        default=None,
+        choices=["fast", "balanced", "quality", "ultra"],
+        help="Quality tier",
+    )
 
     # refine
     p = sub.add_parser("refine", help="Pick a variation and refine it.")
-    p.add_argument("--session", "-s", required=True,
-                   help="Session folder name (e.g. vars-123456 or full path)")
-    p.add_argument("--pick", "-p", required=True,
-                   help="Which variation to refine (e.g. v1, v2, v3, v4)")
+    p.add_argument(
+        "--session",
+        "-s",
+        required=True,
+        help="Session folder name (e.g. vars-123456 or full path)",
+    )
+    p.add_argument(
+        "--pick",
+        "-p",
+        required=True,
+        help="Which variation to refine (e.g. v1, v2, v3, v4)",
+    )
     p.add_argument("--changes", "-c", default="", help="What to change / refine")
-    p.add_argument("--aspect-ratio", default="16:9", choices=["1:1", "16:9", "16:10", "4:3", "3:2", "2:3", "21:9", "4:5", "5:4", "9:16", "1:4", "4:1"])
+    p.add_argument(
+        "--aspect-ratio",
+        default="16:9",
+        choices=[
+            "1:1",
+            "16:9",
+            "16:10",
+            "4:3",
+            "3:2",
+            "2:3",
+            "21:9",
+            "4:5",
+            "5:4",
+            "9:16",
+            "1:4",
+            "4:1",
+        ],
+    )
 
     # composite
-    p = sub.add_parser("composite", help="Generate AI background then composite real product on top. No hallucinated products.")
-    p.add_argument("--prompt", "-p", required=True, help="Scene description — must NOT include product, only environment")
-    p.add_argument("--product", "-i", required=True, help="Product photo (AI will NOT generate product, only environment)")
-    p.add_argument("--aspect-ratio", default="16:9", choices=["1:1", "16:9", "16:10", "4:3", "3:2", "2:3", "9:16", "4:5"])
+    p = sub.add_parser(
+        "composite",
+        help="Generate AI background then composite real product on top. No hallucinated products.",
+    )
+    p.add_argument(
+        "--prompt",
+        "-p",
+        required=True,
+        help="Scene description — must NOT include product, only environment",
+    )
+    p.add_argument(
+        "--product",
+        "-i",
+        required=True,
+        help="Product photo (AI will NOT generate product, only environment)",
+    )
+    p.add_argument(
+        "--aspect-ratio",
+        default="16:9",
+        choices=["1:1", "16:9", "16:10", "4:3", "3:2", "2:3", "9:16", "4:5"],
+    )
     p.add_argument("--filename", default=None, help="Custom output filename")
-    p.add_argument("--tier", default="quality", choices=["fast", "balanced", "quality", "ultra"])
+    p.add_argument(
+        "--tier", default="quality", choices=["fast", "balanced", "quality", "ultra"]
+    )
 
     # export
-    p = sub.add_parser("export", help="Crop source image into multiple platform-specific formats.")
+    p = sub.add_parser(
+        "export", help="Crop source image into multiple platform-specific formats."
+    )
     p.add_argument("--input", required=True, help="Source image path")
-    p.add_argument("--presets", default=None, help="Comma-separated: amazon,shopify,meta-feed,meta-stories,web-hero,pinterest,print-dpi (default: all)")
+    p.add_argument(
+        "--presets",
+        default=None,
+        help="Comma-separated: amazon,shopify,meta-feed,meta-stories,web-hero,pinterest,print-dpi (default: all)",
+    )
 
     # qc
     p = sub.add_parser("qc", help="Run automatic quality checks on generated images.")

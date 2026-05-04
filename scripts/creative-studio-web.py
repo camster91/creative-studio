@@ -8,18 +8,17 @@ Serves built-in frontend template.
 import os
 import sys
 import json
-import base64
-import hashlib
 import time
 import uuid
 import re
 import subprocess
 from pathlib import Path
 from datetime import datetime
-from io import BytesIO
 from typing import Optional, List, Dict
 
 from flask import Flask, render_template_string, request, jsonify, send_from_directory
+
+from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
 
 # ─── Config ────────────────────────────────────────────────────────────
 API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -49,12 +48,19 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # ─── Helpers ───────────────────────────────────────────────────────────
 
+
 def load_json(path: Path, default=None):
-    return json.loads(path.read_text()) if path.exists() else (default if default is not None else {})
+    return (
+        json.loads(path.read_text())
+        if path.exists()
+        else (default if default is not None else {})
+    )
+
 
 def save_json(path: Path, data: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2))
+
 
 # ─── Cost tracking ───────────────────────────────────────────────────
 COSTS = {
@@ -65,11 +71,23 @@ COSTS = {
     "imagen-4.0-ultra-generate-001": 0.06,
 }
 
+
 def load_costs():
-    return load_json(COST_DB, {"total": 0.0, "by_model": {}, "by_date": {}, "session_count": 0, "image_count": 0})
+    return load_json(
+        COST_DB,
+        {
+            "total": 0.0,
+            "by_model": {},
+            "by_date": {},
+            "session_count": 0,
+            "image_count": 0,
+        },
+    )
+
 
 def save_costs(data: dict):
     save_json(COST_DB, data)
+
 
 def track_cost(model: str, count: int = 1):
     costs = load_costs()
@@ -82,30 +100,42 @@ def track_cost(model: str, count: int = 1):
     save_costs(costs)
     return c
 
+
 def session_cost(session_id: str) -> float:
     return sum(e.get("cost", 0) for e in load_session(session_id).get("entries", []))
 
+
 # ─── Session management ────────────────────────────────────────────────
+
 
 def new_session_id():
     return "sess_" + uuid.uuid4().hex[:8]
 
+
 def session_path(session_id: str) -> Path:
     return SESSIONS_DIR / f"{session_id}.json"
 
+
 def load_session(session_id: str) -> dict:
-    return load_json(session_path(session_id), {"id": session_id, "created_at": now_str(), "entries": []})
+    return load_json(
+        session_path(session_id),
+        {"id": session_id, "created_at": now_str(), "entries": []},
+    )
+
 
 def save_session(session_id: str, data: dict):
     save_json(session_path(session_id), data)
+
 
 def add_entry(session_id: str, entry: dict):
     data = load_session(session_id)
     data["entries"].append({"time": now_str(), **entry})
     save_session(session_id, data)
 
+
 def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 
 def image_url(path: str) -> str:
     if not path:
@@ -119,20 +149,25 @@ def image_url(path: str) -> str:
             return f"/image/{p.parent.name}/{p.name}"
         return ""
 
+
 # ─── Pin Annotations ────────────────────────────────────────────────────
 PINS_DB = DATA_DIR / "pins.json"
+
 
 def load_pins(image_path: str) -> List[Dict]:
     data = load_json(PINS_DB, {})
     return data.get(image_path, [])
+
 
 def save_pins(image_path: str, pins: List[Dict]):
     data = load_json(PINS_DB, {})
     data[image_path] = pins
     save_json(PINS_DB, data)
 
+
 def pin_id() -> str:
     return uuid.uuid4().hex[:8]
+
 
 def pin_to_region(x: float, y: float) -> str:
     """Convert normalized coords (0..1) to human-readable region."""
@@ -141,6 +176,7 @@ def pin_to_region(x: float, y: float) -> str:
     if h == "middle" and w == "center":
         return "center"
     return f"{h}-{w}" if h != "middle" else w
+
 
 def build_pin_prompt(pins: List[Dict]) -> str:
     """Build a spatially-aware refinement prompt from pins."""
@@ -156,23 +192,41 @@ def build_pin_prompt(pins: List[Dict]) -> str:
         return ""
     return (
         "Make these targeted changes to specific areas of the image: "
-        + "; ".join(lines) +
-        ". Apply each change only to its specified region. Preserve all other areas exactly as they are."
+        + "; ".join(lines)
+        + ". Apply each change only to its specified region. Preserve all other areas exactly as they are."
     )
+
 
 # ─── Image generation wrappers ────────────────────────────────────────
 
 SCRIPT_PATH = str(Path(__file__).parent / "creative_studio.py")
 
-def run_cli_generate(prompt: str, mode: str, tier: str, aspect: str, smart: bool,
-                     input_image: Optional[str] = None, variations: int = 4) -> List[Dict]:
+
+def run_cli_generate(
+    prompt: str,
+    mode: str,
+    tier: str,
+    aspect: str,
+    smart: bool,
+    input_image: Optional[str] = None,
+    variations: int = 4,
+) -> List[Dict]:
     """Generate images by calling creative_studio.py directly (no bash/uv wrapper)."""
     today = datetime.now().strftime("%Y-%m-%d")
     out_dir = OUTPUT_DIR / today / mode
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    args = [sys.executable, SCRIPT_PATH, "direct",
-            "--prompt", prompt, "--tier", tier, "--aspect-ratio", aspect]
+    args = [
+        sys.executable,
+        SCRIPT_PATH,
+        "direct",
+        "--prompt",
+        prompt,
+        "--tier",
+        tier,
+        "--aspect-ratio",
+        aspect,
+    ]
     if smart:
         args.append("--smart")
     # --format is just output folder name, not needed for generation quality
@@ -185,18 +239,33 @@ def run_cli_generate(prompt: str, mode: str, tier: str, aspect: str, smart: bool
     env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
 
     try:
-        subprocess.run(args, capture_output=True, text=True, timeout=300, env=env, check=True)
+        subprocess.run(
+            args, capture_output=True, text=True, timeout=300, env=env, check=True
+        )
         # Find recently generated files
         today_dir = OUTPUT_DIR / today
-        files = sorted(today_dir.rglob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+        files = sorted(
+            today_dir.rglob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
         now = time.time()
         recent = [f for f in files if (now - f.stat().st_mtime) < 180]
         images = []
         for f in recent[:variations]:
-            model_used = "gemini-3.1-flash-image-preview" if tier in ("fast", "balanced") else "gemini-3-pro-image-preview"
+            model_used = (
+                "gemini-3.1-flash-image-preview"
+                if tier in ("fast", "balanced")
+                else "gemini-3-pro-image-preview"
+            )
             cost = track_cost(model_used)
-            images.append({"path": str(f), "url": image_url(str(f)),
-                           "name": f.name, "cost": cost, "model": model_used})
+            images.append(
+                {
+                    "path": str(f),
+                    "url": image_url(str(f)),
+                    "name": f.name,
+                    "cost": cost,
+                    "model": model_used,
+                }
+            )
         return images
     except subprocess.CalledProcessError as e:
         return [{"error": f"Generation failed: {e.stderr[:500] if e.stderr else e}"}]
@@ -204,56 +273,102 @@ def run_cli_generate(prompt: str, mode: str, tier: str, aspect: str, smart: bool
         return [{"error": str(e)}]
 
 
-def run_cli_composite(prompt: str, product_path: str, aspect: str, tier: str = "quality") -> List[Dict]:
+def run_cli_composite(
+    prompt: str, product_path: str, aspect: str, tier: str = "quality"
+) -> List[Dict]:
     out_dir = OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d") / "composite"
     out_dir.mkdir(parents=True, exist_ok=True)
     fname = f"composite-{int(time.time())}.png"
     out_path = out_dir / fname
 
-    args = [sys.executable, SCRIPT_PATH, "composite",
-            "--prompt", prompt, "--product", product_path,
-            "--aspect-ratio", aspect, "--tier", tier, "--filename", fname]
+    args = [
+        sys.executable,
+        SCRIPT_PATH,
+        "composite",
+        "--prompt",
+        prompt,
+        "--product",
+        product_path,
+        "--aspect-ratio",
+        aspect,
+        "--tier",
+        tier,
+        "--filename",
+        fname,
+    ]
     env = os.environ.copy()
     env["GEMINI_API_KEY"] = API_KEY
 
     try:
-        subprocess.run(args, capture_output=True, text=True, timeout=300, env=env, check=False)
+        subprocess.run(
+            args, capture_output=True, text=True, timeout=300, env=env, check=False
+        )
         if out_path.exists():
             model_used = "gemini-3-pro-image-preview"
             cost = track_cost(model_used)
-            return [{"path": str(out_path), "url": image_url(str(out_path)),
-                     "name": fname, "cost": cost, "model": model_used}]
-    except Exception as e:
+            return [
+                {
+                    "path": str(out_path),
+                    "url": image_url(str(out_path)),
+                    "name": fname,
+                    "cost": cost,
+                    "model": model_used,
+                }
+            ]
+    except Exception:
         pass
     return []
 
 
 def run_cli_export(source_path: str, presets: str) -> List[Dict]:
-    args = ["bash", str(Path(__file__).parent.parent / "launch.sh"), "export",
-            "--input", source_path, "--presets", presets]
+    args = [
+        "bash",
+        str(Path(__file__).parent.parent / "launch.sh"),
+        "export",
+        "--input",
+        source_path,
+        "--presets",
+        presets,
+    ]
     env = os.environ.copy()
     env["GEMINI_API_KEY"] = API_KEY
     try:
-        subprocess.run(args, capture_output=True, text=True, timeout=120, env=env, check=False)
+        subprocess.run(
+            args, capture_output=True, text=True, timeout=120, env=env, check=False
+        )
         out_dir = OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d") / "exports"
         files = list(out_dir.glob("*.png"))
         images = []
         for f in files:
-            images.append({"path": str(f), "url": image_url(str(f)),
-                           "name": f.name, "cost": 0.0, "model": "PIL"})
+            images.append(
+                {
+                    "path": str(f),
+                    "url": image_url(str(f)),
+                    "name": f.name,
+                    "cost": 0.0,
+                    "model": "PIL",
+                }
+            )
         return images
     except Exception:
         return []
 
 
 def run_cli_qc(image_path: str) -> dict:
-    args = ["bash", str(Path(__file__).parent.parent / "launch.sh"), "qc",
-            "--input", image_path]
+    args = [
+        "bash",
+        str(Path(__file__).parent.parent / "launch.sh"),
+        "qc",
+        "--input",
+        image_path,
+    ]
     env = os.environ.copy()
     env["GEMINI_API_KEY"] = API_KEY
     # Parse stdout for QC results
     try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=120, env=env, check=False)
+        result = subprocess.run(
+            args, capture_output=True, text=True, timeout=120, env=env, check=False
+        )
         out = result.stdout + result.stderr
         # Extract score
         score = 5
@@ -291,26 +406,50 @@ def run_cli_refine(image_path: str, changes: str, tier: str) -> List[Dict]:
     fname = f"refine-{int(time.time())}.png"
 
     # Build revised prompt
-    args = ["bash", str(Path(__file__).parent.parent / "launch.sh"), "direct",
-            "--prompt", f"Based on this reference image, make these changes: {changes}",
-            "--input-image", image_path,
-            "--tier", tier, "--filename", fname]
+    args = [
+        "bash",
+        str(Path(__file__).parent.parent / "launch.sh"),
+        "direct",
+        "--prompt",
+        f"Based on this reference image, make these changes: {changes}",
+        "--input-image",
+        image_path,
+        "--tier",
+        tier,
+        "--filename",
+        fname,
+    ]
     env = os.environ.copy()
     env["GEMINI_API_KEY"] = API_KEY
     try:
-        subprocess.run(args, capture_output=True, text=True, timeout=300, env=env, check=False)
+        subprocess.run(
+            args, capture_output=True, text=True, timeout=300, env=env, check=False
+        )
         out_path = out_dir / fname
         if not out_path.exists():
             # Fallback: search for any newly created png in output dir
             today_dir = OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d")
-            files = sorted(today_dir.rglob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+            files = sorted(
+                today_dir.rglob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True
+            )
             if files:
                 out_path = files[0]
         if out_path.exists():
-            model_used = "gemini-3.1-flash-image-preview" if tier in ("fast", "balanced") else "gemini-3-pro-image-preview"
+            model_used = (
+                "gemini-3.1-flash-image-preview"
+                if tier in ("fast", "balanced")
+                else "gemini-3-pro-image-preview"
+            )
             cost = track_cost(model_used)
-            return [{"path": str(out_path), "url": image_url(str(out_path)),
-                     "name": out_path.name, "cost": cost, "model": model_used}]
+            return [
+                {
+                    "path": str(out_path),
+                    "url": image_url(str(out_path)),
+                    "name": out_path.name,
+                    "cost": cost,
+                    "model": model_used,
+                }
+            ]
     except Exception:
         pass
     return []
@@ -322,7 +461,7 @@ app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32MB uploads
 
 # ── Frontend HTML ─────────────────────────────────────────────────────
 
-HTML_TEMPLATE = r'''
+HTML_TEMPLATE = r"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -376,12 +515,34 @@ body {
 .main { flex:1; display:flex; overflow:hidden; }
 
 .sidebar {
-  width: 340px; min-width: 300px; max-width: 380px;
+  width: 320px; min-width: 280px;
   border-right: 1px solid var(--border);
   display:flex; flex-direction:column;
   overflow-y:auto; scrollbar-width: thin;
 }
 .sidebar-body { padding: 22px 22px 28px; display:flex; flex-direction:column; gap:18px; }
+
+.history-sidebar {
+  width: 260px; min-width: 200px;
+  border-left: 1px solid var(--border);
+  display:flex; flex-direction:column;
+  background: var(--bg-2);
+  overflow-y:auto; scrollbar-width: thin;
+}
+.history-header {
+  padding: 16px; font-size:0.75rem; font-weight:700; color:var(--text-secondary);
+  text-transform:uppercase; border-bottom: 1px solid var(--border);
+  display:flex; justify-content:space-between; align-items:center;
+}
+.history-list { padding: 12px; display:flex; flex-direction:column; gap:10px; }
+.history-item {
+  border-radius: var(--radius-sm); border: 1px solid var(--border);
+  overflow:hidden; cursor:pointer; background: var(--bg);
+  transition: transform 0.15s;
+}
+.history-item:hover { border-color: var(--primary); transform: scale(1.02); }
+.history-item img { width:100%; aspect-ratio:1; object-fit:cover; display:block; }
+.history-item .info { padding: 6px 10px; font-size: 0.65rem; color: var(--text-dim); }
 
 .label {
   display:block; font-size:0.82rem; font-weight:600;
@@ -469,7 +630,23 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
   border: 1px solid var(--border);
   box-shadow: 0 12px 40px rgba(0,0,0,0.5);
 }
-.canvas-image-wrap img { max-width: 100%; max-height: min(60vh, 600px); display:block; }
+.canvas-image-wrap img { max-width: 100%; max-height: min(60vh, 600px); display:block; cursor: crosshair; }
+.pin {
+  position: absolute; width: 24px; height: 24px;
+  background: var(--primary); color: white;
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 0 0 3px rgba(255,122,89,0.3);
+  transform: translate(-50%, -50%); z-index: 10;
+}
+.pin:hover { transform: translate(-50%, -50%) scale(1.1); background: #ff6340; }
+.pin-tooltip {
+  position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%);
+  background: #000; color: white; padding: 4px 8px; border-radius: 4px;
+  font-size: 0.7rem; white-space: nowrap; pointer-events: none; opacity: 0;
+  transition: opacity 0.2s;
+}
+.pin:hover .pin-tooltip { opacity: 1; }
 
 .output-grid {
   display:grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap:12px;
@@ -506,6 +683,43 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
 
 .advanced { display:none; }
 .advanced.open { display:flex; flex-direction:column; gap:18px; }
+
+.image-actions {
+  display:flex; gap:10px; margin-top:14px; width:100%; justify-content:center;
+}
+.btn-action {
+  padding: 8px 16px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong); background: var(--bg-2);
+  color: var(--text-secondary); font-size:0.82rem; font-weight:600;
+  cursor:pointer; transition: all 0.15s;
+}
+.btn-action:hover { border-color: var(--primary); color: var(--text); background: var(--surface-hover); }
+
+.dropdown { position: relative; display: inline-block; }
+.dropdown-content {
+  display: none; position: absolute; bottom: 100%; left: 0;
+  background-color: var(--bg-2); min-width: 180px;
+  box-shadow: 0 8px 16px rgba(0,0,0,0.5);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  z-index: 1; margin-bottom: 8px;
+}
+.dropdown-content a {
+  color: var(--text-secondary); padding: 10px 14px;
+  text-decoration: none; display: block; font-size: 0.82rem;
+}
+.dropdown-content a:hover { background-color: var(--surface-hover); color: var(--primary); }
+.dropdown:hover .dropdown-content { display: block; }
+
+.qc-panel {
+  width:100%; max-width: 900px; margin-top:16px; padding: 18px;
+  background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: var(--radius); text-align:left;
+}
+.qc-score { font-size: 1.4rem; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
+.qc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.qc-item { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; }
+.qc-item.pass { color: var(--ok); }
+.qc-item.fail { color: var(--bad); }
 
 .status-bar {
   display:flex; align-items:center; gap:12px; padding: 10px 22px;
@@ -582,6 +796,29 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
           </div>
         </div>
 
+        <div>
+          <label class="label-row" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; background: var(--surface); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border);">
+            <div style="display:flex; flex-direction:column">
+              <span style="font-size:0.88rem; font-weight:700">🧊 Composite Mode</span>
+              <span style="font-size:0.7rem; color:var(--text-dim)">Real product + AI scene</span>
+            </div>
+            <input type="checkbox" id="compositeCheck" onchange="toggleComposite(this.checked)" style="width:18px; height:18px; accent-color:var(--primary)">
+          </label>
+        </div>
+
+        <div id="productUpload" style="display:none">
+          <div class="label">🛍️ Product Photo (cutout)</div>
+          <div class="dropzone" id="dropzoneProd" onclick="$('prodFile').click()"
+               ondragover="event.preventDefault();this.classList.add('drag')"
+               ondragleave="this.classList.remove('drag')"
+               ondrop="handleDropProd(event)">
+            <div class="icon">🏷️</div>
+            <p>Upload your real product</p>
+            <img id="thumbProd" class="preview-thumb" style="display:none;">
+            <input type="file" id="prodFile" accept="image/*" onchange="handleFileProd(this.files[0])">
+          </div>
+        </div>
+
         <button class="btn-generate" id="genBtn" onclick="generate()">⚡ Generate Image</button>
 
         <div class="advanced" id="advancedPanel">
@@ -606,6 +843,11 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
                 Automatically improves lighting, camera angle, and material descriptors.
               </p>
             </div>
+            <div style="margin-top:14px">
+              <div class="label">🎨 Figma Integration (Brand Context)</div>
+              <input type="text" id="figmaUrl" placeholder="https://www.figma.com/design/..." onchange="loadFigmaContext(this.value)">
+              <div id="figmaStatus" style="font-size:0.72rem; color:var(--text-dim); margin-top:6px"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -624,8 +866,39 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
         </div>
         <div class="canvas-image-wrap" id="imageWrap" style="display:none">
           <img id="mainImg" src="">
+          <div class="image-actions">
+            <button class="btn-action" onclick="runQC()">🔍 Run QC Audit</button>
+            <div class="dropdown">
+              <button class="btn-action">📤 Export to... ▼</button>
+              <div class="dropdown-content">
+                <a href="#" onclick="exportImg('amazon')">Amazon (1:1 White)</a>
+                <a href="#" onclick="exportImg('shopify')">Shopify (1:1 White)</a>
+                <a href="#" onclick="exportImg('meta-feed')">Meta Feed (4:5)</a>
+                <a href="#" onclick="exportImg('meta-stories')">Meta Stories (9:16)</a>
+                <a href="#" onclick="exportImg('web-hero')">Web Hero (16:9)</a>
+              </div>
+            </div>
+          </div>
+          <div id="qcResults" class="qc-panel" style="display:none"></div>
+          <div id="refinePanel" class="refine-panel" style="display:none">
+            <div class="label">🎯 Active Area Fixes</div>
+            <p style="font-size:0.75rem; color:var(--text-dim); margin-bottom:8px">
+              Click the image to add more fixes.
+            </p>
+            <button class="btn-generate btn-refine" onclick="refine()">✨ Refine this image</button>
+          </div>
         </div>
         <div class="output-grid" id="outputGrid" style="display:none"></div>
+      </div>
+    </div>
+
+    <div class="history-sidebar">
+      <div class="history-header">
+        <span>Session History</span>
+        <button class="btn-toggle" onclick="newSession()">New</button>
+      </div>
+      <div class="history-list" id="historyList">
+        <!-- History items go here -->
       </div>
     </div>
   </div>
@@ -639,7 +912,7 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
 <div class="toast" id="toast"></div>
 
 <script>
-let state = { tier:'fast', ratio:'1:1', refImage:null, generating:false };
+let state = { tier:'fast', ratio:'1:1', refImage:null, prodImage:null, generating:false, composite:false, sessionId:null, currentImageUrl:null };
 function $(id){ return document.getElementById(id); }
 function showToast(msg,type='ok'){
   const t=$('toast'); t.textContent=msg; t.className='toast show '+type;
@@ -660,6 +933,55 @@ function toggleAdvanced(){
   p.classList.toggle('open');
   btn.textContent = p.classList.contains('open') ? '⚙️ Hide Advanced' : '⚙️ Advanced';
 }
+function newSession(){
+  state.sessionId = null;
+  state.currentImageUrl = null;
+  $('historyList').innerHTML = '';
+  $('imageWrap').style.display = 'none';
+  $('outputGrid').style.display = 'none';
+  $('emptyState').style.display = 'block';
+  showToast('New session started');
+}
+async function loadHistory(){
+  if(!state.sessionId) return;
+  try {
+    const resp = await fetch('/api/session/' + state.sessionId);
+    const data = await resp.json();
+    const list = $('historyList');
+    list.innerHTML = data.entries.reverse().map(e => `
+      <div class="history-item" onclick="pickImage('${e.image_url}')">
+        <img src="${e.image_url}">
+        <div class="info">
+          <div style="font-weight:700; color:var(--text)">${e.type.toUpperCase()}</div>
+          <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${e.prompt || e.note || ''}</div>
+        </div>
+      </div>
+    `).join('');
+  } catch(e) { console.error('History failed', e); }
+}
+function toggleComposite(checked){
+  state.composite = checked;
+  $('productUpload').style.display = checked ? 'block' : 'none';
+  $('genBtn').textContent = checked ? '🪄 Create Composite' : '⚡ Generate Image';
+}
+async function loadFigmaContext(url){
+  if(!url) { $('figmaStatus').textContent=''; return; }
+  $('figmaStatus').textContent = '⌛ Fetching brand context...';
+  try {
+    const resp = await fetch('/api/figma', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const data = await resp.json();
+    if(data.error) throw new Error(data.error);
+    const colors = (data.fills||[]).slice(0,3).join(', ');
+    const fonts = (data.fonts||[]).slice(0,2).join(', ');
+    $('figmaStatus').innerHTML = `<span style="color:var(--ok)">✅ Connected:</span> ${colors} ${fonts}`;
+  } catch(e) {
+    $('figmaStatus').innerHTML = `<span style="color:var(--bad)">❌ Error:</span> ${e.message}`;
+  }
+}
 function handleFile(file){
   if(!file) return;
   state.refImage = file;
@@ -672,21 +994,55 @@ function handleDrop(e){
   const file = e.dataTransfer.files[0];
   if(file) handleFile(file);
 }
+function handleFileProd(file){
+  if(!file) return;
+  state.prodImage = file;
+  const reader = new FileReader();
+  reader.onload = e => { $('thumbProd').src=e.target.result; $('thumbProd').style.display='block'; };
+  reader.readAsDataURL(file);
+}
+function handleDropProd(e){
+  e.preventDefault(); e.currentTarget.classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if(file) handleFileProd(file);
+}
 async function generate(){
   const prompt = $('prompt').value.trim();
+  const figma_url = $('figmaUrl').value.trim();
   if(!prompt){ showToast('Please enter a prompt','err'); return; }
   if(state.generating) return;
+
+  if(state.composite && !state.prodImage){
+    showToast('Product photo required for Composite Mode','err'); return;
+  }
+
   state.generating=true; $('genBtn').disabled=true;
   $('emptyState').style.display='none';
   $('spinner').style.display='flex';
   $('imageWrap').style.display='none';
   $('outputGrid').style.display='none';
-  try{
-    const body = { prompt: prompt, mode:'direct', tier:state.tier,
-      aspect_ratio:state.ratio, smart:$('smartCheck')?.checked??false, variations:4 };
-    const resp = await fetch('/api/generate',{
-      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
-    });
+
+  try {
+    let resp;
+    if(state.composite) {
+      const fd = new FormData();
+      fd.append('prompt', prompt);
+      fd.append('product', state.prodImage);
+      fd.append('aspect_ratio', state.ratio);
+      fd.append('tier', state.tier);
+      if(state.sessionId) fd.append('session_id', state.sessionId);
+      if(figma_url) fd.append('figma_url', figma_url);
+      resp = await fetch('/api/composite', { method:'POST', body:fd });
+    } else {
+      const body = { prompt: prompt, mode:'direct', tier:state.tier,
+        aspect_ratio:state.ratio, smart:$('smartCheck')?.checked??false, variations:4 };
+      if(state.sessionId) body.session_id = state.sessionId;
+      if(figma_url) body.figma_url = figma_url;
+      resp = await fetch('/api/generate',{
+        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+      });
+    }
+
     const data = await resp.json();
     $('spinner').style.display='none';
     if(data.error || (data.images&&data.images[0]?.error)){
@@ -694,9 +1050,11 @@ async function generate(){
       $('emptyState').style.display='block'; return;
     }
     if(data.images&&data.images.length){
+      state.sessionId = data.session_id;
       renderImages(data.images);
       showToast(data.message||'Done!','ok');
       refreshCost();
+      loadHistory();
     } else { showToast('No images returned','err'); $('emptyState').style.display='block'; }
   }catch(e){
     $('spinner').style.display='none'; $('emptyState').style.display='block';
@@ -708,6 +1066,8 @@ function renderImages(images){
   if(images.length===1){
     wrap.style.display='inline-block'; grid.style.display='none';
     $('mainImg').src = images[0].url;
+    state.currentImageUrl = images[0].url;
+    loadPins(images[0].url);
   } else {
     wrap.style.display='none'; grid.style.display='grid';
     grid.innerHTML = images.map(img=>
@@ -721,6 +1081,164 @@ function pickImage(url){
   const wrap=$('imageWrap'), grid=$('outputGrid');
   wrap.style.display='inline-block'; grid.style.display='none';
   $('mainImg').src=url;
+  state.currentImageUrl = url;
+  $('qcResults').style.display = 'none';
+  loadPins(url);
+}
+
+// -- Pin Management ---------------------------------------------------
+let currentPins = [];
+
+$('mainImg').onclick = function(e) {
+  if (state.generating) return;
+  const rect = e.target.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / rect.width;
+  const y = (e.clientY - rect.top) / rect.height;
+  const text = prompt("What should we change in this area?");
+  if (text) addPin(x, y, text);
+};
+
+async function addPin(x, y, text) {
+  try {
+    const resp = await fetch('/api/pins', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_path: state.currentImageUrl, x, y, text })
+    });
+    const data = await resp.json();
+    renderPins(data.pins);
+  } catch(e) { showToast('Failed to add pin', 'err'); }
+}
+
+async function loadPins(url) {
+  try {
+    const resp = await fetch('/api/pins/' + encodeURIComponent(url));
+    const data = await resp.json();
+    renderPins(data.pins);
+  } catch(e) { console.log('Load pins failed', e); }
+}
+
+function renderPins(pins) {
+  currentPins = pins;
+  // Remove existing pins from DOM
+  document.querySelectorAll('.pin').forEach(p => p.remove());
+  const wrap = $('imageWrap');
+  pins.forEach((p, i) => {
+    const el = document.createElement('div');
+    el.className = 'pin';
+    el.style.left = (p.x * 100) + '%';
+    el.style.top = (p.y * 100) + '%';
+    el.innerHTML = `${i+1}<div class="pin-tooltip">${p.text}</div>`;
+    el.onclick = (e) => { e.stopPropagation(); if(confirm('Delete this pin?')) deletePin(p.id); };
+    wrap.appendChild(el);
+  });
+  updateRefinePanel();
+}
+
+async function deletePin(pinId) {
+  try {
+    const resp = await fetch(`/api/pins/${encodeURIComponent(state.currentImageUrl)}/${pinId}`, { method: 'DELETE' });
+    const data = await resp.json();
+    renderPins(data.pins);
+  } catch(e) { showToast('Delete failed', 'err'); }
+}
+
+function updateRefinePanel() {
+  const panel = $('refinePanel');
+  if (currentPins.length > 0) {
+    panel.style.display = 'flex';
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+async function refine() {
+  const changes = prompt("Any overall changes? (optional)");
+  const figma_url = $('figmaUrl').value.trim();
+  if (state.generating) return;
+  state.generating = true;
+  showToast('Refining image...', 'ok');
+  try {
+    const resp = await fetch('/api/refine', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_path: state.currentImageUrl,
+        changes: changes || "",
+        pins: currentPins,
+        tier: state.tier,
+        session_id: state.sessionId,
+        figma_url: figma_url
+      })
+    });
+    const data = await resp.json();
+    if(data.error) throw new Error(data.error);
+    renderImages(data.images);
+    showToast('Refined!');
+    loadHistory();
+  } catch(e) {
+    showToast('Refinement failed: ' + e.message, 'err');
+  } finally { state.generating = false; }
+}
+
+async function runQC(){
+  const imgUrl = $('mainImg').getAttribute('src');
+  if(!imgUrl) return;
+  showToast('Running vision audit...','ok');
+  $('qcResults').style.display = 'none';
+  try {
+    const resp = await fetch('/api/qc', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_url: imgUrl })
+    });
+    const data = await resp.json();
+    if(data.error) throw new Error(data.error);
+
+    const q = data.qc;
+    const items = [
+      { key: 'Floating Products', val: q.floating_products },
+      { key: 'Garbled Text', val: q.garbled_text },
+      { key: 'Detached Shadows', val: q.detached_shadows },
+      { key: 'Fake Products', val: q.fake_products },
+      { key: 'Readable Labels', val: q.readable_labels, invert: true }
+    ];
+
+    $('qcResults').innerHTML = `
+      <div class="qc-score">Quality Score: ${q.quality_score}/10</div>
+      <div class="qc-grid">
+        ${items.map(it => {
+          const isPass = it.invert ? it.val : !it.val;
+          return `<div class="qc-item ${isPass?'pass':'fail'}">
+            <span>${isPass?'✅':'❌'}</span> ${it.key}
+          </div>`;
+        }).join('')}
+      </div>
+      ${q.issues.length ? `<div style="margin-top:12px; font-size:0.75rem; color:var(--text-dim)">
+        ${q.issues.map(iss => `<div>⚠ ${iss}</div>`).join('')}
+      </div>` : ''}
+    `;
+    $('qcResults').style.display = 'block';
+    showToast('Audit complete');
+  } catch(e) {
+    showToast('QC failed: ' + e.message, 'err');
+  }
+}
+async function exportImg(preset){
+  const imgUrl = $('mainImg').getAttribute('src');
+  if(!imgUrl) return;
+  showToast('Exporting to ' + preset + '...','ok');
+  try {
+    const fd = new FormData();
+    fd.append('image_url', imgUrl);
+    fd.append('presets', preset);
+    const resp = await fetch('/api/export', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if(data.error) throw new Error(data.error);
+    showToast('Exported! Check your downloads folder.');
+  } catch(e) {
+    showToast('Export failed: ' + e.message, 'err');
+  }
 }
 async function refreshCost(){
   try{ const r=await fetch('/api/costs'); const d=await r.json();
@@ -731,13 +1249,16 @@ refreshCost(); setInterval(refreshCost, 15000);
 </script>
 </body>
 </html>
-'''
+"""
+
 
 @app.route("/")
 def index():
     return render_template_string(HTML_TEMPLATE)
 
+
 # ── API Routes ──────────────────────────────────────────────────────────
+
 
 @app.route("/api/generate", methods=["POST"])
 def api_generate():
@@ -752,21 +1273,43 @@ def api_generate():
     smart = data.get("smart", False)
     variations = int(data.get("variations", 4))
     session_id = data.get("session_id", new_session_id())
+    figma_url = data.get("figma_url")
+
+    # Fetch figma context if requested
+    figma_ctx = None
+    if figma_url:
+        file_key, node_id = parse_figma_url(figma_url)
+        if file_key:
+            figma_ctx = fetch_figma_context(file_key, node_id)
+            if "error" not in figma_ctx:
+                prompt = enhance_prompt_with_figma(prompt, figma_ctx)
 
     images = run_cli_generate(prompt, mode, tier, aspect, smart, variations=variations)
     for img in images:
         if "error" not in img:
-            add_entry(session_id, {
-                "type": mode, "prompt": prompt[:100], "cost": img.get("cost", 0),
-                "image_url": img.get("url", ""), "model": img.get("model", ""),
-                "note": f"{img.get('name', '')} ({img.get('model', '')})"
-            })
+            add_entry(
+                session_id,
+                {
+                    "type": mode,
+                    "prompt": prompt[:100],
+                    "cost": img.get("cost", 0),
+                    "image_url": img.get("url", ""),
+                    "model": img.get("model", ""),
+                    "note": f"{img.get('name', '')} ({img.get('model', '')})",
+                },
+            )
 
     costs = load_costs()
     costs["session_count"] = len(list(SESSIONS_DIR.glob("*.json")))
     save_costs(costs)
 
-    return jsonify({"message": f"Generated {len(images)} image(s)", "images": images, "session_id": session_id})
+    return jsonify(
+        {
+            "message": f"Generated {len(images)} image(s)",
+            "images": images,
+            "session_id": session_id,
+        }
+    )
 
 
 @app.route("/api/composite", methods=["POST"])
@@ -787,52 +1330,99 @@ def api_composite():
 
     images = run_cli_composite(prompt, str(product_path), aspect)
     for img in images:
-        add_entry(session_id, {
-            "type": "composite", "prompt": prompt[:100], "cost": img.get("cost", 0),
-            "image_url": img.get("url", ""), "model": img.get("model", ""),
-            "note": img.get("name", "")
-        })
+        add_entry(
+            session_id,
+            {
+                "type": "composite",
+                "prompt": prompt[:100],
+                "cost": img.get("cost", 0),
+                "image_url": img.get("url", ""),
+                "model": img.get("model", ""),
+                "note": img.get("name", ""),
+            },
+        )
 
-    return jsonify({"message": "Composite generated", "images": images, "session_id": session_id})
+    return jsonify(
+        {"message": "Composite generated", "images": images, "session_id": session_id}
+    )
 
 
 @app.route("/api/export", methods=["POST"])
 def api_export():
-    if "image" not in request.files:
-        return jsonify({"error": "Image required"}), 400
-    f = request.files["image"]
-    presets = request.form.get("presets", "")
     session_id = request.form.get("session_id", new_session_id())
+    presets = request.form.get("presets", "")
     if not presets:
         return jsonify({"error": "Presets required"}), 400
 
-    tmp_dir = DATA_DIR / "uploads"
-    tmp_dir.mkdir(exist_ok=True)
-    src_path = tmp_dir / f"export_{int(time.time())}_{f.filename}"
-    f.save(str(src_path))
+    # Case 1: Existing image from URL
+    img_url = request.form.get("image_url")
+    if img_url and img_url.startswith("/image/"):
+        rel_path = img_url.replace("/image/", "")
+        src_path = OUTPUT_DIR / rel_path
+    # Case 2: Uploaded image
+    elif "image" in request.files:
+        f = request.files["image"]
+        tmp_dir = DATA_DIR / "uploads"
+        tmp_dir.mkdir(exist_ok=True)
+        src_path = tmp_dir / f"export_{int(time.time())}_{f.filename}"
+        f.save(str(src_path))
+    else:
+        return jsonify({"error": "Image required"}), 400
 
     images = run_cli_export(str(src_path), presets)
     for img in images:
-        add_entry(session_id, {
-            "type": "export", "cost": 0, "image_url": img.get("url", ""),
-            "model": "PIL", "note": img.get("name", "")
-        })
+        add_entry(
+            session_id,
+            {
+                "type": "export",
+                "cost": 0,
+                "image_url": img.get("url", ""),
+                "model": "PIL",
+                "note": img.get("name", ""),
+            },
+        )
 
-    return jsonify({"message": f"Exported to {len(images)} formats", "images": images, "session_id": session_id})
+    return jsonify(
+        {
+            "message": f"Exported to {len(images)} formats",
+            "images": images,
+            "session_id": session_id,
+        }
+    )
 
 
 @app.route("/api/qc", methods=["POST"])
 def api_qc():
-    if "image" not in request.files:
+    # Case 1: Existing image from URL (JSON or Form)
+    data = request.json or request.form
+    img_url = data.get("image_url")
+    if img_url and img_url.startswith("/image/"):
+        rel_path = img_url.replace("/image/", "")
+        img_path = OUTPUT_DIR / rel_path
+    # Case 2: Uploaded image
+    elif "image" in request.files:
+        f = request.files["image"]
+        tmp_dir = DATA_DIR / "uploads"
+        tmp_dir.mkdir(exist_ok=True)
+        img_path = tmp_dir / f"qc_{int(time.time())}_{f.filename}"
+        f.save(str(img_path))
+    else:
         return jsonify({"error": "Image required"}), 400
-    f = request.files["image"]
-    tmp_dir = DATA_DIR / "uploads"
-    tmp_dir.mkdir(exist_ok=True)
-    img_path = tmp_dir / f"qc_{int(time.time())}_{f.filename}"
-    f.save(str(img_path))
 
     qc = run_cli_qc(str(img_path))
     return jsonify({"message": f"QC Score: {qc['quality_score']}/10", "qc": qc})
+
+
+@app.route("/api/figma", methods=["POST"])
+def api_figma():
+    url = request.json.get("url")
+    if not url:
+        return jsonify({"error": "URL required"}), 400
+    file_key, node_id = parse_figma_url(url)
+    if not file_key:
+        return jsonify({"error": "Invalid Figma URL"}), 400
+    ctx = fetch_figma_context(file_key, node_id)
+    return jsonify(ctx)
 
 
 @app.route("/api/refine", methods=["POST"])
@@ -857,15 +1447,22 @@ def api_refine():
 
     images = run_cli_refine(image_path, full_changes, tier)
     for img in images:
-        add_entry(session_id, {
-            "type": "refine", "cost": img.get("cost", 0), "image_url": img.get("url", ""),
-            "model": img.get("model", ""), "note": full_changes[:200]
-        })
+        add_entry(
+            session_id,
+            {
+                "type": "refine",
+                "cost": img.get("cost", 0),
+                "image_url": img.get("url", ""),
+                "model": img.get("model", ""),
+                "note": full_changes[:200],
+            },
+        )
 
     return jsonify({"message": "Refined", "images": images, "session_id": session_id})
 
 
 # ── Pin Annotation Routes ───────────────────────────────────────────────
+
 
 @app.route("/api/pins", methods=["POST"])
 def api_pins_add():
@@ -884,15 +1481,15 @@ def api_pins_add():
 
 @app.route("/api/pins/<path:image_path>", methods=["GET"])
 def api_pins_get(image_path):
-    if image_path and not image_path.startswith('/'):
-        image_path = '/' + image_path
+    if image_path and not image_path.startswith("/"):
+        image_path = "/" + image_path
     return jsonify({"pins": load_pins(image_path)})
 
 
 @app.route("/api/pins/<path:image_path>/<pin_id>", methods=["DELETE"])
 def api_pins_delete(image_path, pin_id):
-    if image_path and not image_path.startswith('/'):
-        image_path = '/' + image_path
+    if image_path and not image_path.startswith("/"):
+        image_path = "/" + image_path
     pins = [p for p in load_pins(image_path) if p.get("id") != pin_id]
     save_pins(image_path, pins)
     return jsonify({"pins": pins})
@@ -900,8 +1497,8 @@ def api_pins_delete(image_path, pin_id):
 
 @app.route("/api/pins/<path:image_path>", methods=["DELETE"])
 def api_pins_clear(image_path):
-    if image_path and not image_path.startswith('/'):
-        image_path = '/' + image_path
+    if image_path and not image_path.startswith("/"):
+        image_path = "/" + image_path
     save_pins(image_path, [])
     return jsonify({"pins": []})
 
@@ -909,14 +1506,18 @@ def api_pins_clear(image_path):
 @app.route("/api/sessions", methods=["GET"])
 def api_sessions():
     sessions = []
-    for p in sorted(SESSIONS_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+    for p in sorted(
+        SESSIONS_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True
+    ):
         data = load_json(p)
-        sessions.append({
-            "id": data.get("id", p.stem),
-            "created_at": data.get("created_at", ""),
-            "entries": data.get("entries", []),
-            "cost": sum(e.get("cost", 0) for e in data.get("entries", [])),
-        })
+        sessions.append(
+            {
+                "id": data.get("id", p.stem),
+                "created_at": data.get("created_at", ""),
+                "entries": data.get("entries", []),
+                "cost": sum(e.get("cost", 0) for e in data.get("entries", [])),
+            }
+        )
     return jsonify({"sessions": sessions})
 
 
@@ -928,7 +1529,9 @@ def api_session_get(session_id):
         e2 = dict(e)
         e2["image_url"] = e.get("image_url", "")
         entries.append(e2)
-    return jsonify({"id": session_id, "entries": entries, "created_at": data.get("created_at", "")})
+    return jsonify(
+        {"id": session_id, "entries": entries, "created_at": data.get("created_at", "")}
+    )
 
 
 @app.route("/api/costs", methods=["GET"])
@@ -953,6 +1556,7 @@ def serve_image(subpath):
 # ─── Main ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=5173)
     parser.add_argument("--host", default="0.0.0.0")

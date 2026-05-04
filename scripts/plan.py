@@ -2,6 +2,7 @@
 Creative Studio — Phase 3: Plan
 Takes analysis results and brief answers, recommends a design strategy.
 """
+
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
@@ -12,6 +13,7 @@ Takes analysis results and brief answers, recommends a design strategy.
 import os
 import sys
 import json
+from pathlib import Path
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
 if not API_KEY:
@@ -81,14 +83,14 @@ def plan_strategy(brief_answers: dict, analysis: dict) -> dict:
     client = genai.Client(api_key=API_KEY)
     prompt = PLAN_PROMPT_TEMPLATE.format(
         brief_json=json.dumps(brief_answers, indent=2),
-        analysis_json=json.dumps(analysis, indent=2)
+        analysis_json=json.dumps(analysis, indent=2),
     )
 
     try:
         resp = client.models.generate_content(
             model="gemini-3.1-pro-preview",
             contents=prompt,
-            config=genai.types.GenerateContentConfig(temperature=0.3)
+            config=genai.types.GenerateContentConfig(temperature=0.3),
         )
         text = resp.text.strip() if resp.text else "{}"
         if "```json" in text:
@@ -97,7 +99,11 @@ def plan_strategy(brief_answers: dict, analysis: dict) -> dict:
             text = text.strip("`").strip()
         return json.loads(text)
     except Exception as e:
-        return {"error": str(e), "recommended_approach": "B", "rationale": "Fallback: composite is safest for branded products"}
+        return {
+            "error": str(e),
+            "recommended_approach": "B",
+            "rationale": "Fallback: composite is safest for branded products",
+        }
 
 
 def format_plan(plan: dict) -> str:
@@ -125,9 +131,12 @@ def format_plan(plan: dict) -> str:
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--brief", "-b", required=True, help="Path to JSON brief file")
-    parser.add_argument("--analysis", "-a", required=True, help="Path to JSON analysis file")
+    parser.add_argument(
+        "--analysis", "-a", required=True, help="Path to JSON analysis file"
+    )
     args = parser.parse_args()
 
     with open(args.brief) as f:

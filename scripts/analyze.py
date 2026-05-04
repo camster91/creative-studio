@@ -2,6 +2,7 @@
 Creative Studio — Phase 2: Analyze
 Uses a vision-enabled reasoning model to intelligently describe reference images.
 """
+
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
@@ -11,8 +12,6 @@ Uses a vision-enabled reasoning model to intelligently describe reference images
 # ///
 import os
 import sys
-from pathlib import Path
-from io import BytesIO
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
 if not API_KEY:
@@ -35,7 +34,7 @@ def analyze_image(image_path: str, context: str = "") -> dict:
         f"You are a senior art director analyzing a reference image for a design project."
         f"{f' Context: {context}' if context else ''}\n\n"
         f"Analyze this image in extreme detail and respond ONLY as valid JSON in this exact shape:\n"
-        f'{{\n'
+        f"{{\n"
         f'  "scene_type": "e.g. retail store shelf, e-commerce layout, social media grid",\n'
         f'  "primary_subject": "what is the main focus",\n'
         f'  "shelf_fixture": "e.g. gondola, slatwall, wire rack, floating shelf, or none",\n'
@@ -52,15 +51,15 @@ def analyze_image(image_path: str, context: str = "") -> dict:
         f'  "physical_plausibility": "e.g. solid contact shadows, or floating",\n'
         f'  "overall_mood": "e.g. premium retail, casual lifestyle, clinical",\n'
         f'  "recommended_approach": "e.g. generate full scene, generate background-only then composite, needs photo shoot"\n'
-        f'}}\n\n'
-        f'Be brutally honest about physical flaws (floating objects, bad shadows, AI artifacts).'
+        f"}}\n\n"
+        f"Be brutally honest about physical flaws (floating objects, bad shadows, AI artifacts)."
     )
 
     try:
         resp = client.models.generate_content(
             model="gemini-3.1-pro-preview",
             contents=[img, analysis_prompt],
-            config=genai.types.GenerateContentConfig(temperature=0.2)
+            config=genai.types.GenerateContentConfig(temperature=0.2),
         )
         text = resp.text.strip() if resp.text else "{}"
         if "```json" in text:
@@ -69,6 +68,7 @@ def analyze_image(image_path: str, context: str = "") -> dict:
             text = text.strip("`").strip()
 
         import json
+
         result = json.loads(text)
         return result
     except Exception as e:
@@ -86,6 +86,7 @@ def format_analysis(analysis: dict) -> str:
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", "-i", required=True, help="Image path")
     parser.add_argument("--context", "-c", default="", help="Design context")

@@ -1,4 +1,5 @@
 """Figma design-aware generation helpers."""
+
 import json
 import os
 import re
@@ -33,10 +34,19 @@ def _figma_api(path: str) -> dict:
 
 def fetch_figma_context(file_key: str, node_id: str = None) -> dict:
     """Read a Figma file (or specific node) and extract design context tokens."""
-    data = _figma_api(f"/files/{file_key}/nodes?ids={node_id}" if node_id else f"/files/{file_key}")
+    data = _figma_api(
+        f"/files/{file_key}/nodes?ids={node_id}" if node_id else f"/files/{file_key}"
+    )
 
     def extract(node):
-        ctx = {"fills": [], "strokes": [], "fonts": [], "effects": [], "layout": [], "names": []}
+        ctx = {
+            "fills": [],
+            "strokes": [],
+            "fonts": [],
+            "effects": [],
+            "layout": [],
+            "names": [],
+        }
         stack = [node]
         while stack:
             n = stack.pop()
@@ -70,7 +80,13 @@ def fetch_figma_context(file_key: str, node_id: str = None) -> dict:
                         )
                         ctx["strokes"].append(rgb)
             if "effects" in n:
-                ctx["effects"].extend([e.get("type", "") for e in n.get("effects", []) if isinstance(e, dict)])
+                ctx["effects"].extend(
+                    [
+                        e.get("type", "")
+                        for e in n.get("effects", [])
+                        if isinstance(e, dict)
+                    ]
+                )
             if "layoutMode" in n:
                 ctx["layout"].append(n["layoutMode"])
             for child in n.get("children", []):
@@ -82,7 +98,10 @@ def fetch_figma_context(file_key: str, node_id: str = None) -> dict:
     elif "document" in data:
         doc = data["document"]
     else:
-        return {"error": data.get("error", "No document found"), "raw_response": json.dumps(data)[:200]}
+        return {
+            "error": data.get("error", "No document found"),
+            "raw_response": json.dumps(data)[:200],
+        }
 
     ctx = extract(doc)
     # Deduplicate and trim
@@ -120,14 +139,13 @@ def post_figma_comment(file_key: str, node_id: str, message: str) -> dict:
         return {"error": "FIGMA_ACCESS_TOKEN not set"}
 
     url = f"https://api.figma.com/v1/files/{file_key}/comments"
-    payload = json.dumps({
-        "message": message,
-        "client_meta": {"x": 0, "y": 0}
-    }).encode()
-    req = urllib.request.Request(url, data=payload, headers={
-        "X-Figma-Token": token,
-        "Content-Type": "application/json"
-    }, method="POST")
+    payload = json.dumps({"message": message, "client_meta": {"x": 0, "y": 0}}).encode()
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"X-Figma-Token": token, "Content-Type": "application/json"},
+        method="POST",
+    )
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.loads(r.read().decode())
