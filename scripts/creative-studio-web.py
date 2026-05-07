@@ -201,6 +201,20 @@ def build_pin_prompt(pins: List[Dict]) -> str:
 
 SCRIPT_PATH = str(Path(__file__).parent / "creative_studio.py")
 
+# Tier → (model, resolution) — must match creative_studio.py _TIER_MAP
+_TIER_MODEL = {
+    "fast": "gemini-3.1-flash-image-preview",
+    "balanced": "gemini-3.1-flash-image-preview",
+    "quality": "gemini-3-pro-image-preview",
+    "ultra": "gemini-3-pro-image-preview",
+}
+_TIER_COST = {
+    "fast": 0.07,
+    "balanced": 0.07,
+    "quality": 0.20,
+    "ultra": 0.20,
+}
+
 
 def run_cli_generate(
     prompt: str,
@@ -301,7 +315,7 @@ def run_cli_composite(
 
     try:
         subprocess.run(
-            args, capture_output=True, text=True, timeout=300, env=env, check=False
+            args, capture_output=True, text=True, timeout=300, env=env, check=True
         )
         if out_path.exists():
             model_used = "gemini-3-pro-image-preview"
@@ -315,9 +329,11 @@ def run_cli_composite(
                     "model": model_used,
                 }
             ]
-    except Exception:
-        pass
-    return []
+    except subprocess.CalledProcessError as e:
+        return [{"error": f"Composite failed: {e.stderr[:500] if e.stderr else e}"}]
+    except Exception as e:
+        return [{"error": str(e)}]
+    return [{"error": "Composite produced no output"}]
 
 
 def run_cli_export(source_path: str, presets: str) -> List[Dict]:
@@ -454,6 +470,303 @@ def run_cli_refine(image_path: str, changes: str, tier: str) -> List[Dict]:
     except Exception:
         pass
     return []
+
+
+# Variations angle/lighting suffix templates — match CLI cmd_variations exactly
+_VARIATION_SUFFIXES = [
+    " eye-level composition. warm 3200K overhead lighting. shallow depth of field with creamy bokeh. Professional product photography.",
+    " slightly low angle hero shot. neutral 5600K soft-diffused lighting. deep depth of field. Professional product photography.",
+    " three-quarter view composition. crisp directional rim light. selective focus on hero product. Professional product photography.",
+    " straight-on composition. even flat ambient lighting. sharp throughout with slight falloff. Professional product photography.",
+    " eye-level composition. neutral 5600K soft-diffused lighting. shallow depth of field with creamy bokeh. Professional product photography.",
+    " slightly low angle hero shot. warm 3200K overhead lighting. deep depth of field. Professional product photography.",
+    " three-quarter view composition. even flat ambient lighting. selective focus on hero product. Professional product photography.",
+    " straight-on composition. crisp directional rim light. sharp throughout with slight falloff. Professional product photography.",
+]
+
+
+def run_cli_variations(
+    prompt: str,
+    count: int,
+    tier: str,
+    aspect: str,
+    input_image: Optional[str] = None,
+) -> tuple[List[Dict], str]:
+    """
+    Generate N variations using the same brief + different angle/lighting suffixes.
+    Returns (images, session_key) where session_key is used by refine.
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    out_dir = OUTPUT_DIR / today / "variations"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    session_key = f"vars-{int(time.time())}"
+    session_dir = out_dir / session_key
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    images = []
+    for i in range(count):
+        vname = f"v{i+1:02d}.png"
+        vpath = session_dir / vname
+        variation_prompt = (
+            prompt
+            + "\n\n"
+            + _VARIATION_SUFFIXES[i % len(_VARIATION_SUFFIXES)]
+            + " The shelf surface is perfectly flat and level. Products sit firmly with flat bases touching the shelf. No tilting, no floating, no falling."
+        )
+
+        args = [
+            sys.executable,
+            SCRIPT_PATH,
+            "direct",
+            "--prompt",
+            variation_prompt,
+            "--tier",
+            tier,
+            "--aspect-ratio",
+            aspect,
+            "--filename",
+            str(vpath),
+        ]
+        if input_image:
+            args += ["--input-image", input_image]
+
+        env = os.environ.copy()
+        env["GEMINI_API_KEY"] = API_KEY
+        env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
+
+        try:
+            subprocess.run(
+                args, capture_output=True, text=True, timeout=300, env=env, check=True
+            )
+            if vpath.exists():
+                model_used = _TIER_MODEL.get(tier, "gemini-3-pro-image-preview")
+                cost = track_cost(model_used)
+                images.append(
+                    {
+                        "path": str(vpath),
+                        "url": image_url(str(vpath)),
+                        "name": vname,
+                        "cost": cost,
+                        "model": model_used,
+                        "variation_index": i + 1,
+                    }
+                )
+        except subprocess.CalledProcessError as e:
+            # Continue with remaining variations
+            pass
+
+    # Save manifest so refine can find the session
+    manifest = {
+        "count": len(images),
+        "model": _TIER_MODEL.get(tier, "gemini-3-pro-image-preview"),
+        "resolution": "2K",
+        "original_prompt": prompt,
+        "tier": tier,
+        "aspect_ratio": aspect,
+        "files": [img["path"] for img in images],
+        "prompts": [
+            prompt + _VARIATION_SUFFIXES[i % len(_VARIATION_SUFFIXES)]
+            for i in range(len(images))
+        ],
+    }
+    (session_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    return images, session_key
+
+
+def run_cli_refine_from_variation(
+    session_key: str,
+    pick_index: int,
+    changes: str,
+    tier: str,
+) -> List[Dict]:
+    """
+    Refine a specific variation by its 1-based index.
+    Uses the manifest written by run_cli_variations.
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    session_dir = OUTPUT_DIR / today / "variations" / session_key
+    manifest_path = session_dir / "manifest.json"
+
+    if not manifest_path.exists():
+        # Try searching older dates
+        for date_dir in sorted(OUTPUT_DIR.iterdir(), reverse=True):
+            if date_dir.is_dir():
+                candidate = date_dir / "variations" / session_key
+                if candidate.exists():
+                    session_dir = candidate
+                    manifest_path = session_dir / "manifest.json"
+                    break
+
+    if not manifest_path.exists():
+        return [{"error": f"Session not found: {session_key}"}]
+
+    manifest = json.loads(manifest_path.read_text())
+    files = manifest.get("files", [])
+    idx = pick_index - 1
+    if idx < 0 or idx >= len(files):
+        return [{"error": f"Pick must be between 1 and {len(files)}"}]
+
+    base_path = files[idx]
+    ref_prompt = manifest.get("prompts", [manifest["original_prompt"]])[idx]
+    final_prompt = (
+        f"Refinement based on version v{pick_index}:\n{changes}\n\n"
+        f"Original prompt:\n{ref_prompt}"
+    )
+
+    out_dir = session_dir
+    fname = f"r{pick_index:02d}-{int(time.time())}.png"
+    out_path = out_dir / fname
+
+    args = [
+        sys.executable,
+        SCRIPT_PATH,
+        "direct",
+        "--prompt",
+        final_prompt,
+        "--input-image",
+        base_path,
+        "--tier",
+        tier,
+        "--aspect-ratio",
+        manifest.get("aspect_ratio", "16:9"),
+        "--filename",
+        str(out_path),
+    ]
+
+    env = os.environ.copy()
+    env["GEMINI_API_KEY"] = API_KEY
+    env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
+
+    try:
+        subprocess.run(
+            args, capture_output=True, text=True, timeout=300, env=env, check=True
+        )
+        if out_path.exists():
+            model_used = _TIER_MODEL.get(tier, "gemini-3-pro-image-preview")
+            cost = track_cost(model_used)
+            return [
+                {
+                    "path": str(out_path),
+                    "url": image_url(str(out_path)),
+                    "name": out_path.name,
+                    "cost": cost,
+                    "model": model_used,
+                }
+            ]
+    except subprocess.CalledProcessError as e:
+        return [{"error": f"Refine failed: {e.stderr[:500] if e.stderr else e}"}]
+    except Exception as e:
+        return [{"error": str(e)}]
+    return [{"error": "Refine produced no output"}]
+
+
+# ─── Chat multi-turn state ──────────────────────────────────────────────
+_chat_sessions: Dict[str, dict] = {}  # session_key → {turn, current_input, history}
+
+
+def run_cli_chat_turn(
+    session_key: str,
+    prompt: str,
+    tier: str,
+    aspect: str,
+    input_image: Optional[str] = None,
+) -> tuple[List[Dict], dict]:
+    """
+    Single turn of the multi-turn chat workflow.
+    Each result feeds into the next turn as the input image.
+    Returns (images, session_state).
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    out_dir = OUTPUT_DIR / today / "chat"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if session_key not in _chat_sessions:
+        _chat_sessions[session_key] = {
+            "turn": 0,
+            "current_input": input_image,
+            "initial_input": input_image,
+            "history": [],
+        }
+
+    sess = _chat_sessions[session_key]
+    sess["turn"] += 1
+    turn = sess["turn"]
+
+    fname = f"turn-{turn:02d}.png"
+    out_path = out_dir / f"{session_key}" / fname
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    args = [
+        sys.executable,
+        SCRIPT_PATH,
+        "direct",
+        "--prompt",
+        prompt,
+        "--tier",
+        tier,
+        "--aspect-ratio",
+        aspect,
+        "--filename",
+        str(out_path),
+    ]
+    current_input = sess["current_input"]
+    if current_input:
+        args += ["--input-image", current_input]
+
+    env = os.environ.copy()
+    env["GEMINI_API_KEY"] = API_KEY
+    env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
+
+    images = []
+    try:
+        subprocess.run(
+            args, capture_output=True, text=True, timeout=300, env=env, check=True
+        )
+        if out_path.exists():
+            model_used = _TIER_MODEL.get(tier, "gemini-3-pro-image-preview")
+            cost = track_cost(model_used)
+            images.append(
+                {
+                    "path": str(out_path),
+                    "url": image_url(str(out_path)),
+                    "name": fname,
+                    "cost": cost,
+                    "model": model_used,
+                    "turn": turn,
+                }
+            )
+            # Feed this output as input for next turn
+            sess["current_input"] = str(out_path)
+            sess["history"].append(
+                {
+                    "turn": turn,
+                    "prompt": prompt,
+                    "input": current_input,
+                    "output": str(out_path),
+                }
+            )
+    except subprocess.CalledProcessError as e:
+        sess["turn"] -= 1  # rollback on failure
+        return [{"error": f"Generation failed: {e.stderr[:500] if e.stderr else e}"}], sess
+    except Exception as e:
+        sess["turn"] -= 1
+        return [{"error": str(e)}], sess
+
+    return images, sess
+
+
+def chat_session_history(session_key: str) -> List[dict]:
+    sess = _chat_sessions.get(session_key, {})
+    return sess.get("history", [])
+
+
+def chat_reset(session_key: str) -> dict:
+    sess = _chat_sessions.get(session_key, {})
+    sess["turn"] = 0
+    sess["current_input"] = sess.get("initial_input")
+    sess["history"] = []
+    _chat_sessions[session_key] = sess
+    return sess
 
 
 # ─── Flask App ─────────────────────────────────────────────────────────
@@ -815,6 +1128,120 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
 }
 .status-bar .cost { color: var(--accent); font-weight:700; margin-left:auto; }
 
+/* Variations 4-up grid */
+.var-grid {
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(200px,1fr)); gap:14px;
+  width:100%; max-width:900px;
+}
+.var-cell {
+  border-radius:var(--radius); overflow:hidden; border:2px solid transparent;
+  cursor:pointer; transition:all 0.15s; position:relative;
+}
+.var-cell:hover { border-color:var(--primary); transform:translateY(-2px); box-shadow:0 8px 24px rgba(0,0,0,0.4); }
+.var-cell img { width:100%; aspect-ratio:1; object-fit:cover; display:block; }
+.var-cell-label {
+  position:absolute; bottom:8px; left:8px;
+  background:rgba(0,0,0,0.7); backdrop-filter:blur(4px);
+  padding:3px 10px; border-radius:6px;
+  font-size:0.72rem; font-weight:700; color:#fff;
+}
+.var-cell-check {
+  position:absolute; top:8px; right:8px;
+  background:var(--primary); color:#fff;
+  width:28px; height:28px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:0.8rem; font-weight:700;
+}
+
+/* Variation pick overlay */
+.var-pick-overlay {
+  display:none; position:fixed; inset:0; z-index:100;
+  background:rgba(0,0,0,0.85); backdrop-filter:blur(6px);
+  flex-direction:column; align-items:center; justify-content:center;
+  gap:20px; padding:20px;
+}
+.var-pick-overlay.open { display:flex; }
+.var-pick-title { font-size:1rem; font-weight:700; color:#fff; }
+.var-pick-hint { font-size:0.8rem; color:var(--text-secondary); margin-top:-14px; }
+.var-pick-actions { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; }
+.var-pick-btn {
+  padding:12px 24px; border-radius:var(--radius-sm);
+  border:2px solid var(--border-strong); background:var(--bg-2);
+  color:var(--text); font-size:0.88rem; font-weight:700;
+  cursor:pointer; transition:all 0.15s;
+}
+.var-pick-btn:hover { border-color:var(--primary); background:var(--primary-dim); color:var(--primary); }
+.var-refine-panel {
+  margin-top:10px; display:flex; flex-direction:column; gap:10px;
+  background:var(--bg-2); border:1px solid var(--border); border-radius:var(--radius-sm);
+  padding:14px; width:100%; max-width:500px;
+}
+.var-refine-input { width:100%; }
+
+/* Chat mode */
+.chat-turn {
+  display:flex; flex-direction:column; gap:6px;
+  max-width:600px; margin:0 auto; width:100%;
+}
+.chat-turn-row {
+  display:flex; gap:10px; align-items:flex-start;
+}
+.chat-turn-label {
+  flex-shrink:0; width:28px; height:28px; border-radius:50%;
+  background:var(--primary); color:#fff;
+  display:flex; align-items:center; justify-content:center;
+  font-size:0.7rem; font-weight:700;
+}
+.chat-turn-content { flex:1; display:flex; flex-direction:column; gap:6px; }
+.chat-turn-prompt {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius-sm); padding:8px 12px;
+  font-size:0.82rem; color:var(--text-secondary);
+}
+.chat-turn-img {
+  border-radius:var(--radius-sm); border:1px solid var(--border);
+  max-width:280px; cursor:pointer; transition:transform 0.15s;
+}
+.chat-turn-img:hover { transform:scale(1.02); border-color:var(--primary); }
+.chat-input-row {
+  display:flex; gap:8px; margin-top:12px;
+  max-width:600px; margin-left:auto; margin-right:auto;
+}
+.chat-input-row input {
+  flex:1; padding:12px 16px; border-radius:var(--radius-sm);
+  border:1px solid var(--border-strong); background:var(--surface);
+  color:var(--text); font-size:0.95rem; font-family:var(--font);
+}
+.chat-input-row input:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(255,122,89,0.12); }
+.chat-send-btn {
+  padding:10px 20px; border-radius:var(--radius-sm); border:none;
+  background:var(--primary); color:#fff; font-size:0.88rem; font-weight:700;
+  cursor:pointer; transition:background 0.15s; white-space:nowrap;
+}
+.chat-send-btn:hover { background:#ff6340; }
+.chat-cmd-btns { display:flex; gap:8px; justify-content:center; margin-top:10px; }
+.chat-cmd-btn {
+  padding:6px 14px; border-radius:6px; border:1px solid var(--border-strong);
+  background:var(--surface); color:var(--text-secondary);
+  font-size:0.75rem; font-weight:600; cursor:pointer; transition:all 0.15s;
+}
+.chat-cmd-btn:hover { border-color:var(--primary); color:var(--text); }
+
+/* Mode tabs */
+.mode-tabs {
+  display:flex; gap:4px; background:var(--bg); border:1px solid var(--border);
+  border-radius:var(--radius-sm); padding:3px; margin-bottom:18px;
+}
+.mode-tab {
+  flex:1; padding:8px 10px; border-radius:6px; border:none;
+  background:transparent; color:var(--text-secondary);
+  font-size:0.78rem; font-weight:700; cursor:pointer; transition:all 0.15s;
+}
+.mode-tab:hover { color:var(--text); background:var(--surface-hover); }
+.mode-tab.active { background:var(--primary-dim); color:var(--primary); }
+.mode-panel { display:none; }
+.mode-panel.active { display:flex; flex-direction:column; gap:18px; }
+
 @media (max-width: 900px) {
   .main { flex-direction:column; }
   .sidebar { width:100%; max-width:none; border-right:none; border-bottom:1px solid var(--border); max-height:45vh; }
@@ -855,58 +1282,158 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
   <div class="main">
     <div class="sidebar">
       <div class="sidebar-body">
-        <div>
-          <div class="label">📎 Reference Image (optional)</div>
-          <div class="dropzone" id="dropzone" onclick="document.getElementById('refFile').click()"
-               ondragover="event.preventDefault();this.classList.add('drag')"
-               ondragleave="this.classList.remove('drag')"
-               ondrop="handleDrop(event)">
-            <div class="icon">🖼️</div>
-            <p>Click or drop your product photo</p>
-            <span class="hint">Helps the AI keep your exact product</span>
-            <img id="thumb" class="preview-thumb" style="display:none;">
-            <input type="file" id="refFile" accept="image/*" onchange="handleFile(this.files[0])">
-          </div>
+
+        <div class="mode-tabs">
+          <button class="mode-tab active" id="tabGenerate" onclick="setMode('generate')">⚡ Generate</button>
+          <button class="mode-tab" id="tabVariations" onclick="setMode('variations')">🎯 Variations</button>
+          <button class="mode-tab" id="tabChat" onclick="setMode('chat')">💬 Chat</button>
         </div>
 
-        <div>
-          <div class="label">✏️ Prompt</div>
-          <textarea id="prompt" placeholder="e.g. A premium supplement tub on a clean wooden shelf in a GNC store, warm overhead lighting, product photography"></textarea>
-        </div>
-
-        <div>
-          <div class="label">🏎️ Quality / Speed</div>
-          <div class="tier-row" id="tierRow">
-            <button class="tier-btn selected" data-tier="fast" onclick="setTier(this,'fast')">Fast<span class="sub">~$0.07 · draft</span></button>
-            <button class="tier-btn" data-tier="balanced" onclick="setTier(this,'balanced')">Balanced<span class="sub">~$0.07 · 2K</span></button>
-            <button class="tier-btn" data-tier="quality" onclick="setTier(this,'quality')">Quality<span class="sub">~$0.20 · 2K</span></button>
-          </div>
-        </div>
-
-        <div>
-          <label class="label-row" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; background: var(--surface); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border);">
-            <div style="display:flex; flex-direction:column">
-              <span style="font-size:0.88rem; font-weight:700">🧊 Composite Mode</span>
-              <span style="font-size:0.7rem; color:var(--text-dim)">Real product + AI scene</span>
+        <!-- Generate mode panel -->
+        <div class="mode-panel active" id="panelGenerate">
+          <div>
+            <div class="label">📎 Reference Image (optional)</div>
+            <div class="dropzone" id="dropzone" onclick="document.getElementById('refFile').click()"
+                 ondragover="event.preventDefault();this.classList.add('drag')"
+                 ondragleave="this.classList.remove('drag')"
+                 ondrop="handleDrop(event)">
+              <div class="icon">🖼️</div>
+              <p>Click or drop your product photo</p>
+              <span class="hint">Helps the AI keep your exact product</span>
+              <img id="thumb" class="preview-thumb" style="display:none;">
+              <input type="file" id="refFile" accept="image/*" onchange="handleFile(this.files[0])">
             </div>
-            <input type="checkbox" id="compositeCheck" onchange="toggleComposite(this.checked)" style="width:18px; height:18px; accent-color:var(--primary)">
-          </label>
+          </div>
+
+          <div>
+            <div class="label">✏️ Prompt</div>
+            <textarea id="prompt" placeholder="e.g. A premium supplement tub on a clean wooden shelf in a GNC store, warm overhead lighting, product photography"></textarea>
+          </div>
+
+          <div>
+            <div class="label">🏎️ Quality / Speed</div>
+            <div class="tier-row" id="tierRow">
+              <button class="tier-btn selected" data-tier="fast" onclick="setTier(this,'fast')">Fast<span class="sub">~$0.07 · draft</span></button>
+              <button class="tier-btn" data-tier="balanced" onclick="setTier(this,'balanced')">Balanced<span class="sub">~$0.07 · 2K</span></button>
+              <button class="tier-btn" data-tier="quality" onclick="setTier(this,'quality')">Quality<span class="sub">~$0.20 · 2K</span></button>
+            </div>
+          </div>
+
+          <div>
+            <label class="label-row" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; background: var(--surface); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border);">
+              <div style="display:flex; flex-direction:column">
+                <span style="font-size:0.88rem; font-weight:700">🧊 Composite Mode</span>
+                <span style="font-size:0.7rem; color:var(--text-dim)">Real product + AI scene</span>
+              </div>
+              <input type="checkbox" id="compositeCheck" onchange="toggleComposite(this.checked)" style="width:18px; height:18px; accent-color:var(--primary)">
+            </label>
+          </div>
+
+          <div id="productUpload" style="display:none">
+            <div class="label">🛍️ Product Photo (cutout)</div>
+            <div class="dropzone" id="dropzoneProd" onclick="$('prodFile').click()"
+                 ondragover="event.preventDefault();this.classList.add('drag')"
+                 ondragleave="this.classList.remove('drag')"
+                 ondrop="handleDropProd(event)">
+              <div class="icon">🏷️</div>
+              <p>Upload your real product</p>
+              <img id="thumbProd" class="preview-thumb" style="display:none;">
+              <input type="file" id="prodFile" accept="image/*" onchange="handleFileProd(this.files[0])">
+            </div>
+          </div>
+
+          <button class="btn-generate" id="genBtn" onclick="generate()">⚡ Generate Image</button>
         </div>
 
-        <div id="productUpload" style="display:none">
-          <div class="label">🛍️ Product Photo (cutout)</div>
-          <div class="dropzone" id="dropzoneProd" onclick="$('prodFile').click()"
-               ondragover="event.preventDefault();this.classList.add('drag')"
-               ondragleave="this.classList.remove('drag')"
-               ondrop="handleDropProd(event)">
-            <div class="icon">🏷️</div>
-            <p>Upload your real product</p>
-            <img id="thumbProd" class="preview-thumb" style="display:none;">
-            <input type="file" id="prodFile" accept="image/*" onchange="handleFileProd(this.files[0])">
+        <!-- Variations mode panel -->
+        <div class="mode-panel" id="panelVariations">
+          <div>
+            <div class="label">📎 Reference Image (optional)</div>
+            <div class="dropzone" id="dropzoneVar" onclick="$('refFileVar').click()"
+                 ondragover="event.preventDefault();this.classList.add('drag')"
+                 ondragleave="this.classList.remove('drag')"
+                 ondrop="handleDropVar(event)">
+              <div class="icon">🖼️</div>
+              <p>Click or drop reference</p>
+              <img id="thumbVar" class="preview-thumb" style="display:none;">
+              <input type="file" id="refFileVar" accept="image/*" onchange="handleFileVar(this.files[0])">
+            </div>
+          </div>
+          <div>
+            <div class="label">✏️ Prompt / Brief</div>
+            <textarea id="promptVar" placeholder="Describe your scene and product. E.g. A premium gummy bottle on a marble countertop, soft natural window lighting from the left"></textarea>
+          </div>
+          <div>
+            <div class="label">🔢 Number of Variations</div>
+            <div class="tier-row" id="varCountRow">
+              <button class="tier-btn" data-count="2" onclick="setVarCount(this,2)">2-up</button>
+              <button class="tier-btn selected" data-count="4" onclick="setVarCount(this,4)">4-up</button>
+              <button class="tier-btn" data-count="6" onclick="setVarCount(this,6)">6-up</button>
+              <button class="tier-btn" data-count="8" onclick="setVarCount(this,8)">8-up</button>
+            </div>
+          </div>
+          <div>
+            <div class="label">🏎️ Quality / Speed</div>
+            <div class="tier-row" id="tierRowVar">
+              <button class="tier-btn" data-tier="fast" onclick="setTierVar(this,'fast')">Fast<span class="sub">~$0.07</span></button>
+              <button class="tier-btn selected" data-tier="balanced" onclick="setTierVar(this,'balanced')">Balanced<span class="sub">~$0.07</span></button>
+              <button class="tier-btn" data-tier="quality" onclick="setTierVar(this,'quality')">Quality<span class="sub">~$0.20</span></button>
+            </div>
+          </div>
+          <div>
+            <div class="label">📐 Aspect Ratio</div>
+            <div class="aspect-row">
+              <button class="aspect-chip selected" data-ratio="1:1" onclick="setRatioVar(this,'1:1')">1:1</button>
+              <button class="aspect-chip" data-ratio="16:9" onclick="setRatioVar(this,'16:9')">16:9</button>
+              <button class="aspect-chip" data-ratio="4:3" onclick="setRatioVar(this,'4:3')">4:3</button>
+              <button class="aspect-chip" data-ratio="9:16" onclick="setRatioVar(this,'9:16')">9:16</button>
+            </div>
+          </div>
+          <button class="btn-generate" id="varBtn" onclick="runVariations()">🎯 Generate Variations</button>
+        </div>
+
+        <!-- Chat mode panel -->
+        <div class="mode-panel" id="panelChat">
+          <div>
+            <div class="label">📎 Starting Image (optional)</div>
+            <div class="dropzone" id="dropzoneChat" onclick="$('refFileChat').click()"
+                 ondragover="event.preventDefault();this.classList.add('drag')"
+                 ondragleave="this.classList.remove('drag')"
+                 ondrop="handleDropChat(event)">
+              <div class="icon">🖼️</div>
+              <p>Start with an image</p>
+              <span class="hint">Each turn builds on the last result</span>
+              <img id="thumbChat" class="preview-thumb" style="display:none;">
+              <input type="file" id="refFileChat" accept="image/*" onchange="handleFileChat(this.files[0])">
+            </div>
+          </div>
+          <div>
+            <div class="label">💬 Your Prompt</div>
+            <textarea id="promptChat" placeholder="Describe what you want to create or change. Each result feeds the next turn."></textarea>
+          </div>
+          <div>
+            <div class="label">🏎️ Quality / Speed</div>
+            <div class="tier-row">
+              <button class="tier-btn" data-tier="fast" onclick="setTierChat(this,'fast')">Fast</button>
+              <button class="tier-btn selected" data-tier="balanced" onclick="setTierChat(this,'balanced')">Balanced</button>
+              <button class="tier-btn" data-tier="quality" onclick="setTierChat(this,'quality')">Quality</button>
+            </div>
+          </div>
+          <div>
+            <div class="label">📐 Aspect Ratio</div>
+            <div class="aspect-row">
+              <button class="aspect-chip selected" data-ratio="1:1" onclick="setRatioChat(this,'1:1')">1:1</button>
+              <button class="aspect-chip" data-ratio="16:9" onclick="setRatioChat(this,'16:9')">16:9</button>
+              <button class="aspect-chip" data-ratio="4:3" onclick="setRatioChat(this,'4:3')">4:3</button>
+              <button class="aspect-chip" data-ratio="9:16" onclick="setRatioChat(this,'9:16')">9:16</button>
+            </div>
+          </div>
+          <button class="btn-generate" id="chatSendBtn" onclick="chatSend()">💬 Send</button>
+          <div style="display:flex;gap:10px">
+            <button class="btn-secondary" onclick="chatReset()" style="flex:1;padding:9px 14px;border-radius:6px;background:var(--surface-hover);color:var(--text);border:1px solid var(--border-strong);cursor:pointer;font-size:0.82rem">🗑️ Reset</button>
+            <button class="btn-secondary" onclick="chatSave()" style="flex:1;padding:9px 14px;border-radius:6px;background:var(--surface-hover);color:var(--text);border:1px solid var(--border-strong);cursor:pointer;font-size:0.82rem">💾 Save</button>
           </div>
         </div>
-
-        <button class="btn-generate" id="genBtn" onclick="generate()">⚡ Generate Image</button>
 
         <div class="advanced" id="advancedPanel">
           <div class="section-box">
@@ -980,6 +1507,8 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
           <div id="exportResults" class="export-results" style="display:none"></div>
         </div>
         <div class="output-grid" id="outputGrid" style="display:none"></div>
+        <div class="var-grid" id="varGrid" style="display:none"></div>
+        <div class="chat-turn" id="chatTurns" style="display:none"></div>
       </div>
     </div>
 
@@ -992,6 +1521,25 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
         <!-- History items go here -->
       </div>
     </div>
+  </div>
+
+  <!-- Variation pick overlay -->
+  <div class="var-pick-overlay" id="varPickOverlay">
+    <div class="var-pick-title" id="varPickTitle">Pick a variation to refine</div>
+    <div class="var-pick-hint">Selected variation will be refined with your changes</div>
+    <div class="var-refine-panel">
+      <textarea class="var-refine-input" id="varRefineInput" rows="3" placeholder="Describe changes to apply (e.g. 'make the background darker blue, add a shelf label')"></textarea>
+      <div style="display:flex;gap:8px">
+        <select id="varRefineTier" style="flex:1;padding:9px 12px;border-radius:6px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-size:0.85rem">
+          <option value="balanced">Balanced</option>
+          <option value="quality">Quality</option>
+          <option value="fast">Fast</option>
+        </select>
+        <button class="btn-generate" id="varRefineBtn" onclick="confirmRefine()" style="padding:9px 16px;font-size:0.82rem">✨ Refine</button>
+        <button class="btn-action" onclick="cancelVarPick()" style="padding:9px 14px">Cancel</button>
+      </div>
+    </div>
+    <div class="var-pick-actions" id="varPickActions"></div>
   </div>
 
   <div class="status-bar">
@@ -1458,6 +2006,396 @@ function trackExportDownload(preset, imgUrl) {
     })
   }).catch(() => {});
 }
+
+// ── Mode Tabs ───────────────────────────────────────────────────────────
+function setMode(mode) {
+  ['generate','variations','chat'].forEach(m => {
+    document.getElementById('tab' + m.charAt(0).toUpperCase() + m.slice(1)).classList.toggle('active', m === mode);
+    const panel = document.getElementById('panel' + m.charAt(0).toUpperCase() + m.slice(1));
+    if (panel) panel.classList.toggle('active', m === mode);
+  });
+  // Hide main canvas results when switching modes
+  $('imageWrap').style.display = 'none';
+  $('outputGrid').style.display = 'none';
+  $('varGrid').style.display = 'none';
+  $('chatTurns').style.display = 'none';
+  $('emptyState').style.display = 'none';
+  if (mode === 'chat') {
+    $('chatTurns').style.display = 'flex';
+    loadChatHistory(state.chatKey);
+  } else {
+    $('emptyState').style.display = 'block';
+  }
+}
+
+// ── Variations ───────────────────────────────────────────────────────────
+let varState = {
+  count: 4, tier: 'balanced', ratio: '1:1',
+  refImage: null, sessionKey: null, images: []
+};
+
+function setVarCount(el, n) {
+  varState.count = n;
+  el.parentElement.querySelectorAll('.tier-btn').forEach(b => b.classList.remove('selected'));
+  el.classList.add('selected');
+}
+function setTierVar(el, t) {
+  varState.tier = t;
+  el.parentElement.querySelectorAll('.tier-btn').forEach(b => b.classList.remove('selected'));
+  el.classList.add('selected');
+}
+function setRatioVar(el, r) {
+  varState.ratio = r;
+  el.parentElement.querySelectorAll('.aspect-chip').forEach(b => b.classList.remove('selected'));
+  el.classList.add('selected');
+}
+function handleFileVar(file) {
+  if (!file) return;
+  varState.refImage = file;
+  const reader = new FileReader();
+  reader.onload = e => { $('thumbVar').src = e.target.result; $('thumbVar').style.display = 'block'; };
+  reader.readAsDataURL(file);
+}
+function handleDropVar(e) {
+  e.preventDefault(); e.currentTarget.classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFileVar(file);
+}
+
+async function runVariations() {
+  const prompt = $('promptVar').value.trim();
+  if (!prompt) { showToast('Enter a prompt for variations', 'err'); return; }
+
+  $('emptyState').style.display = 'none';
+  $('spinner').style.display = 'flex';
+  $('varGrid').style.display = 'none';
+  $('imageWrap').style.display = 'none';
+  $('outputGrid').style.display = 'none';
+  varState.images = [];
+  varState.sessionKey = null;
+
+  try {
+    const body = {
+      prompt,
+      count: varState.count,
+      tier: varState.tier,
+      aspect_ratio: varState.ratio,
+      session_id: state.sessionId || undefined
+    };
+    const fd = new FormData();
+    Object.entries(body).forEach(([k, v]) => fd.append(k, v));
+    if (varState.refImage) fd.append('image', varState.refImage);
+
+    const resp = await fetch('/api/variations', { method: 'POST', body: fd });
+    const data = await resp.json();
+    $('spinner').style.display = 'none';
+
+    if (data.error || (data.images && data.images[0] && data.images[0].error)) {
+      showToast(data.error || data.images[0].error || 'Variations failed', 'err');
+      $('emptyState').style.display = 'block';
+      return;
+    }
+
+    varState.images = data.images || [];
+    varState.sessionKey = data.session_key;
+    state.sessionId = data.session_id || state.sessionId;
+    renderVarGrid(varState.images);
+    showToast(`Generated ${varState.images.length} variations`, 'ok');
+    refreshCost();
+    loadHistory();
+  } catch(e) {
+    $('spinner').style.display = 'none';
+    $('emptyState').style.display = 'block';
+    showToast('Network error: ' + e.message, 'err');
+  }
+}
+
+function renderVarGrid(images) {
+  $('emptyState').style.display = 'none';
+  $('spinner').style.display = 'none';
+  $('varGrid').style.display = 'grid';
+  $('imageWrap').style.display = 'none';
+  $('outputGrid').style.display = 'none';
+  $('chatTurns').style.display = 'none';
+
+  $('varGrid').innerHTML = images.map((img, i) => `
+    <div class="var-cell" onclick="openVarPick(${i})">
+      <img src="${img.url}" loading="lazy">
+      <div class="var-cell-label">v${img.variation_index || i + 1}</div>
+    </div>
+  `).join('');
+}
+
+let varPickIndex = null;
+
+function openVarPick(index) {
+  varPickIndex = index;
+  const overlay = $('varPickOverlay');
+  const actions = $('varPickActions');
+  const img = varState.images[index];
+  actions.innerHTML = varState.images.map((v, i) => `
+    <div class="var-cell" style="${i === index ? 'border-color:var(--primary)' : ''}" onclick="event.stopPropagation(); switchVarPick(${i})">
+      <img src="${v.url}" loading="lazy">
+      <div class="var-cell-label">v${v.variation_index || i + 1}</div>
+      ${i === index ? '<div class="var-cell-check">✓</div>' : ''}
+    </div>
+  `).join('');
+  overlay.classList.add('open');
+  $('varRefineInput').value = '';
+}
+
+function switchVarPick(index) {
+  varPickIndex = index;
+  const actions = $('varPickActions');
+  actions.innerHTML = varState.images.map((v, i) => `
+    <div class="var-cell" style="${i === index ? 'border-color:var(--primary)' : ''}" onclick="event.stopPropagation(); switchVarPick(${i})">
+      <img src="${v.url}" loading="lazy">
+      <div class="var-cell-label">v${v.variation_index || i + 1}</div>
+      ${i === index ? '<div class="var-cell-check">✓</div>' : ''}
+    </div>
+  `).join('');
+}
+
+function cancelVarPick() {
+  $('varPickOverlay').classList.remove('open');
+  varPickIndex = null;
+}
+
+async function confirmRefine() {
+  const changes = $('varRefineInput').value.trim();
+  if (!changes) { showToast('Describe the changes to apply', 'err'); return; }
+  if (varPickIndex === null || !varState.sessionKey) { showToast('No variation selected', 'err'); return; }
+
+  const btn = $('varRefineBtn');
+  btn.disabled = true;
+  btn.textContent = 'Refining…';
+  $('varPickOverlay').classList.remove('open');
+
+  $('emptyState').style.display = 'none';
+  $('spinner').style.display = 'flex';
+  $('varGrid').style.display = 'none';
+
+  try {
+    const pick = varState.images[varPickIndex].variation_index || varPickIndex + 1;
+    const tier = $('varRefineTier').value;
+    const resp = await fetch(`/api/variations/${varState.sessionKey}/refine`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pick,
+        changes,
+        tier,
+        session_id: state.sessionId || undefined
+      })
+    });
+    const data = await resp.json();
+    $('spinner').style.display = 'none';
+
+    if (data.error || (data.images && data.images[0] && data.images[0].error)) {
+      showToast(data.error || data.images[0].error || 'Refine failed', 'err');
+      renderVarGrid(varState.images);
+      return;
+    }
+
+    if (data.images && data.images.length) {
+      // Show refined image in main view
+      $('imageWrap').style.display = 'inline-block';
+      $('mainImg').src = data.images[0].url;
+      state.currentImageUrl = data.images[0].url;
+      $('varGrid').style.display = 'none';
+      loadPins(data.images[0].url);
+      showToast('Refined!', 'ok');
+      refreshCost();
+      loadHistory();
+    }
+  } catch(e) {
+    $('spinner').style.display = 'none';
+    renderVarGrid(varState.images);
+    showToast('Refine failed: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✨ Refine';
+    varPickIndex = null;
+  }
+}
+
+// ── Chat ────────────────────────────────────────────────────────────────
+let chatState = { tier: 'balanced', ratio: '1:1', refImage: null, sessionKey: null, turn: 0 };
+state.chatKey = null;
+
+function setTierChat(el, t) {
+  chatState.tier = t;
+  el.parentElement.querySelectorAll('.tier-btn').forEach(b => b.classList.remove('selected'));
+  el.classList.add('selected');
+}
+function setRatioChat(el, r) {
+  chatState.ratio = r;
+  el.parentElement.querySelectorAll('.aspect-chip').forEach(b => b.classList.remove('selected'));
+  el.classList.add('selected');
+}
+function handleFileChat(file) {
+  if (!file) return;
+  chatState.refImage = file;
+  const reader = new FileReader();
+  reader.onload = e => { $('thumbChat').src = e.target.result; $('thumbChat').style.display = 'block'; };
+  reader.readAsDataURL(file);
+}
+function handleDropChat(e) {
+  e.preventDefault(); e.currentTarget.classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFileChat(file);
+}
+
+async function chatSend() {
+  const prompt = $('promptChat').value.trim();
+  if (!prompt) { showToast('Enter a prompt', 'err'); return; }
+
+  // Init session key if first turn
+  if (!state.chatKey) {
+    state.chatKey = 'chat-' + Math.random().toString(36).slice(2, 10);
+    chatState.sessionKey = state.chatKey;
+  }
+
+  // Show chat turns area
+  $('emptyState').style.display = 'none';
+  $('spinner').style.display = 'flex';
+  $('varGrid').style.display = 'none';
+  $('imageWrap').style.display = 'none';
+  $('outputGrid').style.display = 'none';
+  $('chatTurns').style.display = 'flex';
+
+  // Optimistic user message
+  appendChatTurn(null, prompt, null, true);
+
+  try {
+    const fd = new FormData();
+    fd.append('prompt', prompt);
+    fd.append('tier', chatState.tier);
+    fd.append('aspect_ratio', chatState.ratio);
+    fd.append('session_key', state.chatKey);
+    fd.append('session_id', state.sessionId || '');
+    if (chatState.refImage) fd.append('image', chatState.refImage);
+
+    const resp = await fetch('/api/chat', { method: 'POST', body: fd });
+    const data = await resp.json();
+    $('spinner').style.display = 'none';
+
+    if (data.error || (data.images && data.images[0] && data.images[0].error)) {
+      showToast(data.error || data.images[0].error || 'Generation failed', 'err');
+      // Remove optimistic turn
+      const turns = $('chatTurns');
+      const last = turns.lastElementChild;
+      if (last && last.dataset.optimistic) last.remove();
+      return;
+    }
+
+    chatState.turn = data.turn || chatState.turn + 1;
+    state.sessionId = data.session_id || state.sessionId;
+
+    if (data.images && data.images.length) {
+      const img = data.images[0];
+      // Replace optimistic user turn with actual + image
+      const turns = $('chatTurns');
+      const last = turns.lastElementChild;
+      if (last && last.dataset.optimistic) {
+        last.dataset.optimistic = '';
+        last.querySelector('.chat-turn-prompt').textContent = prompt;
+      }
+      appendChatTurn(chatState.turn, prompt, img.url, false);
+      // Show image in main view too
+      $('imageWrap').style.display = 'inline-block';
+      $('mainImg').src = img.url;
+      state.currentImageUrl = img.url;
+    }
+
+    $('promptChat').value = '';
+    showToast(`Turn ${chatState.turn} complete`, 'ok');
+    refreshCost();
+    loadHistory();
+  } catch(e) {
+    $('spinner').style.display = 'none';
+    const turns = $('chatTurns');
+    const last = turns.lastElementChild;
+    if (last && last.dataset.optimistic) last.remove();
+    showToast('Network error: ' + e.message, 'err');
+  }
+}
+
+function appendChatTurn(turn, prompt, imgUrl, optimistic) {
+  const turns = $('chatTurns');
+  turns.style.display = 'flex';
+  const turnNum = turn || '?';
+  const row = document.createElement('div');
+  row.className = 'chat-turn-row';
+  row.dataset.optimistic = optimistic ? '1' : '';
+  row.innerHTML = `
+    <div class="chat-turn-label">${turnNum}</div>
+    <div class="chat-turn-content">
+      <div class="chat-turn-prompt">${escapeHtml(prompt)}</div>
+      ${imgUrl ? `<img class="chat-turn-img" src="${imgUrl}" onclick="pickImage('${imgUrl}')">` : ''}
+    </div>
+  `;
+  turns.appendChild(row);
+  turns.scrollTop = turns.scrollHeight;
+}
+
+async function loadChatHistory(sessionKey) {
+  if (!sessionKey) return;
+  try {
+    const resp = await fetch(`/api/chat/${sessionKey}/history`);
+    const data = await resp.json();
+    const turns = $('chatTurns');
+    turns.innerHTML = '';
+    (data.history || []).forEach(h => {
+      appendChatTurn(h.turn, h.prompt, h.output ? imageUrl(h.output) : null, false);
+    });
+    if (data.history && data.history.length) {
+      const last = data.history[data.history.length - 1];
+      if (last.output) {
+        $('imageWrap').style.display = 'inline-block';
+        $('mainImg').src = imageUrl(last.output);
+        state.currentImageUrl = imageUrl(last.output);
+      }
+    }
+  } catch(e) { console.log('Load chat history failed', e); }
+}
+
+async function chatReset() {
+  if (!state.chatKey) return;
+  try {
+    await fetch(`/api/chat/${state.chatKey}/reset`, { method: 'POST' });
+    state.chatKey = null;
+    chatState.turn = 0;
+    $('chatTurns').innerHTML = '';
+    $('emptyState').style.display = 'block';
+    showToast('Chat session reset');
+  } catch(e) { showToast('Reset failed', 'err'); }
+}
+
+async function chatSave() {
+  if (!state.chatKey) return;
+  const name = prompt('Save as name:');
+  if (!name) return;
+  try {
+    const resp = await fetch(`/api/chat/${state.chatKey}/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    showToast('Saved: ' + name);
+  } catch(e) { showToast('Save failed: ' + e.message, 'err'); }
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 async function refreshCost(){
   try{ const r=await fetch('/api/costs'); const d=await r.json();
     $('todayCost').textContent = '$'+(d.total||0).toFixed(2);
@@ -1703,6 +2641,199 @@ def api_refine():
         )
 
     return jsonify({"message": "Refined", "images": images, "session_id": session_id})
+
+
+# ── Variations + Refine Routes ─────────────────────────────────────────────
+
+
+@app.route("/api/variations", methods=["POST"])
+def api_variations():
+    data = request.json or {}
+    prompt = data.get("prompt", "").strip()
+    if not prompt:
+        return jsonify({"error": "Prompt required"}), 400
+
+    count = int(data.get("count", 4))
+    count = max(1, min(8, count))
+    tier = data.get("tier", "balanced")
+    aspect = data.get("aspect_ratio", "1:1")
+    session_id = data.get("session_id", new_session_id())
+
+    # Handle optional reference image upload
+    input_image = None
+    if "image" in request.files:
+        f = request.files["image"]
+        tmp_dir = DATA_DIR / "uploads"
+        tmp_dir.mkdir(exist_ok=True)
+        input_image = str(tmp_dir / f"variations_ref_{int(time.time())}_{f.filename}")
+        f.save(input_image)
+
+    images, session_key = run_cli_variations(
+        prompt=prompt,
+        count=count,
+        tier=tier,
+        aspect=aspect,
+        input_image=input_image,
+    )
+
+    for img in images:
+        if "error" not in img:
+            add_entry(
+                session_id,
+                {
+                    "type": "variations",
+                    "prompt": prompt[:100],
+                    "cost": img.get("cost", 0),
+                    "image_url": img.get("url", ""),
+                    "model": img.get("model", ""),
+                    "note": f"v{img.get('variation_index', '?')}",
+                },
+            )
+
+    return jsonify(
+        {
+            "message": f"Generated {len(images)} variation(s)",
+            "images": images,
+            "session_key": session_key,
+            "session_id": session_id,
+        }
+    )
+
+
+@app.route("/api/variations/<session_key>/refine", methods=["POST"])
+def api_variations_refine(session_key):
+    data = request.json or {}
+    pick = int(data.get("pick", 1))  # 1-based variation index
+    changes = data.get("changes", "").strip()
+    tier = data.get("tier", "quality")
+    session_id = data.get("session_id", new_session_id())
+
+    if not changes:
+        return jsonify({"error": "changes required"}), 400
+
+    images = run_cli_refine_from_variation(
+        session_key=session_key,
+        pick_index=pick,
+        changes=changes,
+        tier=tier,
+    )
+
+    for img in images:
+        if "error" not in img:
+            add_entry(
+                session_id,
+                {
+                    "type": "refine",
+                    "prompt": f"Refine v{pick}: {changes[:80]}",
+                    "cost": img.get("cost", 0),
+                    "image_url": img.get("url", ""),
+                    "model": img.get("model", ""),
+                    "note": f"Refined from v{pick}",
+                },
+            )
+
+    return jsonify(
+        {"message": "Refined", "images": images, "session_id": session_id}
+    )
+
+
+# ── Chat Routes ─────────────────────────────────────────────────────────────
+
+
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    data = request.json or {}
+    prompt = data.get("prompt", "").strip()
+    if not prompt:
+        return jsonify({"error": "Prompt required"}), 400
+
+    tier = data.get("tier", "balanced")
+    aspect = data.get("aspect_ratio", "1:1")
+    session_key = data.get("session_key", f"chat-{uuid.uuid4().hex[:8]}")
+    session_id = data.get("session_id", new_session_id())
+
+    # Optional starting image upload
+    input_image = None
+    if "image" in request.files:
+        f = request.files["image"]
+        tmp_dir = DATA_DIR / "uploads"
+        tmp_dir.mkdir(exist_ok=True)
+        input_image = str(tmp_dir / f"chat_ref_{int(time.time())}_{f.filename}")
+        f.save(input_image)
+        # If this is a fresh session, set the initial input
+        if session_key not in _chat_sessions:
+            pass  # run_cli_chat_turn handles first-turn initialization
+
+    images, sess = run_cli_chat_turn(
+        session_key=session_key,
+        prompt=prompt,
+        tier=tier,
+        aspect=aspect,
+        input_image=input_image,
+    )
+
+    for img in images:
+        if "error" not in img:
+            add_entry(
+                session_id,
+                {
+                    "type": "chat",
+                    "prompt": prompt[:100],
+                    "cost": img.get("cost", 0),
+                    "image_url": img.get("url", ""),
+                    "model": img.get("model", ""),
+                    "note": f"Turn {img.get('turn', '?')}",
+                },
+            )
+
+    return jsonify(
+        {
+            "message": "Turn complete",
+            "images": images,
+            "session_key": session_key,
+            "session_id": session_id,
+            "turn": sess.get("turn", 0),
+        }
+    )
+
+
+@app.route("/api/chat/<session_key>/history", methods=["GET"])
+def api_chat_history(session_key):
+    history = chat_session_history(session_key)
+    sess = _chat_sessions.get(session_key, {})
+    return jsonify(
+        {
+            "history": history,
+            "turn": sess.get("turn", 0),
+            "current_input": sess.get("current_input"),
+        }
+    )
+
+
+@app.route("/api/chat/<session_key>/reset", methods=["POST"])
+def api_chat_reset(session_key):
+    sess = chat_reset(session_key)
+    return jsonify({"message": "Chat session reset", "turn": 0})
+
+
+@app.route("/api/chat/<session_key>/save", methods=["POST"])
+def api_chat_save(session_key):
+    """Save the latest output from a chat session as a named file."""
+    data = request.json or {}
+    name = data.get("name", "").strip() or f"chat-{int(time.time())}"
+    sess = _chat_sessions.get(session_key, {})
+    current_input = sess.get("current_input")
+
+    if not current_input or not Path(current_input).exists():
+        return jsonify({"error": "No output to save"}), 400
+
+    approved_dir = DATA_DIR / "approved"
+    approved_dir.mkdir(exist_ok=True)
+    dest = approved_dir / f"{name}.png"
+    import shutil
+
+    shutil.copy2(current_input, dest)
+    return jsonify({"message": f"Saved as {name}", "path": str(dest), "url": image_url(str(dest))})
 
 
 # ── Pin Annotation Routes ───────────────────────────────────────────────
