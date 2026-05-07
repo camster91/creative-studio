@@ -766,11 +766,47 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
   background: var(--bg-2); border: 1px solid var(--border);
   border-radius: var(--radius); text-align: left;
 }
-.qc-score { font-size: 1.4rem; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
-.qc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
-.qc-item { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; }
-.qc-item.pass { color: var(--ok); }
-.qc-item.fail { color: var(--bad); }
+.qc-header { display:flex; align-items:flex-start; gap:20px; margin-bottom:14px; }
+.qc-ring-wrap { flex-shrink:0; position:relative; width:72px; height:72px; }
+.qc-ring-wrap svg { width:72px; height:72px; transform: rotate(-90deg); }
+.qc-ring-bg { fill:none; stroke:var(--border-strong); stroke-width:6; }
+.qc-ring-fill { fill:none; stroke-width:6; stroke-linecap:round;
+  transition: stroke-dashoffset 0.6s ease, stroke 0.3s ease; }
+.qc-ring-label {
+  position:absolute; inset:0; display:flex; align-items:center;
+  justify-content:center; font-size:1.05rem; font-weight:700;
+}
+.qc-title { flex:1; }
+.qc-title h3 { font-size:0.95rem; font-weight:700; margin-bottom:4px; }
+.qc-title .qc-subtitle { font-size:0.75rem; color:var(--text-dim); }
+.qc-badge-row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+.qc-badge {
+  display:inline-flex; align-items:center; gap:6px;
+  padding: 5px 12px; border-radius:20px;
+  font-size:0.75rem; font-weight:700; letter-spacing:0.02em;
+}
+.qc-badge.pass { background:rgba(45,212,168,0.15); border:1px solid rgba(45,212,168,0.35); color:var(--ok); }
+.qc-badge.fail { background:rgba(248,113,113,0.15); border:1px solid rgba(248,113,113,0.35); color:var(--bad); }
+.qc-badge.neutral { background:var(--surface); border:1px solid var(--border-strong); color:var(--text-secondary); }
+.qc-criteria { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px,1fr)); gap:8px; margin-bottom:14px; }
+.qc-criterion { display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius:var(--radius-sm); background:var(--surface); font-size:0.8rem; }
+.qc-criterion .qc-icon { font-size:0.95rem; flex-shrink:0; }
+.qc-criterion .qc-label { flex:1; color:var(--text-secondary); }
+.qc-criterion .qc-status { font-weight:700; font-size:0.75rem; }
+.qc-criterion.pass { border-left:3px solid var(--ok); }
+.qc-criterion.pass .qc-status { color:var(--ok); }
+.qc-criterion.fail { border-left:3px solid var(--bad); }
+.qc-criterion.fail .qc-status { color:var(--bad); }
+.qc-issues { margin-top:10px; }
+.qc-issues-title { font-size:0.75rem; font-weight:700; color:var(--text-dim); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.05em; }
+.qc-issue { font-size:0.78rem; color:var(--text-secondary); padding:4px 0; border-bottom:1px solid var(--border); }
+.qc-issue:last-child { border-bottom:none; }
+.qc-footer { margin-top:14px; padding-top:12px; border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+.qc-footer a { color:var(--primary); text-decoration:none; font-size:0.78rem; font-weight:600; }
+.qc-footer a:hover { text-decoration:underline; }
+.qc-footer span { font-size:0.72rem; color:var(--text-dim); }
+.qc-pass-banner { display:inline-flex; align-items:center; gap:6px; padding:4px 14px; border-radius:20px; background:rgba(45,212,168,0.15); border:1px solid rgba(45,212,168,0.3); color:var(--ok); font-size:0.8rem; font-weight:700; margin-bottom:10px; }
+.qc-fail-banner { display:inline-flex; align-items:center; gap:6px; padding:4px 14px; border-radius:20px; background:rgba(248,113,113,0.15); border:1px solid rgba(248,113,113,0.3); color:var(--bad); font-size:0.8rem; font-weight:700; margin-bottom:10px; }
 
 .qc-panel {
   display:flex; align-items:center; gap:12px; padding: 10px 22px;
@@ -1260,18 +1296,69 @@ async function runQC(){
     ];
 
     $('qcResults').innerHTML = `
-      <div class="qc-score">Quality Score: ${q.quality_score}/10</div>
-      <div class="qc-grid">
+      ${q.quality_score >= 7
+        ? '<div class="qc-pass-banner">✅ QC PASSED — Image looks production-ready</div>'
+        : '<div class="qc-fail-banner">⚠️ QC FLAGGED — Review issues before use</div>'}
+      <div class="qc-header">
+        <div class="qc-ring-wrap">
+          <svg viewBox="0 0 36 36">
+            <circle class="qc-ring-bg" cx="18" cy="18" r="15.9"/>
+            <circle class="qc-ring-fill" cx="18" cy="18" r="15.9"
+              stroke="${q.quality_score >= 7 ? 'var(--ok)' : q.quality_score >= 4 ? 'var(--accent)' : 'var(--bad)'}"
+              stroke-dasharray="${q.quality_score * 10}, 100"
+              stroke-dashoffset="${100 - q.quality_score * 10}"/>
+          </svg>
+          <div class="qc-ring-label" style="color:${q.quality_score >= 7 ? 'var(--ok)' : q.quality_score >= 4 ? 'var(--accent)' : 'var(--bad)'}">${q.quality_score}</div>
+        </div>
+        <div class="qc-title">
+          <h3>Quality Score ${q.quality_score}/10</h3>
+          <div class="qc-subtitle">Vision AI inspection — 5 criteria checked</div>
+        </div>
+      </div>
+      <div class="qc-badge-row">
         ${items.map(it => {
           const isPass = it.invert ? it.val : !it.val;
-          return `<div class="qc-item ${isPass?'pass':'fail'}">
-            <span>${isPass?'✅':'❌'}</span> ${it.key}
-          </div>`;
+          return `<span class="qc-badge ${isPass ? 'pass' : 'fail'}">
+            ${isPass ? '✅' : '❌'} ${it.key}
+          </span>`;
         }).join('')}
       </div>
-      ${q.issues.length ? `<div style="margin-top:12px; font-size:0.75rem; color:var(--text-dim)">
-        ${q.issues.map(iss => `<div>⚠ ${iss}</div>`).join('')}
-      </div>` : ''}
+      <div class="qc-criteria">
+        <div class="qc-criterion ${!q.floating_products ? 'pass' : 'fail'}">
+          <span class="qc-icon">🎈</span>
+          <span class="qc-label">Floating Products</span>
+          <span class="qc-status">${!q.floating_products ? 'PASS' : 'FAIL'}</span>
+        </div>
+        <div class="qc-criterion ${!q.garbled_text ? 'pass' : 'fail'}">
+          <span class="qc-icon">🔤</span>
+          <span class="qc-label">Garbled Text</span>
+          <span class="qc-status">${!q.garbled_text ? 'PASS' : 'FAIL'}</span>
+        </div>
+        <div class="qc-criterion ${!q.detached_shadows ? 'pass' : 'fail'}">
+          <span class="qc-icon">🌑</span>
+          <span class="qc-label">Detached Shadows</span>
+          <span class="qc-status">${!q.detached_shadows ? 'PASS' : 'FAIL'}</span>
+        </div>
+        <div class="qc-criterion ${!q.fake_products ? 'pass' : 'fail'}">
+          <span class="qc-icon">⚛️</span>
+          <span class="qc-label">Fake Products</span>
+          <span class="qc-status">${!q.fake_products ? 'PASS' : 'FAIL'}</span>
+        </div>
+        <div class="qc-criterion ${q.readable_labels ? 'pass' : 'fail'}">
+          <span class="qc-icon">🏷️</span>
+          <span class="qc-label">Readable Labels</span>
+          <span class="qc-status">${q.readable_labels ? 'PASS' : 'FAIL'}</span>
+        </div>
+      </div>
+      ${q.issues && q.issues.length ? `
+        <div class="qc-issues">
+          <div class="qc-issues-title">Issues Found</div>
+          ${q.issues.map(iss => `<div class="qc-issue">⚠ ${iss}</div>`).join('')}
+        </div>` : ''}
+      <div class="qc-footer">
+        <a href="https://github.com/camster91/creative-studio#qc-gate" target="_blank">📖 CLI docs: bash launch.sh qc --input image.png</a>
+        <span>Powered by Gemini Vision</span>
+      </div>
     `;
     $('qcResults').style.display = 'block';
     showToast('Audit complete');
