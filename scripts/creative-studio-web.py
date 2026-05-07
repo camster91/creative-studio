@@ -332,6 +332,7 @@ def run_cli_export(source_path: str, presets: str) -> List[Dict]:
     ]
     env = os.environ.copy()
     env["GEMINI_API_KEY"] = API_KEY
+    env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
     try:
         subprocess.run(
             args, capture_output=True, text=True, timeout=120, env=env, check=False
@@ -698,22 +699,72 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
 .dropdown { position: relative; display: inline-block; }
 .dropdown-content {
   display: none; position: absolute; bottom: 100%; left: 0;
-  background-color: var(--bg-2); min-width: 180px;
+  background-color: var(--bg-2); min-width: 220px;
   box-shadow: 0 8px 16px rgba(0,0,0,0.5);
   border: 1px solid var(--border); border-radius: var(--radius-sm);
-  z-index: 1; margin-bottom: 8px;
+  z-index: 1; margin-bottom: 8px; padding: 12px;
 }
-.dropdown-content a {
-  color: var(--text-secondary); padding: 10px 14px;
-  text-decoration: none; display: block; font-size: 0.82rem;
+.dropdown-content label {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 4px; cursor: pointer;
+  color: var(--text-secondary); font-size: 0.82rem;
+  border-radius: 4px; transition: background 0.15s;
 }
-.dropdown-content a:hover { background-color: var(--surface-hover); color: var(--primary); }
+.dropdown-content label:hover { background: var(--surface-hover); color: var(--text); }
+.dropdown-content input[type="checkbox"] {
+  width: 15px; height: 15px; accent-color: var(--primary); flex-shrink: 0;
+}
+.dropdown-export-btn {
+  width: 100%; margin-top: 10px; padding: 9px;
+  border-radius: var(--radius-sm); border: none;
+  background: var(--primary); color: #fff;
+  font-size: 0.82rem; font-weight: 700; cursor: pointer;
+  transition: background 0.15s;
+}
+.dropdown-export-btn:hover { background: #ff6340; }
+.dropdown-export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .dropdown:hover .dropdown-content { display: block; }
 
+.export-results {
+  width: 100%; max-width: 900px; margin-top: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.export-results-title {
+  font-size: 0.88rem; font-weight: 700; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.export-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px;
+}
+.export-card {
+  border-radius: var(--radius-sm); overflow: hidden;
+  border: 1px solid var(--border); background: var(--bg-2);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.export-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+.export-card img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+.export-card-body { padding: 8px 10px; }
+.export-card-label { font-size: 0.72rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; }
+.export-card-dims { font-size: 0.68rem; color: var(--text-dim); }
+.export-card-dl {
+  display: block; width: 100%; margin-top: 6px; padding: 6px;
+  border-radius: 4px; border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--text-secondary);
+  font-size: 0.72rem; font-weight: 600; cursor: pointer; text-align: center;
+  text-decoration: none; transition: all 0.15s;
+}
+.export-card-dl:hover { border-color: var(--primary); color: var(--text); background: var(--surface-hover); }
+
+.preset-tag {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  background: var(--primary-dim); color: var(--primary);
+  font-size: 0.65rem; font-weight: 700; margin: 2px;
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
 .qc-panel {
-  width:100%; max-width: 900px; margin-top:16px; padding: 18px;
+  width: 100%; max-width: 900px; margin-top: 16px; padding: 18px;
   background: var(--bg-2); border: 1px solid var(--border);
-  border-radius: var(--radius); text-align:left;
+  border-radius: var(--radius); text-align: left;
 }
 .qc-score { font-size: 1.4rem; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
 .qc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
@@ -721,7 +772,7 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
 .qc-item.pass { color: var(--ok); }
 .qc-item.fail { color: var(--bad); }
 
-.status-bar {
+.qc-panel {
   display:flex; align-items:center; gap:12px; padding: 10px 22px;
   border-top: 1px solid var(--border); font-size:0.82rem;
   color: var(--text-dim); background: var(--bg-2);
@@ -871,11 +922,14 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
             <div class="dropdown">
               <button class="btn-action">📤 Export to... ▼</button>
               <div class="dropdown-content">
-                <a href="#" onclick="exportImg('amazon')">Amazon (1:1 White)</a>
-                <a href="#" onclick="exportImg('shopify')">Shopify (1:1 White)</a>
-                <a href="#" onclick="exportImg('meta-feed')">Meta Feed (4:5)</a>
-                <a href="#" onclick="exportImg('meta-stories')">Meta Stories (9:16)</a>
-                <a href="#" onclick="exportImg('web-hero')">Web Hero (16:9)</a>
+                <label><input type="checkbox" value="amazon"> Amazon (1:1 White)</label>
+                <label><input type="checkbox" value="shopify"> Shopify (2048×2048)</label>
+                <label><input type="checkbox" value="meta-feed"> Meta Feed (4:5)</label>
+                <label><input type="checkbox" value="meta-stories"> Meta Stories (9:16)</label>
+                <label><input type="checkbox" value="pinterest"> Pinterest (2:3)</label>
+                <label><input type="checkbox" value="web-hero"> Web Hero (16:9)</label>
+                <label><input type="checkbox" value="print-dpi"> Print (300 DPI)</label>
+                <button class="dropdown-export-btn" id="exportBtn" onclick="exportSelected()">Export Selected</button>
               </div>
             </div>
           </div>
@@ -887,6 +941,7 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity:0.9;
             </p>
             <button class="btn-generate btn-refine" onclick="refine()">✨ Refine this image</button>
           </div>
+          <div id="exportResults" class="export-results" style="display:none"></div>
         </div>
         <div class="output-grid" id="outputGrid" style="display:none"></div>
       </div>
@@ -1224,21 +1279,97 @@ async function runQC(){
     showToast('QC failed: ' + e.message, 'err');
   }
 }
-async function exportImg(preset){
+// -- Export Presets ---------------------------------------------------
+// Preset metadata: label, dimensions, and human-readable size string
+const EXPORT_PRESETS = {
+  'amazon':       { label: 'Amazon',       dims: '2000×2000',  bg: 'white' },
+  'shopify':      { label: 'Shopify',      dims: '2048×2048',  bg: 'white' },
+  'meta-feed':    { label: 'Meta Feed',    dims: '1080×1350',  bg: 'transparent' },
+  'meta-stories': { label: 'Meta Stories',dims: '1080×1920',  bg: 'transparent' },
+  'pinterest':    { label: 'Pinterest',    dims: '1000×1500',  bg: 'transparent' },
+  'web-hero':     { label: 'Web Hero',     dims: '1920×1080',  bg: 'transparent' },
+  'print-dpi':    { label: 'Print',        dims: '300 DPI',    bg: 'white' },
+};
+
+const PRESET_LABELS = {
+  'amazon': 'Amazon (1:1 White)',
+  'shopify': 'Shopify (2048×2048)',
+  'meta-feed': 'Meta Feed (4:5)',
+  'meta-stories': 'Meta Stories (9:16)',
+  'pinterest': 'Pinterest (2:3)',
+  'web-hero': 'Web Hero (16:9)',
+  'print-dpi': 'Print (300 DPI)',
+};
+
+async function exportSelected() {
   const imgUrl = $('mainImg').getAttribute('src');
-  if(!imgUrl) return;
-  showToast('Exporting to ' + preset + '...','ok');
+  if (!imgUrl) { showToast('No image selected', 'err'); return; }
+  const checked = Array.from(
+    document.querySelectorAll('.dropdown-content input[type="checkbox"]:checked')
+  ).map(el => el.value);
+  if (!checked.length) { showToast('Select at least one preset', 'err'); return; }
+  const btn = $('exportBtn');
+  btn.disabled = true;
+  btn.textContent = 'Exporting…';
   try {
     const fd = new FormData();
     fd.append('image_url', imgUrl);
-    fd.append('presets', preset);
+    fd.append('presets', checked.join(','));
+    fd.append('session_id', state.sessionId || '');
     const resp = await fetch('/api/export', { method: 'POST', body: fd });
     const data = await resp.json();
-    if(data.error) throw new Error(data.error);
-    showToast('Exported! Check your downloads folder.');
+    if (data.error) throw new Error(data.error);
+    // Track presets in image metadata (stored server-side in session entry note)
+    if (data.images && data.images.length) {
+      renderExportResults(data.images, checked);
+    }
+    showToast(`Exported ${data.images ? data.images.length : 0} formats`);
   } catch(e) {
     showToast('Export failed: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Export Selected';
   }
+}
+
+function renderExportResults(images, presets) {
+  const container = $('exportResults');
+  container.style.display = 'flex';
+  const presetSet = new Set(presets);
+  container.innerHTML = `
+    <div class="export-results-title">Exported Formats</div>
+    <div class="export-grid">
+      ${images.map((img, i) => {
+        const presetKey = presets[i] || 'export';
+        const meta = EXPORT_PRESETS[presetKey] || {};
+        return `
+        <div class="export-card">
+          <img src="${img.url}" loading="lazy">
+          <div class="export-card-body">
+            <div class="export-card-label">${PRESET_LABELS[presetKey] || presetKey}</div>
+            <div class="export-card-dims">${meta.dims || ''}</div>
+            <a href="${img.url}" download="${img.name}" class="export-card-dl"
+               onclick="trackExportDownload('${presetKey}','${img.url}')">
+              ⬇ Download
+            </a>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+function trackExportDownload(preset, imgUrl) {
+  // Fire-and-forget: record preset usage in session entry metadata
+  fetch('/api/export-track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      image_url: imgUrl,
+      preset: preset,
+      session_id: state.sessionId || null
+    })
+  }).catch(() => {});
 }
 async function refreshCost(){
   try{ const r=await fetch('/api/costs'); const d=await r.json();
@@ -1370,6 +1501,7 @@ def api_export():
         return jsonify({"error": "Image required"}), 400
 
     images = run_cli_export(str(src_path), presets)
+    selected_list = [p.strip() for p in presets.split(",") if p.strip()]
     for img in images:
         add_entry(
             session_id,
@@ -1378,7 +1510,7 @@ def api_export():
                 "cost": 0,
                 "image_url": img.get("url", ""),
                 "model": "PIL",
-                "note": img.get("name", ""),
+                "note": f"Exported to:[{', '.join(selected_list)}]",
             },
         )
 
@@ -1389,6 +1521,31 @@ def api_export():
             "session_id": session_id,
         }
     )
+
+
+@app.route("/api/export-track", methods=["POST"])
+def api_export_track():
+    """Record which presets were used for a given exported image (metadata tracking)."""
+    data = request.json or {}
+    img_url = data.get("image_url", "")
+    preset = data.get("preset", "")
+    session_id = data.get("session_id") or None
+    if session_id and img_url and preset:
+        session_data = load_session(session_id)
+        for e in reversed(session_data.get("entries", [])):
+            if e.get("image_url") == img_url:
+                # Append preset to existing note so we know which export formats were used
+                existing_note = e.get("note", "")
+                used_presets = []
+                if existing_note:
+                    m = re.search(r"Exported to:\[(.*?)\]", existing_note)
+                    if m:
+                        used_presets = [p.strip() for p in m.group(1).split(",")]
+                if preset not in used_presets:
+                    used_presets.append(preset)
+                e["note"] = f"Exported to:[{', '.join(used_presets)}]"
+                save_session(session_id, session_data)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/qc", methods=["POST"])
