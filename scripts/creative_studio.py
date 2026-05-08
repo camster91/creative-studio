@@ -1783,7 +1783,9 @@ def main():
         sys.exit(1)
 
     if args.cmd == "direct":
-        cmd_direct(args)
+        result = cmd_direct(args)
+        if not result:
+            sys.exit(1)
     elif args.cmd == "figma":
         cmd_figma(args)
     elif args.cmd == "brainstorm":

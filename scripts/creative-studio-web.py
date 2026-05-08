@@ -253,7 +253,7 @@ def run_cli_generate(
     env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
 
     try:
-        subprocess.run(
+        proc = subprocess.run(
             args, capture_output=True, text=True, timeout=300, env=env, check=True
         )
         # Find recently generated files
@@ -280,6 +280,8 @@ def run_cli_generate(
                     "model": model_used,
                 }
             )
+        if not images and proc.stderr:
+            return [{"error": f"Generation produced no output: {proc.stderr.strip()[-500:]}"}]
         return images
     except subprocess.CalledProcessError as e:
         return [{"error": f"Generation failed: {e.stderr[:500] if e.stderr else e}"}]
