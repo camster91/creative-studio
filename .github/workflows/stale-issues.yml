@@ -14,5 +14,5 @@ jobs:
           days-before-stale: 30
           days-before-close: 7
           stale-issue-label: stale
-          exempt-issue-labels: pinned,security,enhancement
+          exempt-issue-labels: pinned,security,enhancement,bug,priority-critical,schema-drift
           operations-per-run: 50
