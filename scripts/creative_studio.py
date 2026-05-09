@@ -29,6 +29,8 @@ import json
 import os
 import re
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -420,6 +422,7 @@ def generate_nano(
     model_name: str = NANO_MODEL,
     resolution: str = "2K",
     aspect_ratio: str = "16:9",
+    timeout: int = 120,
 ) -> Optional[str]:
     """Image-to-image or text-to-image via Nano Banana chat model."""
     from google.genai import types
@@ -433,15 +436,15 @@ def generate_nano(
     contents.append(prompt)
 
     print(f"  Generating ({model_name}, {resolution}, {aspect_ratio})...")
-    try:
+    print(f"  Timeout: {timeout}s  ", end="", flush=True)
+
+    def _call_api():
         # Build image config
         img_cfg = types.ImageConfig()
-        # Try setting aspect_ratio first (preferred for controlling orientation)
         try:
             img_cfg.aspect_ratio = resolve_aspect_ratio(aspect_ratio)
         except Exception:
             pass
-        # Try setting image_size (falls back if aspect_ratio not supported)
         try:
             img_cfg.image_size = resolution
         except Exception:
@@ -470,15 +473,36 @@ def generate_nano(
                 img.save(str(output_path), "PNG")
                 est = estimate_cost(model_name, resolution)
                 CONFIG.add_cost(est)
-                print(f"  Saved: {output_path}  (cost ~${est:.3f})")
+                print(f"\n  Saved: {output_path}  (cost ~${est:.3f})")
                 return str(output_path)
+        return None
+
+    start = time.time()
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_call_api)
+            result = future.result(timeout=timeout)
+            elapsed = time.time() - start
+            if result:
+                return result
+            else:
+                print(f"  Generation returned no image data after {elapsed:.1f}s", file=sys.stderr)
+                return None
+    except FutureTimeoutError:
+        elapsed = time.time() - start
+        print(
+            f"\n  ✗ Timed out after {elapsed:.1f}s (limit: {timeout}s). "
+            f"The model is taking too long. Try a shorter prompt, a faster tier, or increase --timeout.",
+            file=sys.stderr,
+        )
     except Exception as e:
-        print(f"  Generation failed: {e}", file=sys.stderr)
+        elapsed = time.time() - start
+        print(f"\n  Generation failed after {elapsed:.1f}s: {e}", file=sys.stderr)
     return None
 
 
 def generate_imagen(
-    prompt: str, output_path: Path, aspect_ratio: str = "1:1"
+    prompt: str, output_path: Path, aspect_ratio: str = "1:1", timeout: int = 120
 ) -> Optional[str]:
     """Pure text-to-image via Imagen 4 using Google GenAI SDK (latest method)."""
     from google.genai import types
@@ -486,10 +510,10 @@ def generate_imagen(
     client = get_genai_client()
     est = estimate_cost(IMAGEN_MODEL, "2K")
     print(f"  Generating with imagen-4 ({aspect_ratio}, ~${est:.3f})...")
+    print(f"  Timeout: {timeout}s  ", end="", flush=True)
 
-    try:
+    def _call_api():
         config = types.GenerateImagesConfig(number_of_images=1)
-        # Best-effort aspect ratio (SDK may not expose this field in all versions)
         if aspect_ratio != "1:1":
             try:
                 config.aspect_ratio = aspect_ratio
@@ -506,10 +530,31 @@ def generate_imagen(
             output_path.write_bytes(data)
             est = estimate_cost(IMAGEN_MODEL, "2K")
             CONFIG.add_cost(est)
-            print(f"  Saved: {output_path}  (cost ~${est:.3f})")
+            print(f"\n  Saved: {output_path}  (cost ~${est:.3f})")
             return str(output_path)
+        return None
+
+    start = time.time()
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_call_api)
+            result = future.result(timeout=timeout)
+            elapsed = time.time() - start
+            if result:
+                return result
+            else:
+                print(f"  Imagen returned no image data after {elapsed:.1f}s", file=sys.stderr)
+                return None
+    except FutureTimeoutError:
+        elapsed = time.time() - start
+        print(
+            f"\n  ✗ Imagen timed out after {elapsed:.1f}s (limit: {timeout}s). "
+            f"Try a shorter prompt or increase --timeout.",
+            file=sys.stderr,
+        )
     except Exception as e:
-        print(f"  Imagen generation failed: {e}", file=sys.stderr)
+        elapsed = time.time() - start
+        print(f"\n  Imagen generation failed after {elapsed:.1f}s: {e}", file=sys.stderr)
     return None
 
 
@@ -591,6 +636,7 @@ def cmd_composite(args):
         model_name=NANO_PRO,
         resolution="2K",
         aspect_ratio=args.aspect_ratio,
+        timeout=args.timeout,
     )
     if not result_env:
         print("  ✗ Environment generation failed.", file=sys.stderr)
@@ -875,7 +921,7 @@ def cmd_direct(args):
     print()
 
     if model.startswith("imagen"):
-        result = generate_imagen(prompt, outpath, aspect_ratio="16:9")
+        result = generate_imagen(prompt, outpath, aspect_ratio="16:9", timeout=args.timeout)
     else:
         result = generate_nano(
             prompt,
@@ -884,6 +930,7 @@ def cmd_direct(args):
             model_name=model,
             resolution=args.resolution,
             aspect_ratio=args.aspect_ratio,
+            timeout=args.timeout,
         )
 
     if result:
@@ -969,6 +1016,7 @@ def cmd_chat(args):
             model_name=args.model,
             resolution=args.resolution,
             aspect_ratio=args.aspect_ratio,
+            timeout=args.timeout,
         )
 
         if result:
@@ -1137,7 +1185,7 @@ def cmd_brainstorm(args):
     model = args.model
     staged_input = _stage_input(args.input_image)
     if model.startswith("imagen"):
-        result = generate_imagen(chosen, outpath, aspect_ratio="16:9")
+        result = generate_imagen(chosen, outpath, aspect_ratio="16:9", timeout=args.timeout)
     else:
         result = generate_nano(
             chosen,
@@ -1146,6 +1194,7 @@ def cmd_brainstorm(args):
             model_name=model,
             resolution=args.resolution,
             aspect_ratio=args.aspect_ratio,
+            timeout=args.timeout,
         )
 
     if not result:
@@ -1257,7 +1306,7 @@ def cmd_figma(args):
     print()
 
     if model.startswith("imagen"):
-        result = generate_imagen(enhanced, outpath, aspect_ratio=args.aspect_ratio)
+        result = generate_imagen(enhanced, outpath, aspect_ratio=args.aspect_ratio, timeout=args.timeout)
     else:
         result = generate_nano(
             enhanced,
@@ -1266,6 +1315,7 @@ def cmd_figma(args):
             model_name=model,
             resolution=args.resolution,
             aspect_ratio=args.aspect_ratio,
+            timeout=args.timeout,
         )
 
     if not result:
@@ -1368,7 +1418,7 @@ def cmd_variations(args):
         print(f"  Generating variation {vnum}/{count}...")
 
         if model.startswith("imagen"):
-            result = generate_imagen(prompts[i], vpath)
+            result = generate_imagen(prompts[i], vpath, timeout=args.timeout)
         else:
             result = generate_nano(
                 prompts[i],
@@ -1377,6 +1427,7 @@ def cmd_variations(args):
                 model_name=model,
                 resolution=args.resolution,
                 aspect_ratio=args.aspect_ratio,
+                timeout=args.timeout,
             )
 
         if result:
@@ -1461,7 +1512,7 @@ def cmd_refine(args):
     print()
 
     if model.startswith("imagen"):
-        result = generate_imagen(final_prompt, rout)
+        result = generate_imagen(final_prompt, rout, timeout=args.timeout)
     else:
         result = generate_nano(
             final_prompt,
@@ -1470,6 +1521,7 @@ def cmd_refine(args):
             model_name=model,
             resolution=manifest["resolution"],
             aspect_ratio=manifest.get("aspect_ratio", "16:9"),
+            timeout=args.timeout,
         )
 
     if result:
@@ -1533,6 +1585,12 @@ def main():
         action="store_true",
         help="Use reasoning model to enhance the prompt with photographic direction.",
     )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="Max seconds to wait for generation (default: 120)",
+    )
 
     # chat
     p = sub.add_parser(
@@ -1564,6 +1622,12 @@ def main():
             "1:4",
             "4:1",
         ],
+    )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="Max seconds to wait for generation (default: 120)",
     )
 
     # analyze
@@ -1624,6 +1688,12 @@ def main():
         action="store_true",
         help="Use reasoning model to enhance prompt with photographic direction.",
     )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="Max seconds to wait for generation (default: 120)",
+    )
 
     # brainstorm
     p = sub.add_parser(
@@ -1653,6 +1723,12 @@ def main():
             "1:4",
             "4:1",
         ],
+    )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="Max seconds to wait for generation (default: 120)",
     )
 
     # variations
@@ -1699,6 +1775,12 @@ def main():
         choices=["fast", "balanced", "quality", "ultra"],
         help="Quality tier",
     )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="Max seconds to wait for generation (default: 120)",
+    )
 
     # refine
     p = sub.add_parser("refine", help="Pick a variation and refine it.")
@@ -1733,6 +1815,12 @@ def main():
             "4:1",
         ],
     )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="Max seconds to wait for generation (default: 120)",
+    )
 
     # composite
     p = sub.add_parser(
@@ -1759,6 +1847,12 @@ def main():
     p.add_argument("--filename", default=None, help="Custom output filename")
     p.add_argument(
         "--tier", default="quality", choices=["fast", "balanced", "quality", "ultra"]
+    )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="Max seconds to wait for generation (default: 120)",
     )
 
     # export
