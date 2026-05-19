@@ -144,7 +144,7 @@ def get_genai_client():
 
 
 def now_str() -> str:
-    return datetime.now().strftime("%H%M%S")
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
 def _ensure_png(fname: str) -> str:
@@ -386,9 +386,10 @@ def smart_enhance_prompt(
     )
 
     client = get_genai_client()
+    from google.genai import types
     try:
         resp = client.models.generate_content(
-            model=enhancer_model, contents=system_prompt, config={"temperature": 0.3}
+            model=enhancer_model, contents=system_prompt, config=types.GenerateContentConfig(temperature=0.3)
         )
         text = (resp.text or "{}").strip()
         text = re.sub(r"```json\s*|```\s*", "", text)
@@ -646,7 +647,7 @@ def cmd_composite(args):
     target_w = int(bg.size[0] * 0.22)
     scale = target_w / fg_w
     target_h = int(fg_h * scale)
-    fg = fg.resize((target_w, target_h), Image.LANCZOS)
+    fg = fg.resize((target_w, target_h), Image.Resampling.LANCZOS)
     x = int(bg.size[0] * 0.38)
     y = int(bg.size[1] * 0.72)
     bg = _add_drop_shadow(bg, fg, (x, y), blur=14, alpha=60)
@@ -694,11 +695,13 @@ def cmd_export(args):
         p = presets[key]
         cropped = crop_to_aspect_ratio(img.copy(), p["ratio"])
         if "w" in p and "h" in p:
-            cropped = cropped.resize((p["w"], p["h"]), Image.LANCZOS)
+            cropped = cropped.resize((p["w"], p["h"]), Image.Resampling.LANCZOS)
         if p.get("bg") == "white":
             base = Image.new("RGB", cropped.size, (255, 255, 255))
             base.paste(cropped, mask=cropped.split()[3])
             cropped = base
+        elif p.get("bg") == "transparent":
+            pass  # keep RGBA for transparent platforms
         else:
             cropped = cropped.convert("RGB")
         dpi = p.get("dpi", 72)

@@ -13,10 +13,11 @@ import uuid
 import re
 import subprocess
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict
+from functools import wraps
 
-from flask import Flask, render_template_string, request, jsonify, send_from_directory
+from flask import Flask, render_template_string, request, jsonify, send_from_directory, session
 
 from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
 
@@ -353,7 +354,7 @@ def run_cli_export(source_path: str, presets: str) -> List[Dict]:
     env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
     try:
         subprocess.run(
-            args, capture_output=True, text=True, timeout=120, env=env, check=False
+            args, capture_output=True, text=True, timeout=120, env=env, check=True
         )
         out_dir = OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d") / "exports"
         files = list(out_dir.glob("*.png"))
@@ -369,8 +370,10 @@ def run_cli_export(source_path: str, presets: str) -> List[Dict]:
                 }
             )
         return images
-    except Exception:
-        return []
+    except subprocess.CalledProcessError as e:
+        return [{"error": f"Export failed: {e.stderr[:500] if e.stderr else e}"}]
+    except Exception as e:
+        return [{"error": str(e)}]
 
 
 def run_cli_qc(image_path: str) -> dict:
@@ -386,7 +389,7 @@ def run_cli_qc(image_path: str) -> dict:
     # Parse stdout for QC results
     try:
         result = subprocess.run(
-            args, capture_output=True, text=True, timeout=120, env=env, check=False
+            args, capture_output=True, text=True, timeout=120, env=env, check=True
         )
         out = result.stdout + result.stderr
         # Extract score
@@ -413,6 +416,8 @@ def run_cli_qc(image_path: str) -> dict:
             "readable_labels": labels,
             "issues": issues[:5],
         }
+    except subprocess.CalledProcessError as e:
+        return {"quality_score": 0, "error": f"QC failed: {e.stderr[:500] if e.stderr else e}", "issues": []}
     except Exception as e:
         return {"quality_score": 0, "error": str(e), "issues": []}
 
@@ -442,7 +447,7 @@ def run_cli_refine(image_path: str, changes: str, tier: str) -> List[Dict]:
     env["GEMINI_API_KEY"] = API_KEY
     try:
         subprocess.run(
-            args, capture_output=True, text=True, timeout=300, env=env, check=False
+            args, capture_output=True, text=True, timeout=300, env=env, check=True
         )
         out_path = out_dir / fname
         if not out_path.exists():
@@ -469,8 +474,10 @@ def run_cli_refine(image_path: str, changes: str, tier: str) -> List[Dict]:
                     "model": model_used,
                 }
             ]
-    except Exception:
-        pass
+    except subprocess.CalledProcessError as e:
+        return [{"error": f"Refine failed: {e.stderr[:500] if e.stderr else e}"}]
+    except Exception as e:
+        return [{"error": str(e)}]
     return []
 
 
@@ -773,7 +780,26 @@ def chat_reset(session_key: str) -> dict:
 
 # ─── Flask App ─────────────────────────────────────────────────────────
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32))
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32MB uploads
+
+# ── Simple in-memory rate limiter ───────────────────────────────────────
+_request_log: Dict[str, list] = {}
+_RATE_LIMIT = 20  # requests per minute per IP
+
+def rate_limited(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
+        now = time.time()
+        _request_log.setdefault(ip, [])
+        # purge old
+        _request_log[ip] = [t for t in _request_log[ip] if now - t < 60]
+        if len(_request_log[ip]) >= _RATE_LIMIT:
+            return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
+        _request_log[ip].append(now)
+        return f(*args, **kwargs)
+    return wrapper
 
 # ── Frontend HTML ─────────────────────────────────────────────────────
 
@@ -2419,6 +2445,7 @@ def index():
 
 
 @app.route("/api/generate", methods=["POST"])
+@rate_limited
 def api_generate():
     data = request.json or {}
     prompt = data.get("prompt", "").strip()
@@ -2471,6 +2498,7 @@ def api_generate():
 
 
 @app.route("/api/composite", methods=["POST"])
+@rate_limited
 def api_composite():
     if "product" not in request.files:
         return jsonify({"error": "Product image required"}), 400
@@ -2649,6 +2677,7 @@ def api_refine():
 
 
 @app.route("/api/variations", methods=["POST"])
+@rate_limited
 def api_variations():
     data = request.json or {}
     prompt = data.get("prompt", "").strip()
@@ -2743,6 +2772,7 @@ def api_variations_refine(session_key):
 
 
 @app.route("/api/chat", methods=["POST"])
+@rate_limited
 def api_chat():
     data = request.json or {}
     prompt = data.get("prompt", "").strip()
@@ -2921,12 +2951,20 @@ def api_costs():
 @app.route("/image/<path:subpath>")
 def serve_image(subpath):
     parts = subpath.split("/")
-    # Navigate safely
+    if any(p in ("", ".", "..") or p.startswith("..") for p in parts):
+        return jsonify({"error": "Invalid path"}), 400
     target = OUTPUT_DIR
     for part in parts:
         target = target / part
-    if target.exists() and target.is_file():
-        return send_from_directory(str(target.parent), target.name)
+    # Prevent traversal outside OUTPUT_DIR
+    try:
+        resolved = target.resolve()
+        base = OUTPUT_DIR.resolve()
+        resolved.relative_to(base)
+    except (ValueError, RuntimeError):
+        return jsonify({"error": "Access denied"}), 403
+    if resolved.exists() and resolved.is_file():
+        return send_from_directory(str(resolved.parent), resolved.name)
     return jsonify({"error": "Not found"}), 404
 
 
