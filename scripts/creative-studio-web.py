@@ -35,7 +35,7 @@ COST_DB = DATA_DIR / "costs.json"
 if os.environ.get("CREATIVE_OUTPUT_DIR"):
     OUTPUT_DIR = Path(os.environ["CREATIVE_OUTPUT_DIR"])
 elif Path("/mnt/c/Users").exists():
-    _win_dl = Path("/mnt/c/Users/camst/Downloads/creative-studio-outputs")
+    _win_dl = Path(os.environ.get("CREATIVE_OUTPUT_DIR", str(Path.home() / "Downloads" / "creative-studio-outputs")))
     _win_dl.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR = _win_dl
 else:
