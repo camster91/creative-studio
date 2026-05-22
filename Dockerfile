@@ -14,6 +14,9 @@ COPY scripts/ ./scripts/
 COPY launch.sh refine.sh ./
 COPY recipes/ ./recipes/
 
+# Fix figma_utils import path (file in scripts/ imported directly)
+RUN ln -s /app/scripts/figma_utils.py /app/figma_utils.py 2>/dev/null || true
+
 # Install dependencies as root first (uv needs write), then fix ownership
 RUN uv sync --frozen --no-dev
 RUN chown -R appuser:appuser /app
