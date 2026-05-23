@@ -35,6 +35,10 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
+
+# Ensure figma_utils is importable when running from repo root
+sys.path.insert(0, str(Path(__file__).parent))
+
 from figma_utils import (
     parse_figma_url,
     fetch_figma_context,

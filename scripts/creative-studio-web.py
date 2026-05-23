@@ -13,11 +13,11 @@ import uuid
 import re
 import subprocess
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, List, Dict
 from functools import wraps
 
-from flask import Flask, render_template_string, request, jsonify, send_from_directory, session
+from flask import Flask, render_template_string, request, jsonify, send_from_directory
 
 from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
 
@@ -560,7 +560,7 @@ def run_cli_variations(
                         "variation_index": i + 1,
                     }
                 )
-        except subprocess.CalledProcessError as e:
+        except subprocess.CalledProcessError:
             # Continue with remaining variations
             pass
 
@@ -2844,7 +2844,7 @@ def api_chat_history(session_key):
 
 @app.route("/api/chat/<session_key>/reset", methods=["POST"])
 def api_chat_reset(session_key):
-    sess = chat_reset(session_key)
+    chat_reset(session_key)
     return jsonify({"message": "Chat session reset", "turn": 0})
 
 

@@ -113,9 +113,9 @@ revise|iterate)
     echo "  Change: $PROMPT"
     echo ""
 
-    uv run "$PYTHON_SCRIPT" revise \
-        --input "$INPUT" \
+    uv run "$PYTHON_SCRIPT" direct \
         --prompt "$PROMPT" \
+        --input-image "$INPUT" \
         --format "$FORMAT"
 
     echo ""
@@ -149,9 +149,9 @@ auto-fix)
     echo "  Fix: $FIX"
     echo ""
 
-    uv run "$PYTHON_SCRIPT" auto-fix \
-        --input "$INPUT" \
-        --fix "$FIX" \
+    uv run "$PYTHON_SCRIPT" direct \
+        --prompt "$FIX" \
+        --input-image "$INPUT" \
         --filename ""
 
     echo ""
