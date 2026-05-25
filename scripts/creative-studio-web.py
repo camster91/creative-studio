@@ -1248,8 +1248,9 @@ def api_generate():
     mode = data.get("mode", "direct")
     tier = data.get("tier", "balanced")
     aspect = data.get("aspect_ratio", "16:9")
-    smart = data.get("smart", False)
-    variations = int(data.get("variations", 4))
+    # Force smart enhancement on every request — improves output quality regardless of user input
+    smart = True
+    variations = int(data.get("variations", 1))
     session_id = data.get("session_id", new_session_id())
     figma_url = data.get("figma_url")
 

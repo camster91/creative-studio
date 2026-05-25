@@ -368,20 +368,32 @@ def smart_enhance_prompt(
     enhancer_model = REASONING_MODEL if tier in ("quality", "ultra") else NANO_MODEL
 
     system_prompt = (
-        "You are a senior CPG/DTC product photographer and prompt engineer. "
-        "Turn the user's brief into a professional image generation prompt using this exact structure:\n\n"
-        "[Subject] + [Environment/Setting] + [Style/Medium] + [Lighting] + [Composition/Camera] + [Mood/Atmosphere]\n\n"
-        "RULES:\n"
-        "1. Subject: Use the user's exact product name/brand. Do NOT change or rename it.\n"
-        "2. Environment: Describe precisely. 'Clean light wooden retail shelf' not 'nice background'.\n"
-        "3. Style: Use 'professional product photography', 'commercial editorial shot', or 'lifestyle product photography'.\n"
-        "4. Lighting: Name specific setups: 'softbox three-point studio lighting', 'warm golden hour backlight', 'overhead track lighting with soft shadows', 'Rembrandt side-lighting'.\n"
-        "5. Camera: Reference real equipment: 'Shot on Fujifilm X-T5 35mm f/1.4', 'Hasselblad H6D medium format', 'Canon EF 85mm f/1.4'.\n"
-        "6. Composition: 'eye-level angle', 'shallow depth of field', 'macro close-up', 'rule of thirds'.\n"
-        "7. Mood: Use precise atmosphere words: 'clean and minimalist', 'warm and inviting', 'premium and luxurious'.\n"
-        "8. CRITICAL shelf physics: Shelf must be perfectly FLAT and LEVEL. Products sit firmly with flat base touching shelf. No tilting, no floating, no falling. Add 'soft contact shadow beneath' to ground the product.\n"
-        "9. NEVER use: 'photorealistic' (causes plastic look), '8K'/'4K' (doesn't increase quality, adds noise), stacked superlatives like 'beautiful stunning gorgeous'.\n"
-        "10. Output ONLY JSON: {prompt, negative_prompt, aspect_ratio, lighting_setup, camera_angle, notes}.\n\n"
+        "You are an elite CPG/DTC product photographer and prompt engineer. Your ONLY job is to turn a user's brief into a razor-sharp image generation prompt that produces commercial-grade product photography.\n\n"
+        "OUTPUT FORMAT (exact JSON): {\"prompt\": string, \"negative_prompt\": string, \"aspect_ratio\": string, \"lighting_setup\": string, \"camera_angle\": string, \"notes\": string}\n\n"
+        "PROMPT STRUCTURE — use this exact order, separated by periods:\n"
+        "1. SUBJECT: Exact product name/brand from the user's brief. NEVER rename or substitute.\n"
+        "2. ENVIRONMENT: Precise physical setting with materials and spatial relationships. 'Clean white marble countertop with subtle veining' not 'nice table'.\n"
+        "3. STYLE: 'Professional commercial product photography' or 'Editorial lifestyle product shot' or 'High-end DTC hero image'.\n"
+        "4. LIGHTING: Name SPECIFIC setups only: 'softbox key light from 45° camera-left with silver reflector camera-right', 'warm 3200K tungsten overhead with soft fill', 'natural north-window light with diffusion scrim', 'LED panel grid with honeycomb for crisp shadows'.\n"
+        "5. CAMERA: Real equipment ONLY: 'Fujifilm GFX 100S 80mm f/1.7', 'Canon EOS R5 100mm macro f/2.8L', 'Hasselblad X2D 90V f/2.5'. Include sensor size.\n"
+        "6. COMPOSITION: Precise terms: 'eye-level straight-on angle', 'shallow depth of field f/2.8 isolating subject', 'macro detail at 1:1 magnification', 'rule of thirds with product on left power point', 'leading lines from foreground to product'.\n"
+        "7. MOOD: One precise phrase: 'clean and aspirational', 'warm and approachable', 'clinical and premium', 'bold and energetic'.\n"
+        "8. PHYSICS RULES (MANDATORY): Shelf surfaces must be PERFECTLY FLAT and LEVEL. Product base must be in full contact with surface — no floating, no tilting, no suspension. Soft contact shadow beneath product (not harsh cut-out shadow).\n\n"
+        "FORBIDDEN WORDS (never use — they cause plastic/doll-like output):\n"
+        "- 'photorealistic', 'hyper-realistic', 'ultra-realistic' (triggers synthetic plastic look)\n"
+        "- '8K', '4K', 'UHD', 'high resolution' (adds noise, doesn't improve quality)\n"
+        "- 'beautiful', 'stunning', 'gorgeous', 'amazing', 'perfect' (superlatives corrupt geometry)\n"
+        "- 'render', '3D', 'CGI', 'digital art' (changes style away from photography)\n"
+        "- 'bokeh' (use 'shallow depth of field' instead)\n\n"
+        "NEGATIVE_PROMPT RULES:\n"
+        "Build a focused negative prompt for product photography. Include: blurry, out of focus, distorted, deformed, ugly, disfigured, mutated, cropped, low quality, watermark, signature, text error, gibberish text, extra text, extra limbs, floating objects, unrealistic physics, plastic look, doll-like, oversaturated, overexposed, underexposed, chromatic aberration, cartoon, illustration, painting, sketch, artificial, synthetic.\n\n"
+        "PRODUCT TYPE AUTO-DETECTION:\n"
+        "If brief mentions: supplement/protein/powder/tub → add 'matte plastic container with crisp label typography'.\n"
+        "If brief mentions: skincare/serum/cream/bottle → add 'frosted glass bottle with clean pump dispenser'.\n"
+        "If brief mentions: beverage/drink/can/bottle → add 'aluminum can with condensation droplets, cold fill'.\n"
+        "If brief mentions: food/snack/package/bag → add 'matte kraft paper pouch with resealable zip detail'.\n"
+        "If brief mentions: electronics/device/tech → add 'brushed aluminum with micro-texture, precision seams'.\n"
+        "If brief mentions: apparel/clothing/fabric → add 'natural fiber texture, realistic weave, soft drape'.\n\n"
         f"User brief: {brief}\n"
         f"Reference image provided: {'yes' if has_reference_image else 'no'}. "
         f"Preserve the reference subject exactly, place in described scene.\n"
@@ -393,7 +405,7 @@ def smart_enhance_prompt(
     from google.genai import types
     try:
         resp = client.models.generate_content(
-            model=enhancer_model, contents=system_prompt, config=types.GenerateContentConfig(temperature=0.3)
+            model=enhancer_model, contents=system_prompt, config=types.GenerateContentConfig(temperature=0.25)
         )
         text = (resp.text or "{}").strip()
         text = re.sub(r"```json\s*|```\s*", "", text)
@@ -404,8 +416,29 @@ def smart_enhance_prompt(
         )
         parsed = {}
 
+    # Post-process: inject product-type defaults if the reasoning model missed them
+    product_type_hint = ""
+    brief_lower = brief.lower()
+    if any(w in brief_lower for w in ["supplement", "protein", "powder", "tub", "pre-workout"]):
+        product_type_hint = "Matte plastic container with crisp label typography. "
+    elif any(w in brief_lower for w in ["skincare", "serum", "cream", "lotion", "moisturizer"]):
+        product_type_hint = "Frosted glass bottle with clean pump dispenser. "
+    elif any(w in brief_lower for w in ["beverage", "drink", "can", "soda", "energy drink"]):
+        product_type_hint = "Aluminum can with condensation droplets, cold fill. "
+    elif any(w in brief_lower for w in ["food", "snack", "chip", "bar", "candy", "cookie"]):
+        product_type_hint = "Matte kraft paper pouch with resealable zip detail. "
+    elif any(w in brief_lower for w in ["electronics", "device", "tech", "gadget", "phone", "headphone"]):
+        product_type_hint = "Brushed aluminum with micro-texture, precision seams. "
+    elif any(w in brief_lower for w in ["apparel", "clothing", "shirt", "fabric", "textile"]):
+        product_type_hint = "Natural fiber texture, realistic weave, soft drape. "
+
+    prompt_out = parsed.get("prompt", brief)
+    # Inject product type hint at the beginning if not already present
+    if product_type_hint and product_type_hint.lower()[:20] not in prompt_out.lower():
+        prompt_out = product_type_hint + prompt_out
+
     result = {
-        "prompt": parsed.get("prompt", brief),
+        "prompt": prompt_out,
         "negative_prompt": parsed.get("negative_prompt", _DEFAULT_NEGATIVES),
         "model": model,
         "resolution": resolution,
@@ -629,18 +662,29 @@ def cmd_composite(args):
         / f"env-{now_str()}.png"
     )
     env_file.parent.mkdir(parents=True, exist_ok=True)
-    env_prompt = (
-        f"{args.prompt}\n\n"
-        "IMPORTANT: The scene must contain NO products, NO bottles, NO containers, NO labels. "
-        "Only empty shelf surfaces and environmental elements."
+
+    # Enhance the environment prompt for better background quality
+    enhanced_env = smart_enhance_prompt(
+        brief=args.prompt,
+        has_reference_image=False,
+        tier=args.tier or "quality",
     )
+    env_prompt = (
+        enhanced_env["prompt"] + "\n\n"
+        "CRITICAL: The scene must contain NO products, NO bottles, NO containers, NO labels, NO packaging. "
+        "Only empty surfaces, textures, and environmental elements. "
+        "The surface must be perfectly flat and level with realistic material texture."
+    )
+    if enhanced_env.get("negative_prompt"):
+        env_prompt += f"\n\nAvoid: {enhanced_env['negative_prompt']}"
+
     result_env = generate_nano(
         env_prompt,
         env_file,
         input_image_path=None,
-        model_name=NANO_PRO,
-        resolution="2K",
-        aspect_ratio=args.aspect_ratio,
+        model_name=enhanced_env.get("model", NANO_PRO),
+        resolution=enhanced_env.get("resolution", "2K"),
+        aspect_ratio=enhanced_env.get("aspect_ratio", args.aspect_ratio),
         timeout=args.timeout,
     )
     if not result_env:
