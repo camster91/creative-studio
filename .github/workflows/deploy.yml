@@ -20,7 +20,7 @@ jobs:
           script: |
             APP_DIR="/root/repos/creative-studio"
             IMAGE_NAME="creative-studio"
-            CONTAINER_NAME="creative-studio"
+            CONTAINER_NAME="photogen"
 
             # 1. Clone or pull latest
             if [ ! -d "$APP_DIR/.git" ]; then
@@ -34,12 +34,9 @@ jobs:
             # 2. Build image
             docker build -t "$IMAGE_NAME:latest" .
 
-            # 3. Get env vars from running container (if exists)
-            if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-              ENV_VARS=$(docker inspect "$CONTAINER_NAME" --format '{{range .Config.Env}}{{.}}<<EOF>>{{end}}')
-              docker stop "$CONTAINER_NAME" || true
-              docker rm "$CONTAINER_NAME" || true
-            fi
+            # 3. Stop old container (if exists)
+            docker stop "$CONTAINER_NAME" 2>/dev/null || true
+            docker rm "$CONTAINER_NAME" 2>/dev/null || true
 
             # 4. Run new container
             docker run -d \
@@ -53,16 +50,16 @@ jobs:
               -e FLASK_SECRET_KEY=${{ secrets.FLASK_SECRET_KEY }} \
               -e PORT=5173 \
               -l traefik.enable=true \
-              -l "traefik.http.routers.https-0-creative-studio.rule=Host(\`photogen.ashbi.ca\`)" \
-              -l traefik.http.routers.https-0-creative-studio.tls=true \
-              -l traefik.http.routers.https-0-creative-studio.tls.certresolver=letsencrypt \
-              -l traefik.http.routers.https-0-creative-studio.entrypoints=https \
-              -l traefik.http.services.https-0-creative-studio.loadbalancer.server.port=5173 \
+              -l "traefik.http.routers.https-0-photogen.rule=Host(\`photogen.ashbi.ca\`)" \
+              -l traefik.http.routers.https-0-photogen.tls=true \
+              -l traefik.http.routers.https-0-photogen.tls.certresolver=letsencrypt \
+              -l traefik.http.routers.https-0-photogen.entrypoints=https \
+              -l traefik.http.services.https-0-photogen.loadbalancer.server.port=5173 \
               -l coolify.managed=true \
               "$IMAGE_NAME:latest"
 
             # 5. Verify
             sleep 5
-            docker ps --format '{{.Names}} {{.Status}}' | grep "$CONTAINER_NAME"
+            docker ps --format '{{.Names}} {{.Status}}' | grep "$CONTAINER_NAME" || (echo "FAIL: container not running" && exit 1)
             docker logs "$CONTAINER_NAME" --tail 10
-            curl -sf http://localhost:5173/api/costs > /dev/null && echo "Health: OK" || echo "Health: FAIL"
+            curl -sf http://localhost:5173/api/costs > /dev/null && echo "Health: OK" || (echo "Health: FAIL" && exit 1)
