@@ -80,8 +80,8 @@ open_in_photos() {
         echo "✗ File not found: $file"
         return 1
     fi
-    echo "Opening in Windows Photos..."
-    if [ -d "/mnt/c" ]; then
+    echo "Opening: $file"
+    if [ -d "/mnt/c" ] && command -v wslpath &>/dev/null; then
         local winpath
         winpath=$(wslpath -w "$file" 2>/dev/null)
         if [ -n "$winpath" ]; then
@@ -89,8 +89,12 @@ open_in_photos() {
         else
             echo "Open manually: $file"
         fi
-    else
+    elif command -v xdg-open &>/dev/null; then
+        xdg-open "$file" 2>/dev/null || echo "Open manually: $file"
+    elif command -v open &>/dev/null; then
         open "$file" 2>/dev/null || echo "Open manually: $file"
+    else
+        echo "Open manually: $file"
     fi
 }
 
@@ -149,10 +153,10 @@ auto-fix)
     echo "  Fix: $FIX"
     echo ""
 
-    uv run "$PYTHON_SCRIPT" direct \
+    uv run "$PYTHON_SCRIPT" auto-fix \
         --prompt "$FIX" \
         --input-image "$INPUT" \
-        --filename ""
+        --tier quality
 
     echo ""
     echo "  Check the output. If not perfect, run another fix:"
@@ -169,11 +173,11 @@ upscale)
     echo ""
     echo "── Upscaling: $(basename "$INPUT") → $res"
 
-    uv run "$PYTHON_SCRIPT" generate \
+    uv run "$PYTHON_SCRIPT" direct \
         --prompt "Upscale this image to 4K, preserve all details exactly, no changes to composition or style" \
-        --format "web-hero" \
-        --model "nano-banana-2" \
-        --input-image "$INPUT"
+        --input-image "$INPUT" \
+        --tier ultra \
+        --resolution 4K
 
     echo ""
     echo "  Upscaled version saved to outputs folder."

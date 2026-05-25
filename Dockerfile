@@ -3,6 +3,9 @@
 # ═══════════════════════════════════════════════════════════
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
+# Install curl for HEALTHCHECK (not guaranteed in slim base)
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 # Non-root user for security
 RUN useradd -m -s /bin/bash appuser
 

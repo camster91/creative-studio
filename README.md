@@ -12,7 +12,7 @@
 
 ---
 
-## CLI Skill (Current — v4.3)
+## CLI Skill (Current — v4.5)
 
 ```bash
 cd cli/
