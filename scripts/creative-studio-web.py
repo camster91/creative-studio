@@ -2534,6 +2534,7 @@ def api_composite():
 
 
 @app.route("/api/export", methods=["POST"])
+@rate_limited
 def api_export():
     session_id = request.form.get("session_id", new_session_id())
     presets = request.form.get("presets", "")
@@ -2579,6 +2580,7 @@ def api_export():
 
 
 @app.route("/api/export-track", methods=["POST"])
+@rate_limited
 def api_export_track():
     """Record which presets were used for a given exported image (metadata tracking)."""
     data = request.json or {}
@@ -2604,6 +2606,7 @@ def api_export_track():
 
 
 @app.route("/api/qc", methods=["POST"])
+@rate_limited
 def api_qc():
     # Case 1: Existing image from URL (JSON or Form)
     data = request.json or request.form
@@ -2626,6 +2629,7 @@ def api_qc():
 
 
 @app.route("/api/figma", methods=["POST"])
+@rate_limited
 def api_figma():
     url = request.json.get("url")
     if not url:
@@ -2638,6 +2642,7 @@ def api_figma():
 
 
 @app.route("/api/refine", methods=["POST"])
+@rate_limited
 def api_refine():
     data = request.json or {}
     image_path = data.get("image_path", "")
@@ -2732,6 +2737,7 @@ def api_variations():
 
 
 @app.route("/api/variations/<session_key>/refine", methods=["POST"])
+@rate_limited
 def api_variations_refine(session_key):
     data = request.json or {}
     pick = int(data.get("pick", 1))  # 1-based variation index
@@ -2830,6 +2836,7 @@ def api_chat():
 
 
 @app.route("/api/chat/<session_key>/history", methods=["GET"])
+@rate_limited
 def api_chat_history(session_key):
     history = chat_session_history(session_key)
     sess = _chat_sessions.get(session_key, {})
@@ -2843,12 +2850,14 @@ def api_chat_history(session_key):
 
 
 @app.route("/api/chat/<session_key>/reset", methods=["POST"])
+@rate_limited
 def api_chat_reset(session_key):
     chat_reset(session_key)
     return jsonify({"message": "Chat session reset", "turn": 0})
 
 
 @app.route("/api/chat/<session_key>/save", methods=["POST"])
+@rate_limited
 def api_chat_save(session_key):
     """Save the latest output from a chat session as a named file."""
     data = request.json or {}
@@ -2872,6 +2881,7 @@ def api_chat_save(session_key):
 
 
 @app.route("/api/pins", methods=["POST"])
+@rate_limited
 def api_pins_add():
     data = request.json or {}
     image_path = data.get("image_path", "")
@@ -2887,6 +2897,7 @@ def api_pins_add():
 
 
 @app.route("/api/pins/<path:image_path>", methods=["GET"])
+@rate_limited
 def api_pins_get(image_path):
     if image_path and not image_path.startswith("/"):
         image_path = "/" + image_path
@@ -2894,6 +2905,7 @@ def api_pins_get(image_path):
 
 
 @app.route("/api/pins/<path:image_path>/<pin_id>", methods=["DELETE"])
+@rate_limited
 def api_pins_delete(image_path, pin_id):
     if image_path and not image_path.startswith("/"):
         image_path = "/" + image_path
@@ -2903,6 +2915,7 @@ def api_pins_delete(image_path, pin_id):
 
 
 @app.route("/api/pins/<path:image_path>", methods=["DELETE"])
+@rate_limited
 def api_pins_clear(image_path):
     if image_path and not image_path.startswith("/"):
         image_path = "/" + image_path
@@ -2911,6 +2924,7 @@ def api_pins_clear(image_path):
 
 
 @app.route("/api/sessions", methods=["GET"])
+@rate_limited
 def api_sessions():
     sessions = []
     for p in sorted(
@@ -2929,6 +2943,7 @@ def api_sessions():
 
 
 @app.route("/api/session/<session_id>", methods=["GET"])
+@rate_limited
 def api_session_get(session_id):
     data = load_session(session_id)
     entries = []
@@ -2942,6 +2957,7 @@ def api_session_get(session_id):
 
 
 @app.route("/api/costs", methods=["GET"])
+@rate_limited
 def api_costs():
     costs = load_costs()
     costs["session_count"] = len(list(SESSIONS_DIR.glob("*.json")))
@@ -2949,6 +2965,7 @@ def api_costs():
 
 
 @app.route("/image/<path:subpath>")
+@rate_limited
 def serve_image(subpath):
     parts = subpath.split("/")
     if any(p in ("", ".", "..") or p.startswith("..") for p in parts):
