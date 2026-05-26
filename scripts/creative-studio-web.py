@@ -1959,16 +1959,35 @@ function loadIntoOutput(images) {
   grid.className = 'output-grid' + (images.length === 1 ? ' single' : '');
   $('emptyState').style.display = 'none';
 
-  images.forEach((img, i) =\u003e {
+  images.forEach((img, i) => {
     const cell = document.createElement('div');
     cell.className = 'output-cell fade-in';
     cell.style.animationDelay = (i * 0.08) + 's';
-    cell.innerHTML = '\u003cimg src="' + img.url + '" alt=""\u003e\u003cdiv class="actions"\u003e\u003ca href="' + img.url + '" download="' + img.name + '"\u003eDownload PNG\u003c/a\u003e\u003c/div\u003e';
+    cell.innerHTML = '<img src="' + img.url + '" alt=""><div class="actions"><a href="' + img.url + '" download="' + img.name + '">Download PNG</a></div>';
     grid.appendChild(cell);
   });
 
-  const totalCost = images.reduce((s, img) =\u003e s + (img.cost || 0), 0);
-  $('outputMeta').textContent = images.length + ' image' + (images.length > 1 ? 's' : '') + ' \u00b7 $' + totalCost.toFixed(2);
+  const totalCost = images.reduce((s, img) => s + (img.cost || 0), 0);
+  $('outputMeta').textContent = images.length + ' image' + (images.length > 1 ? 's' : '') + ' · $' + totalCost.toFixed(2);
+}
+
+function appendToOutput(images) {
+  const grid = $('outputGrid');
+  grid.style.display = 'grid';
+  $('emptyState').style.display = 'none';
+
+  images.forEach((img, i) => {
+    const cell = document.createElement('div');
+    cell.className = 'output-cell fade-in';
+    cell.style.animationDelay = (i * 0.08) + 's';
+    cell.innerHTML = '<img src="' + img.url + '" alt=""><div class="actions"><a href="' + img.url + '" download="' + img.name + '">Download PNG</a></div>';
+    grid.appendChild(cell);
+  });
+
+  // Recalculate total cost across all visible cells
+  const allCells = grid.querySelectorAll('.output-cell');
+  const totalCost = images.reduce((s, img) => s + (img.cost || 0), 0); // approximate, since we don't have all costs
+  $('outputMeta').textContent = allCells.length + ' images · streaming...';
 }
 
 // ── Generate ──
@@ -2020,16 +2039,20 @@ $('genBtn').addEventListener('click', async () =\u003e {
       return;
     }
 
+    let streamed = false;
     if (data.job_id && data.status === 'running') {
       showToast('Batch started — this takes ~2 minutes', 'ok');
       const result = await pollJob(data.job_id, count);
       if (result.error) { showToast(result.error, 'err'); return; }
       data = result;
+      streamed = true;
     }
 
     if (data.images && data.images.length) {
-      loadIntoOutput(data.images);
-      addToGallery(data.images);
+      if (!streamed) {
+        loadIntoOutput(data.images);
+        addToGallery(data.images);
+      }
       showToast(data.message || 'Done!', 'ok');
       refreshCost();
     } else {
@@ -2049,6 +2072,7 @@ async function pollJob(jobId, expectedCount) {
   const interval = 4;
   const start = Date.now();
   let dots = 0;
+  let streamedCount = 0;
 
   while (true) {
     const elapsed = (Date.now() - start) / 1000;
@@ -2058,9 +2082,19 @@ async function pollJob(jobId, expectedCount) {
     dots = (dots + 1) % 4;
     $('genLabel').textContent = 'Generating' + '.'.repeat(dots) + ' (' + Math.round(elapsed) + 's)';
 
-    await new Promise(r =\u003e setTimeout(r, interval * 1000));
+    await new Promise(r => setTimeout(r, interval * 1000));
     const r = await fetch('/api/jobs/' + jobId);
     const d = await r.json();
+
+    // Stream partial results as they arrive
+    if (d.partial && d.partial.images && d.partial.images.length > streamedCount) {
+      const newImages = d.partial.images.slice(streamedCount);
+      streamedCount = d.partial.images.length;
+      // Append new images to output grid without clearing existing
+      appendToOutput(newImages);
+      addToGallery(newImages);
+      $('genLabel').textContent = 'Generating ' + streamedCount + '/' + expectedCount + '...';
+    }
 
     if (d.status === 'done') {
       $('genLabel').textContent = state.prodImage ? 'Generate Composite' : (expectedCount > 1 ? 'Generate 4 Images' : 'Generate Image');
@@ -2142,9 +2176,12 @@ def api_generate():
             return jsonify({"error": "No API key. Add your Gemini key in the sidebar panel or set GEMINI_API_KEY on the server."}), 400
 
         def _do_generate():
-            images = run_cli_generate(prompt, mode, api_key, tier, aspect, smart, variations=variations)
-            for img in images:
-                if "error" not in img:
+            images = []
+            count = max(1, min(8, variations))
+            for i in range(count):
+                batch_images = run_cli_generate(prompt, mode, api_key, tier, aspect, smart, variations=1)
+                if batch_images and "error" not in batch_images[0]:
+                    img = batch_images[0]
                     add_entry(
                         session_id,
                         {
@@ -2156,6 +2193,15 @@ def api_generate():
                             "note": f"{img.get('name', '')} ({img.get('model', '')})",
                         },
                     )
+                    images.append(img)
+                    # Update job state incrementally so frontend can stream results
+                    with _jobs_lock:
+                        _jobs[job_id].setdefault("result", {})
+                        _jobs[job_id]["result"]["images"] = images.copy()
+                        _jobs[job_id]["result"]["progress"] = f"{i+1}/{count}"
+                else:
+                    # Stop on first failure
+                    break
             costs = load_costs()
             costs["session_count"] = len(list(SESSIONS_DIR.glob("*.json")))
             save_costs(costs)
@@ -2213,6 +2259,9 @@ def api_job_status(job_id):
         resp.update(job["result"])
     elif job["status"] == "error":
         resp["error"] = job["error"]
+    elif job["status"] == "running" and job.get("result"):
+        # Stream partial results for batch generation
+        resp["partial"] = job["result"]
     return jsonify(resp)
 
 
