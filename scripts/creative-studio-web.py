@@ -226,46 +226,57 @@ def run_cli_generate(
     input_image: Optional[str] = None,
     variations: int = 4,
 ) -> List[Dict]:
-    """Generate images by calling creative_studio.py directly (no bash/uv wrapper)."""
+    """Generate images by calling creative_studio.py directly (no bash/uv wrapper).
+    If variations > 1, run the direct command multiple times and collect outputs."""
     today = datetime.now().strftime("%Y-%m-%d")
     out_dir = OUTPUT_DIR / today / mode
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    args = [
-        sys.executable,
-        SCRIPT_PATH,
-        "direct",
-        "--prompt",
-        prompt,
-        "--tier",
-        tier,
-        "--aspect-ratio",
-        aspect,
-    ]
-    if smart:
-        args.append("--smart")
-    # --format is just output folder name, not needed for generation quality
-    # Remove --format to match CLI behavior exactly
-    if input_image:
-        args += ["--input-image", input_image]
 
     env = os.environ.copy()
     env["GEMINI_API_KEY"] = API_KEY
     env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
 
-    try:
-        proc = subprocess.run(
-            args, capture_output=True, text=True, timeout=300, env=env, check=True
-        )
-        # Find recently generated files
+    images = []
+    count = max(1, min(8, variations))
+    for i in range(count):
+        args = [
+            sys.executable,
+            SCRIPT_PATH,
+            "direct",
+            "--prompt",
+            prompt,
+            "--tier",
+            tier,
+            "--aspect-ratio",
+            aspect,
+        ]
+        if smart:
+            args.append("--smart")
+        if input_image:
+            args += ["--input-image", input_image]
+
+        try:
+            proc = subprocess.run(
+                args, capture_output=True, text=True, timeout=300, env=env, check=True
+            )
+        except subprocess.CalledProcessError as e:
+            if i == 0:
+                return [{"error": f"Generation failed: {e.stderr[:500] if e.stderr else e}"}]
+            break  # Return what we have so far
+        except Exception as e:
+            if i == 0:
+                return [{"error": str(e)}]
+            break
+
+        # Collect the single most-recent file from this run
         today_dir = OUTPUT_DIR / today
         files = sorted(
             today_dir.rglob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True
         )
         now = time.time()
         recent = [f for f in files if (now - f.stat().st_mtime) < 180]
-        images = []
-        for f in recent[:variations]:
+        if recent:
+            f = recent[0]
             model_used = (
                 "gemini-3.1-flash-image-preview"
                 if tier in ("fast", "balanced")
@@ -281,13 +292,10 @@ def run_cli_generate(
                     "model": model_used,
                 }
             )
-        if not images and proc.stderr:
-            return [{"error": f"Generation produced no output: {proc.stderr.strip()[-500:]}"}]
-        return images
-    except subprocess.CalledProcessError as e:
-        return [{"error": f"Generation failed: {e.stderr[:500] if e.stderr else e}"}]
-    except Exception as e:
-        return [{"error": str(e)}]
+
+    if not images:
+        return [{"error": "Generation produced no output"}]
+    return images
 
 
 def run_cli_composite(
