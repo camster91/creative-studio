@@ -1128,9 +1128,16 @@ body {
 .output-cell {
   border-radius: var(--radius-sm); overflow: hidden;
   border: 1px solid var(--border); background: var(--bg);
-  position: relative; aspect-ratio: 1 / 1;
+  position: relative;
 }
 .output-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Default + ratio classes */
+.output-cell, .output-cell.ratio-1-1 { aspect-ratio: 1 / 1; }
+.output-cell.ratio-4-3 { aspect-ratio: 4 / 3; }
+.output-cell.ratio-16-9 { aspect-ratio: 16 / 9; }
+.output-cell.ratio-9-16 { aspect-ratio: 9 / 16; }
+.output-cell.ratio-2-3 { aspect-ratio: 2 / 3; }
+.output-cell.ratio-4-5 { aspect-ratio: 4 / 5; }
 .output-cell .cell-bar {
   position: absolute; bottom: 0; left: 0; right: 0;
   display: flex; align-items: center; justify-content: space-between;
@@ -1147,6 +1154,7 @@ body {
 .output-cell .cell-bar .pill.ratio { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.85); }
 .output-cell .cell-bar .pill.cost { background: rgba(45,212,168,0.15); color: #4ade80; border-color: rgba(74,222,128,0.25); }
 .output-cell .cell-bar .pill.model { background: rgba(96,165,250,0.12); color: #93bbfc; border-color: rgba(96,165,250,0.2); }
+.output-cell .cell-bar .pill.dims { background: rgba(255,255,255,0.06); color: var(--text-dim); border-color: rgba(255,255,255,0.08); font-size: 0.62rem; }
 .output-cell .cell-bar .right { display: flex; gap: 6px; }
 .output-cell .cell-bar .right a, .output-cell .cell-bar .right span {
   padding: 5px 10px; border-radius: var(--radius-xs);
@@ -1162,6 +1170,11 @@ body {
   border: 1px solid var(--border); background: var(--bg);
   position: relative; aspect-ratio: 1 / 1;
 }
+.skeleton-cell.ratio-4-3 { aspect-ratio: 4 / 3; }
+.skeleton-cell.ratio-16-9 { aspect-ratio: 16 / 9; }
+.skeleton-cell.ratio-9-16 { aspect-ratio: 9 / 16; }
+.skeleton-cell.ratio-2-3 { aspect-ratio: 2 / 3; }
+.skeleton-cell.ratio-4-5 { aspect-ratio: 4 / 5; }
 .skeleton-cell::after {
   content: ''; position: absolute; inset: 0;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.04), transparent);
@@ -1313,7 +1326,7 @@ body {
   .header-nav { display: none; }
   .main { padding: 20px 16px 60px; }
   .output-grid { grid-template-columns: 1fr; }
-  .output-cell { aspect-ratio: 1 / 1; }
+  .output-cell, .output-cell.ratio-1-1 { aspect-ratio: 1 / 1; }
 }
 
 
@@ -2050,7 +2063,9 @@ function updateGenLabel() {
   const count = state.prodImage ? 1 : (batch ? 4 : 1);
   const label = state.prodImage ? 'Generate Composite' : (batch ? 'Generate 4 Images' : 'Generate Image');
   $('genLabel').textContent = label;
-  $('genMeta').textContent = batch && !state.prodImage ? '~2 min' : '~30s';
+  const cost = state.prodImage ? 0.20 : (0.07 * count);
+  const time = batch && !state.prodImage ? '~2 min' : '~30s';
+  $('genMeta').textContent = '$' + cost.toFixed(2) + ' · ' + time;
 }
 $('batchToggle').addEventListener('change', updateGenLabel);
 
@@ -2201,7 +2216,8 @@ function loadIntoOutput(images) {
 
   images.forEach((img, i) => {
     const cell = document.createElement('div');
-    cell.className = 'output-cell fade-in';
+    const ratioClass = (img.ratio || state.aspect || '1:1').replace(':', '-');
+    cell.className = 'output-cell fade-in ratio-' + ratioClass;
     cell.style.animationDelay = (i * 0.08) + 's';
     cell.innerHTML = buildCellHTML(img);
     grid.appendChild(cell);
@@ -2219,7 +2235,8 @@ function appendToOutput(images) {
 
   images.forEach((img, i) => {
     const cell = document.createElement('div');
-    cell.className = 'output-cell fade-in';
+    const ratioClass = (img.ratio || state.aspect || '1:1').replace(':', '-');
+    cell.className = 'output-cell fade-in ratio-' + ratioClass;
     cell.style.animationDelay = (i * 0.08) + 's';
     cell.innerHTML = buildCellHTML(img);
     grid.appendChild(cell);
@@ -2230,11 +2247,17 @@ function appendToOutput(images) {
   $('outputMeta').textContent = allCells.length + ' images · streaming...';
 }
 
+function dimBadge(ratio) {
+  const map = { '1:1': '1024×1024', '4:3': '1024×768', '16:9': '1024×576', '9:16': '576×1024', '2:3': '683×1024', '4:5': '819×1024' };
+  return map[ratio] || '';
+}
+
 function buildCellHTML(img) {
   const ratio = img.ratio || '';
   const cost = img.cost ? '$' + img.cost.toFixed(2) : '';
   const model = img.model ? img.model.replace('gemini-3.1-flash-image-preview', 'Flash').replace('gemini-3-pro-image-preview', 'Pro') : '';
   const prompt = img.prompt || state.lastPrompt || '';
+  const dims = ratio ? dimBadge(ratio) : '';
   return (
     '<img src="' + img.url + '" alt="" data-prompt="' + encodeURIComponent(prompt) + '">' +
     '<div class="cell-bar">' +
@@ -2242,6 +2265,7 @@ function buildCellHTML(img) {
         (ratio ? '<span class="pill ratio">' + ratio + '</span>' : '') +
         (cost ? '<span class="pill cost">' + cost + '</span>' : '') +
         (model ? '<span class="pill model">' + model + '</span>' : '') +
+        (dims ? '<span class="pill dims">' + dims + '</span>' : '') +
       '</div>' +
       '<div class="right">' +
         '<span class="copy-prompt" data-prompt="' + encodeURIComponent(prompt) + '" title="Copy prompt">📋</span>' +
@@ -2283,7 +2307,7 @@ $('genBtn').addEventListener('click', async () =\u003e {
   $('emptyState').style.display = 'none';
   for (let i = 0; i < count; i++) {
     const sk = document.createElement('div');
-    sk.className = 'skeleton-cell';
+    sk.className = 'skeleton-cell ratio-' + (state.aspect || '1:1').replace(':', '-');
     grid.appendChild(sk);
   }
 
