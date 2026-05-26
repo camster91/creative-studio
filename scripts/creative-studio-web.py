@@ -1689,7 +1689,10 @@ body {
     <div class="output-stage">
       <div class="stage-header">
         <span class="stage-title">Output</span>
-        <span class="stage-title" id="outputMeta" style="font-weight:500;"></span>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button id="downloadAllBtn" style="display:none;padding:4px 10px;border-radius:var(--radius-xs);border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);font-family:var(--font);font-size:0.72rem;cursor:pointer;">Download all</button>
+          <span class="stage-title" id="outputMeta" style="font-weight:500;"></span>
+        </div>
       </div>
       <div class="stage-body" id="stageBody">
         <div class="empty-state" id="emptyState">
@@ -2225,6 +2228,7 @@ function loadIntoOutput(images) {
 
   const totalCost = images.reduce((s, img) => s + (img.cost || 0), 0);
   $('outputMeta').textContent = images.length + ' image' + (images.length > 1 ? 's' : '') + ' · $' + totalCost.toFixed(2);
+  $('downloadAllBtn').style.display = images.length > 0 ? 'inline-block' : 'none';
 }
 
 function appendToOutput(images) {
@@ -2245,6 +2249,7 @@ function appendToOutput(images) {
   const allCells = grid.querySelectorAll('.output-cell');
   const totalCost = images.reduce((s, img) => s + (img.cost || 0), 0);
   $('outputMeta').textContent = allCells.length + ' images · streaming...';
+  $('downloadAllBtn').style.display = 'inline-block';
 }
 
 function dimBadge(ratio) {
@@ -2363,8 +2368,10 @@ $('genBtn').addEventListener('click', async () =\u003e {
           $('genBtn').click();
         });
         showToast(data.message, 'ok');
+        $('downloadAllBtn').style.display = 'inline-block';
       } else {
         showToast(data.message || 'Done!', 'ok');
+        $('downloadAllBtn').style.display = 'inline-block';
       }
       refreshCost();
     } else {
@@ -2533,6 +2540,25 @@ function wireLightbox(container, getImgList) {
 }
 wireLightbox($('outputGrid'), () => state.outputImages);
 wireLightbox($('gallery'), () => state.gallery);
+
+// ── Download all from output stage ──
+$('downloadAllBtn').addEventListener('click', async () => {
+  if (!state.outputImages.length) { showToast('No images to download', 'err'); return; }
+  const urls = state.outputImages.map(img => img.url);
+  try {
+    const r = await fetch('/api/export-zip', updateFetchOptions({
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({urls})
+    }));
+    if (!r.ok) throw new Error('ZIP failed');
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'creative-studio-output.zip';
+    a.click();
+    showToast('ZIP downloaded', 'ok');
+  } catch (e) { showToast('Export failed: ' + e.message, 'err'); }
+});
 
 // ── Keyboard shortcuts ──
 $('prompt').addEventListener('keydown', (e) => {
