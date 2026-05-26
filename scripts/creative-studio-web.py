@@ -823,7 +823,7 @@ HTML_TEMPLATE = r"""
   --primary: #ff6b4a;
   --primary-hover: #ff855a;
   --primary-glow: rgba(255,107,74,0.15);
-  --radius: 12px;
+  --radius:  12px;
   --radius-sm: 8px;
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
@@ -845,19 +845,9 @@ body {
   flex-direction: column;
   gap: 32px;
 }
-.brand {
-  text-align: center;
-}
-.brand h1 {
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-.brand p {
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-  margin-top: 6px;
-}
+.brand { text-align: center; }
+.brand h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
+.brand p { color: var(--text-secondary); font-size: 0.95rem; margin-top: 6px; }
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -874,6 +864,8 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* ── Dropzone ── */
 .dropzone {
   border: 2px dashed var(--border-strong);
   border-radius: var(--radius);
@@ -883,20 +875,12 @@ body {
   transition: border-color 0.2s, background 0.2s;
   position: relative;
 }
-.dropzone:hover, .dropzone.dragover {
-  border-color: var(--primary);
-  background: var(--primary-glow);
-}
+.dropzone:hover, .dropzone.dragover { border-color: var(--primary); background: var(--primary-glow); }
 .dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .dropzone .icon { font-size: 2rem; margin-bottom: 8px; }
 .dropzone .label { font-weight: 600; font-size: 0.95rem; }
 .dropzone .hint { color: var(--text-dim); font-size: 0.82rem; margin-top: 4px; }
-.dropzone .file-name {
-  margin-top: 10px;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  word-break: break-all;
-}
+.dropzone .file-name { margin-top: 10px; font-size: 0.85rem; color: var(--text-secondary); word-break: break-all; }
 .preview-wrap {
   display: none;
   border-radius: var(--radius-sm);
@@ -905,46 +889,25 @@ body {
   max-height: 260px;
 }
 .preview-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.prompt-area {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
+
+/* ── Prompt + Presets ── */
+.prompt-area { display: flex; flex-direction: column; gap: 10px; }
 .prompt-area label {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.04em;
 }
 .prompt-area textarea {
-  width: 100%;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 0.95rem;
-  line-height: 1.5;
-  resize: vertical;
-  min-height: 100px;
-  outline: none;
-  transition: border-color 0.2s;
+  width: 100%; padding: 14px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--bg); color: var(--text);
+  font-family: var(--font); font-size: 0.95rem; line-height: 1.5;
+  resize: vertical; min-height: 100px; outline: none; transition: border-color 0.2s;
 }
-.prompt-area textarea:focus {
-  border-color: var(--primary);
-}
-.prompt-area .hint {
-  font-size: 0.8rem;
-  color: var(--text-dim);
-}
-.quality-row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.quality-chip {
+.prompt-area textarea:focus { border-color: var(--primary); }
+.prompt-area .hint { font-size: 0.8rem; color: var(--text-dim); }
+
+/* ── Chips ── */
+.chip-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.quality-chip, .aspect-chip, .preset-chip {
   padding: 8px 16px;
   border-radius: 100px;
   border: 1px solid var(--border);
@@ -956,12 +919,15 @@ body {
   transition: all 0.15s;
   user-select: none;
 }
-.quality-chip:hover { border-color: var(--border-strong); color: var(--text); }
-.quality-chip.active {
+.quality-chip:hover, .aspect-chip:hover, .preset-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.quality-chip.active, .aspect-chip.active {
   border-color: var(--primary);
   background: var(--primary-glow);
   color: var(--primary);
 }
+.preset-chip { font-size: 0.78rem; padding: 6px 12px; }
+
+/* ── Generate Button ── */
 .gen-btn {
   padding: 16px 28px;
   border: none;
@@ -992,19 +958,30 @@ body {
 .gen-btn.generating .label { display: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.output-wrap {
-  display: none;
-  flex-direction: column;
-  gap: 16px;
-}
+/* ── Output grid ── */
+.output-wrap { display: none; flex-direction: column; gap: 16px; }
 .output-wrap.show { display: flex; }
-.output-img {
-  border-radius: var(--radius);
+.output-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.output-grid.single { grid-template-columns: 1fr; }
+.output-cell {
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   overflow: hidden;
-  max-height: 520px;
+  background: var(--bg);
+  position: relative;
 }
-.output-img img { width: 100%; height: 100%; object-fit: contain; display: block; background: var(--bg); }
+.output-cell img { width: 100%; height: 220px; object-fit: cover; display: block; cursor: zoom-in; }
+.output-cell .dl-overlay {
+  position: absolute; bottom: 8px; right: 8px;
+  background: rgba(0,0,0,0.6); color: #fff;
+  padding: 6px 10px; border-radius: 6px; font-size: 0.75rem;
+  text-decoration: none; opacity: 0; transition: opacity 0.2s;
+}
+.output-cell:hover .dl-overlay { opacity: 1; }
 .output-meta {
   display: flex;
   justify-content: space-between;
@@ -1012,24 +989,27 @@ body {
   font-size: 0.85rem;
   color: var(--text-secondary);
 }
-.download-btn {
-  padding: 10px 20px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  background: var(--surface-hover);
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  transition: background 0.15s;
-}
-.download-btn:hover { background: var(--border); }
 
+/* ── Gallery ── */
+.gallery-card { display: none; }
+.gallery-card.show { display: flex; }
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 8px;
+}
+.gallery-thumb {
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.gallery-thumb:hover, .gallery-thumb.active { opacity: 1; border-color: var(--primary); }
+.gallery-thumb img { width: 100%; height: 90px; object-fit: cover; display: block; }
+
+/* ── Toast / Cost ── */
 .toast {
   position: fixed;
   bottom: 24px;
@@ -1053,23 +1033,34 @@ body {
   font-size: 0.8rem;
   color: var(--text-dim);
 }
+.cost-pill input {
+  width: 55px;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  font-size: 0.8rem;
+  font-family: var(--font);
+  padding: 2px 4px;
+}
 </style>
 </head>
 <body>
 <div class="app">
   <div class="brand">
     <h1>Creative Studio</h1>
-    <p>AI product photography for CPG & DTC brands</p>
+    <p>AI product photography for CPG &amp; DTC brands</p>
   </div>
 
-  <!-- Product Upload -->
+  <!-- 1. Product Upload -->
   <div class="card">
     <div class="card-title">1. Your Product</div>
     <div class="dropzone" id="dropzone">
       <input type="file" id="fileInput" accept="image/*">
       <div class="icon">&#128247;</div>
       <div class="label">Click or drop your product photo</div>
-      <div class="hint">PNG / JPG / WEBF &mdash; helps the AI keep your exact packaging</div>
+      <div class="hint">PNG / JPG / WEBF — helps the AI keep your exact packaging</div>
       <div class="file-name" id="fileName"></div>
     </div>
     <div class="preview-wrap" id="previewWrap">
@@ -1077,62 +1068,116 @@ body {
     </div>
   </div>
 
-  <!-- Scene Description -->
+  <!-- 2. Scene + Presets -->
   <div class="card">
     <div class="card-title">2. Scene</div>
     <div class="prompt-area">
       <label for="prompt">Describe the shot</label>
       <textarea id="prompt" placeholder="e.g. Premium protein tub on a clean oak shelf in a boutique fitness store, warm overhead lighting, shallow depth of field, product photography style"></textarea>
+      <div class="chip-row" id="presetRow">
+        <div class="preset-chip" data-preset="amazon">Amazon white</div>
+        <div class="preset-chip" data-preset="instagram">Instagram lifestyle</div>
+        <div  class="preset-chip" data-preset="email">Email banner</div>
+        <div class="preset-chip" data-preset="pinterest">Pinterest</div>
+      </div>
       <div class="hint">Be specific about setting, lighting, and mood. The AI builds the scene around your product.</div>
     </div>
   </div>
 
-  <!-- Quality -->
+  <!-- 3. Aspect Ratio -->
   <div class="card">
-    <div class="card-title">3. Quality</div>
-    <div class="quality-row" id="qualityRow">
+    <div class="card-title">3. Aspect Ratio</div>
+    <div class="chip-row" id="aspectRow">
+      <div class="aspect-chip active" data-ratio="1:1">1:1</div>
+      <div class="aspect-chip" data-ratio="4:3">4:3</div>
+      <div class="aspect-chip" data-ratio="16:9">16:9</div>
+      <div class="aspect-chip" data-ratio="9:16">9:16</div>
+    </div>
+  </div>
+
+  <!-- 4. Quality -->
+  <div class="card">
+    <div class="card-title">4. Quality</div>
+    <div class="chip-row" id="qualityRow">
       <div class="quality-chip active" data-tier="fast" data-cost="0.07">Fast &middot; $0.07 &middot; draft</div>
       <div class="quality-chip" data-tier="balanced" data-cost="0.07">Balanced &middot; $0.07 &middot; 2K</div>
       <div class="quality-chip" data-tier="quality" data-cost="0.20">Quality &middot; $0.20 &middot; 2K</div>
     </div>
   </div>
 
-  <!-- Generate -->
+  <!-- 5. Generate -->
   <button class="gen-btn" id="genBtn">
     <div class="spinner"></div>
-    <span class="label">Generate Image</span>
+    <span class="label" id="genLabel">Generate 4 Images</span>
   </button>
 
   <!-- Output -->
   <div class="output-wrap" id="outputWrap">
-    <div class="output-img">
-      <img id="outputImg" alt="Generated product shot">
-    </div>
+    <div class="output-grid" id="outputGrid"></div>
     <div class="output-meta">
-      <span id="outputMeta">Generated &middot; 1 image</span>
-      <a class="download-btn" id="downloadBtn" download>Download PNG</a>
+      <span id="outputMeta">Generated &middot; 0 images</span>
+      <a class="download-btn" id="downloadBtn" download>Download All</a>
     </div>
   </div>
 
-  <div class="cost-pill">Cost today: <span id="costToday">$0.00</span></div>
+  <!-- Session Gallery -->
+  <div class="card gallery-card" id="galleryCard">
+    <div class="card-title">Session Gallery</div>
+    <div class="gallery" id="gallery"></div>
+    <button class="gen-btn" id="clearGallery" style="margin-top:12px; padding:8px 16px; font-size:0.85rem; background:var(--surface-hover); color:var(--text-secondary);">Clear Gallery</button>
+  </div>
+
+  <div class="cost-pill">
+    Cost today: <span id="costToday">$0.00</span> &nbsp;|&nbsp;
+    Limit: $<input type="number" id="costLimit" value="5.00" step="0.50" min="0">
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script>
 const $ = id => document.getElementById(id);
-let state = { tier: 'fast', prodImage: null, generating: false };
+let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [] };
 
-// Quality chips
-$('qualityRow').addEventListener('click', e => {
-  const chip = e.target.closest('.quality-chip');
+const PRESETS = {
+  amazon:    { prompt: 'Clean pure white background, soft shadow underneath, studio lighting, product centered, ecommerce photography, high detail', aspect: '1:1' },
+  instagram: { prompt: 'Lifestyle flatlay on textured surface, natural soft window light from left, shallow depth of field, lifestyle product photography', aspect: '1:1' },
+  email:     { prompt: 'Product on clean gradient background, dramatic side lighting, hero shot, wide composition', aspect: '16:9' },
+  pinterest: { prompt: 'Product in styled scene with complementary props, warm golden tones, overhead 45 degree angle, editorial style', aspect: '2:3' },
+};
+
+// ── Chip selectors ──
+function initChips(rowId, key, cls) {
+  $(rowId).addEventListener('click', e => {
+    const chip = e.target.closest('.' + cls);
+    if (!chip) return;
+    document.querySelectorAll('#' + rowId + ' .' + cls).forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    state[key] = chip.dataset.tier || chip.dataset.ratio || chip.dataset.preset;
+  });
+}
+initChips('qualityRow', 'tier', 'quality-chip');
+initChips('aspectRow', 'aspect', 'aspect-chip');
+
+// ── Presets ──
+$('presetRow').addEventListener('click', e => {
+  const chip = e.target.closest('.preset-chip');
   if (!chip) return;
-  document.querySelectorAll('.quality-chip').forEach(c => c.classList.remove('active'));
+  const key = chip.dataset.preset;
+  const p = PRESETS[key];
+  if (!p) return;
+  $('prompt').value = p.prompt;
+  state.aspect = p.aspect;
+  // highlight matching aspect chip
+  document.querySelectorAll('.aspect-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.ratio === p.aspect);
+  });
+  // highlight preset
+  document.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('active'));
   chip.classList.add('active');
-  state.tier = chip.dataset.tier;
 });
 
-// File dropzone
+// ── File dropzone ──
 const dz = $('dropzone'), fi = $('fileInput');
 const onFile = file => {
   if (!file || !file.type.startsWith('image/')) return;
@@ -1141,6 +1186,7 @@ const onFile = file => {
   const url = URL.createObjectURL(file);
   $('previewImg').src = url;
   $('previewWrap').style.display = 'block';
+  updateGenLabel();
 };
 fi.addEventListener('change', e => onFile(e.target.files[0]));
 dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
@@ -1150,11 +1196,71 @@ dz.addEventListener('drop', e => {
   onFile(e.dataTransfer.files[0]);
 });
 
-// Generate
+function updateGenLabel() {
+  const label = state.prodImage ? 'Generate Composite' : 'Generate 4 Images';
+  $('genLabel').textContent = label;
+}
+
+async function getCostToday() {
+  try {
+    const r = await fetch('/api/costs');
+    const d = await r.json();
+    return d.today || 0;
+  } catch (e) { return 0; }
+}
+
+function addToGallery(images) {
+  images.forEach(img => state.gallery.push(img));
+  renderGallery();
+}
+
+function renderGallery() {
+  const g = $('gallery');
+  g.innerHTML = '';
+  state.gallery.forEach((img, idx) => {
+    const thumb = document.createElement('div');
+    thumb.className = 'gallery-thumb';
+    thumb.innerHTML = `<img src="${img.url}" alt="">`;
+    thumb.addEventListener('click', () => loadIntoOutput([img]));
+    g.appendChild(thumb);
+  });
+  $('galleryCard').classList.toggle('show', state.gallery.length > 0);
+}
+
+function loadIntoOutput(images) {
+  const grid = $('outputGrid');
+  grid.innerHTML = '';
+  grid.className = 'output-grid' + (images.length === 1 ? ' single' : '');
+  images.forEach(img => {
+    const cell = document.createElement('div');
+    cell.className = 'output-cell';
+    cell.innerHTML = `<img src="${img.url}" alt=""><a class="dl-overlay" href="${img.url}" download="${img.name}">Download</a>`;
+    grid.appendChild(cell);
+  });
+  const totalCost = images.reduce((s, img) => s + (img.cost || 0), 0);
+  $('outputMeta').textContent = `Generated · ${images.length} image${images.length > 1 ? 's' : ''} · $${totalCost.toFixed(2)}`;
+  $('clearGallery').style.display = images.length > 1 ? 'none' : 'block';
+  // Update main download btn to zip all (fallback: first image)
+  const first = images[0];
+  $('downloadBtn').href = first ? first.url : '#';
+  $('downloadBtn').download = first ? first.name : '';
+  $('outputWrap').classList.add('show');
+}
+
+// ── Generate ──
 $('genBtn').addEventListener('click', async () => {
   const prompt = $('prompt').value.trim();
   if (!prompt) { showToast('Enter a scene description', 'err'); return; }
   if (state.generating) return;
+
+  // Cost guardrail
+  const limit = parseFloat($('costLimit').value) || 5;
+  const costToday = await getCostToday();
+  const est = state.prodImage ? 0.20 : (0.07 * 4);
+  if (costToday + est > limit) {
+    showToast(`Would exceed $${limit.toFixed(2)} cost limit. Raise limit or wait until tomorrow.`, 'err');
+    return;
+  }
 
   state.generating = true;
   $('genBtn').disabled = true;
@@ -1162,36 +1268,35 @@ $('genBtn').addEventListener('click', async () => {
   $('outputWrap').classList.remove('show');
 
   try {
-    let resp;
+    let data;
     if (state.prodImage) {
       const fd = new FormData();
       fd.append('prompt', prompt);
       fd.append('product', state.prodImage);
-      fd.append('aspect_ratio', '1:1');
+      fd.append('aspect_ratio', state.aspect);
       fd.append('tier', state.tier);
-      resp = await fetch('/api/composite', { method: 'POST', body: fd });
+      const resp = await fetch('/api/composite', { method: 'POST', body: fd });
+      data = await resp.json();
     } else {
-      const body = { prompt, mode: 'direct', tier: state.tier, aspect_ratio: '1:1', variations: 1 };
-      resp = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const body = {
+        prompt, mode: 'direct', tier: state.tier,
+        aspect_ratio: state.aspect, variations: 4
+      };
+      const resp = await fetch('/api/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
+      data = await resp.json();
     }
 
-    const data = await resp.json();
     if (data.error || (data.images && data.images[0]?.error)) {
       showToast(data.error || data.images[0].error || 'Generation failed', 'err');
       return;
     }
 
     if (data.images && data.images.length) {
-      const img = data.images[0];
-      $('outputImg').src = img.url;
-      $('downloadBtn').href = img.url;
-      $('downloadBtn').download = img.name;
-      $('outputMeta').textContent = `Generated \u00b7 ${data.images.length} image${data.images.length > 1 ? 's' : ''} \u00b7 $${img.cost.toFixed(2)}`;
-      $('outputWrap').classList.add('show');
+      loadIntoOutput(data.images);
+      addToGallery(data.images);
       showToast(data.message || 'Done!', 'ok');
       refreshCost();
     } else {
@@ -1206,11 +1311,16 @@ $('genBtn').addEventListener('click', async () => {
   }
 });
 
+$('clearGallery').addEventListener('click', () => {
+  state.gallery = [];
+  renderGallery();
+});
+
 async function refreshCost() {
   try {
     const r = await fetch('/api/costs');
     const d = await r.json();
-    $('costToday').textContent = '$' + (d.total?.toFixed(2) || '0.00');
+    $('costToday').textContent = '$' + (d.today?.toFixed(2) || '0.00');
   } catch (e) { console.log('cost fetch failed', e); }
 }
 refreshCost();
@@ -1755,6 +1865,8 @@ def api_session_get(session_id):
 def api_costs():
     costs = load_costs()
     costs["session_count"] = len(list(SESSIONS_DIR.glob("*.json")))
+    today = datetime.now().strftime("%Y-%m-%d")
+    costs["today"] = costs.get("by_date", {}).get(today, 0.0)
     return jsonify(costs)
 
 
