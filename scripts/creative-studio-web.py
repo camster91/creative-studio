@@ -865,379 +865,486 @@ HTML_TEMPLATE = r"""
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Creative Studio — AI Product Photography</title>
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 :root {
-  --bg: #0a0a0f;
-  --surface: #14141b;
-  --surface-hover: #1c1c26;
-  --border: rgba(255,255,255,0.08);
-  --border-strong: rgba(255,255,255,0.14);
-  --text: #f0f0f5;
-  --text-secondary: #9a9aa8;
-  --text-dim: #6a6a78;
-  --primary: #ff6b4a;
-  --primary-hover: #ff855a;
-  --primary-glow: rgba(255,107,74,0.15);
-  --radius:  12px;
+  --bg: #0c0c10;
+  --bg-elevated: #141419;
+  --bg-hover: #1a1a22;
+  --surface: #1e1e28;
+  --surface-hover: #262632;
+  --border: rgba(255,255,255,0.06);
+  --border-strong: rgba(255,255,255,0.10);
+  --text: #f2f2f7;
+  --text-secondary: #a1a1aa;
+  --text-dim: #71717a;
+  --accent: #ff6b35;
+  --accent-hover: #ff7f4d;
+  --accent-glow: rgba(255,107,53,0.12);
+  --accent-glow-strong: rgba(255,107,53,0.20);
+  --success: #22c55e;
+  --danger: #ef4444;
+  --radius: 14px;
   --radius-sm: 8px;
-  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --radius-xs: 6px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 0 0 1px var(--border);
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; }
+html { scroll-behavior: smooth; }
 body {
   font-family: var(--font);
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
-}
-.app {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 48px 24px 80px;
   min-height: 100vh;
-  display: flex;
-  flex-direction: column;
+}
+
+/* ── Header ── */
+.header {
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(12,12,16,0.85);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+}
+.header-inner {
+  max-width: 1280px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; height: 60px;
+}
+.header-brand {
+  display: flex; align-items: center; gap: 10px; text-decoration: none;
+}
+.header-brand .mark {
+  width: 28px; height: 28px; background: var(--accent);
+  border-radius: 7px; display: flex; align-items: center; justify-content: center;
+  font-size: 14px; color: #fff; font-weight: 700;
+}
+.header-brand .name {
+  font-size: 0.95rem; font-weight: 700; color: var(--text); letter-spacing: -0.01em;
+}
+.header-nav { display: flex; align-items: center; gap: 4px; }
+.header-nav a {
+  padding: 6px 14px; border-radius: var(--radius-xs);
+  font-size: 0.82rem; font-weight: 500; color: var(--text-secondary);
+  text-decoration: none; transition: all 0.2s;
+}
+.header-nav a:hover { color: var(--text); background: var(--bg-hover); }
+.header-nav a.active { color: var(--text); background: var(--bg-hover); }
+
+.credits-pill {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 14px; border-radius: 100px;
+  border: 1px solid var(--border); background: var(--bg-elevated);
+  font-size: 0.78rem; color: var(--text-secondary);
+}
+.credits-pill .amt { font-weight: 600; color: var(--text); }
+.credits-pill .sep { color: var(--border-strong); }
+.upgrade-btn {
+  font-size: 0.75rem; font-weight: 600; color: var(--accent);
+  text-decoration: none; padding: 3px 10px; border-radius: 100px;
+  border: 1px solid rgba(255,107,53,0.25); background: var(--accent-glow);
+  transition: all 0.15s; cursor: pointer;
+}
+.upgrade-btn:hover { background: var(--accent-glow-strong); }
+
+/* ── Layout ── */
+.main {
+  max-width: 1280px; margin: 0 auto;
+  padding: 32px 24px 80px;
+  display: grid;
+  grid-template-columns: 380px 1fr;
   gap: 32px;
 }
-.brand { text-align: center; }
-.brand h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
-.brand p { color: var(--text-secondary); font-size: 0.95rem; margin-top: 6px; }
-.card {
-  background: var(--surface);
+@media (max-width: 960px) {
+  .main { grid-template-columns: 1fr; }
+}
+
+.sidebar { display: flex; flex-direction: column; gap: 20px; }
+.canvas { display: flex; flex-direction: column; gap: 24px; }
+
+/* ── Panel ── */
+.panel {
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 28px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+  padding: 22px;
+  display: flex; flex-direction: column;
+  gap: 18px;
 }
-.card-title {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.panel-header {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 0.78rem; font-weight: 600;
+  color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em;
+}
+.panel-header .num {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.7rem; font-weight: 700; color: var(--text-dim);
 }
 
 /* ── Dropzone ── */
 .dropzone {
-  border: 2px dashed var(--border-strong);
-  border-radius: var(--radius);
-  padding: 40px 24px;
-  text-align: center;
-  cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
-  position: relative;
-}
-.dropzone:hover, .dropzone.dragover { border-color: var(--primary); background: var(--primary-glow); }
-.dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.dropzone .icon { font-size: 2rem; margin-bottom: 8px; }
-.dropzone .label { font-weight: 600; font-size: 0.95rem; }
-.dropzone .hint { color: var(--text-dim); font-size: 0.82rem; margin-top: 4px; }
-.dropzone .file-name { margin-top: 10px; font-size: 0.85rem; color: var(--text-secondary); word-break: break-all; }
-.preview-wrap {
-  display: none;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+  position: relative; border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  max-height: 260px;
+  background: var(--surface);
+  padding: 36px 20px; text-align: center; cursor: pointer;
+  transition: all 0.2s; overflow: hidden;
 }
-.preview-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.dropzone::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(600px circle at var(--mx,50%) var(--my,50%), var(--accent-glow-strong), transparent 40%);
+  opacity: 0; transition: opacity 0.4s; pointer-events: none;
+}
+.dropzone:hover::before, .dropzone.dragover::before { opacity: 1; }
+.dropzone:hover, .dropzone.dragover {
+  border-color: rgba(255,107,53,0.35); background: var(--surface-hover);
+}
+.dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; z-index: 2; }
+.dropzone .icon { font-size: 1.4rem; margin-bottom: 10px; opacity: 0.7; }
+.dropzone .label { font-size: 0.9rem; font-weight: 500; color: var(--text); }
+.dropzone .hint { font-size: 0.78rem; color: var(--text-dim); margin-top: 5px; }
+.dropzone .file-name { margin-top: 10px; font-size: 0.8rem; color: var(--text-secondary); word-break: break-all; }
+.dropzone .remove {
+  margin-top: 10px; font-size: 0.75rem; color: var(--danger); cursor: pointer;
+  display: none; text-decoration: underline;
+}
 
-/* ── Prompt + Presets ── */
-.prompt-area { display: flex; flex-direction: column; gap: 10px; }
-.prompt-area label {
-  font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);
-  text-transform: uppercase; letter-spacing: 0.04em;
+/* ── Preview in sidebar ── */
+.sidebar-preview {
+  display: none; border-radius: var(--radius-sm); overflow: hidden;
+  border: 1px solid var(--border); background: var(--bg);
 }
-.prompt-area textarea {
+.sidebar-preview img { width: 100%; max-height: 200px; object-fit: cover; display: block; }
+
+/* ── Prompt ── */
+.prompt-box textarea {
   width: 100%; padding: 14px; border: 1px solid var(--border);
-  border-radius: var(--radius-sm); background: var(--bg); color: var(--text);
-  font-family: var(--font); font-size: 0.95rem; line-height: 1.5;
-  resize: vertical; min-height: 100px; outline: none; transition: border-color 0.2s;
+  border-radius: var(--radius-sm); background: var(--surface);
+  color: var(--text); font-family: var(--font); font-size: 0.9rem;
+  line-height: 1.5; resize: vertical; min-height: 90px; outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-.prompt-area textarea:focus { border-color: var(--primary); }
-.prompt-area .hint { font-size: 0.8rem; color: var(--text-dim); }
+.prompt-box textarea:focus {
+  border-color: rgba(255,107,53,0.45);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.prompt-box .hint { font-size: 0.78rem; color: var(--text-dim); margin-top: 8px; }
+
+/* ── Presets ── */
+.preset-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.preset-chip {
+  padding: 7px 14px; border-radius: 100px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-secondary); font-size: 0.78rem; font-weight: 500;
+  cursor: pointer; transition: all 0.15s; user-select: none;
+}
+.preset-chip:hover { border-color: var(--border-strong); color: var(--text); background: var(--surface-hover); }
+.preset-chip.active {
+  border-color: var(--accent); background: var(--accent-glow); color: var(--accent);
+}
 
 /* ── Chips ── */
-.chip-row { display: flex; gap: 10px; flex-wrap: wrap; }
-.quality-chip, .aspect-chip, .preset-chip {
-  padding: 8px 16px;
-  border-radius: 100px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-secondary);
-  font-size: 0.85rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-  user-select: none;
+.chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.quality-chip, .aspect-chip {
+  padding: 8px 16px; border-radius: var(--radius-xs);
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-secondary); font-size: 0.82rem; font-weight: 500;
+  cursor: pointer; transition: all 0.15s; user-select: none;
 }
-.quality-chip:hover, .aspect-chip:hover, .preset-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.quality-chip:hover, .aspect-chip:hover { border-color: var(--border-strong); color: var(--text); background: var(--surface-hover); }
 .quality-chip.active, .aspect-chip.active {
-  border-color: var(--primary);
-  background: var(--primary-glow);
-  color: var(--primary);
+  border-color: var(--accent); background: var(--accent-glow); color: var(--accent);
 }
-.preset-chip { font-size: 0.78rem; padding: 6px 12px; }
-.preset-chip.active {
-  border-color: var(--primary);
-  background: var(--primary-glow);
-  color: var(--primary);
-}
-
-/* ── Remove button ── */
-.remove-btn {
-  padding: 8px 16px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--surface-hover);
-  color: var(--text-secondary);
-  font-family: var(--font);
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: all 0.15s;
-  align-self: flex-start;
-}
-.remove-btn:hover { color: #f87171; border-color: rgba(248,113,113,0.3); }
 
 /* ── Generate Button ── */
+.gen-btn-wrap { margin-top: 4px; }
 .gen-btn {
-  padding: 16px 28px;
-  border: none;
-  border-radius: var(--radius);
-  background: var(--primary);
-  color: #fff;
-  font-family: var(--font);
-  font-size: 1rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 0.2s, transform 0.15s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
+  width: 100%; padding: 16px 24px;
+  border: none; border-radius: var(--radius-sm);
+  background: var(--accent); color: #fff;
+  font-family: var(--font); font-size: 0.95rem; font-weight: 600;
+  cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  position: relative; overflow: hidden;
 }
-.gen-btn:hover { background: var(--primary-hover); transform: translateY(-1px); }
+.gen-btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
 .gen-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 .gen-btn .spinner {
   width: 18px; height: 18px;
   border: 2px solid rgba(255,255,255,0.3);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  display: none;
+  border-top-color: #fff; border-radius: 50%;
+  animation: spin 0.8s linear infinite; display: none;
 }
 .gen-btn.generating .spinner { display: block; }
 .gen-btn.generating .label { display: none; }
+.gen-btn .meta {
+  position: absolute; right: 16px; font-size: 0.75rem; font-weight: 500;
+  color: rgba(255,255,255,0.7); opacity: 0; transition: opacity 0.2s;
+}
+.gen-btn:hover .meta { opacity: 1; }
+
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Mobile */
-@media (max-width: 480px) {
-  .output-grid { grid-template-columns: 1fr; }
-  .output-cell img { height: 180px; }
-  .app { padding: 24px 16px 60px; }
+/* ── Canvas output ── */
+.output-stage {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-height: 320px;
+  display: flex; flex-direction: column;
+}
+.output-stage .stage-header {
+  padding: 14px 20px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.output-stage .stage-title { font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); }
+.output-stage .stage-body {
+  flex: 1; padding: 20px;
+  display: flex; flex-direction: column; gap: 16px;
 }
 
-/* ── Output grid ── */
-.output-wrap { display: none; flex-direction: column; gap: 16px; }
-.output-wrap.show { display: flex; }
+/* ── Output Grid ── */
 .output-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px;
 }
 .output-grid.single { grid-template-columns: 1fr; }
 .output-cell {
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  overflow: hidden;
-  background: var(--bg);
-  position: relative;
+  border-radius: var(--radius-sm); overflow: hidden;
+  border: 1px solid var(--border); background: var(--bg);
+  position: relative; aspect-ratio: 1 / 1;
 }
-.output-cell img { width: 100%; height: 220px; object-fit: cover; display: block; cursor: zoom-in; }
-.output-cell .dl-overlay {
-  position: absolute; bottom: 8px; right: 8px;
-  background: rgba(0,0,0,0.6); color: #fff;
-  padding: 6px 10px; border-radius: 6px; font-size: 0.75rem;
-  text-decoration: none; opacity: 0; transition: opacity 0.2s;
+.output-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.output-cell .actions {
+  position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: flex-end;
+  padding: 12px; opacity: 0; transition: opacity 0.2s;
+  background: linear-gradient(to top, rgba(0,0,0,0.5), transparent 50%);
 }
-.output-cell:hover .dl-overlay { opacity: 1; }
-.output-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
+.output-cell:hover .actions { opacity: 1; }
+.output-cell .actions a {
+  padding: 8px 14px; border-radius: var(--radius-xs);
+  background: rgba(255,255,255,0.12); backdrop-filter: blur(8px);
+  color: #fff; font-size: 0.78rem; font-weight: 600; text-decoration: none;
+  border: 1px solid rgba(255,255,255,0.15);
+  transition: background 0.15s;
 }
+.output-cell .actions a:hover { background: rgba(255,255,255,0.2); }
+
+/* ── Empty state ── */
+.empty-state {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; color: var(--text-dim); text-align: center; padding: 40px;
+}
+.empty-state .icon { font-size: 2.5rem; opacity: 0.3; }
+.empty-state h3 { font-size: 1rem; font-weight: 600; color: var(--text-secondary); }
+.empty-state p { font-size: 0.82rem; max-width: 300px; }
 
 /* ── Gallery ── */
-.gallery-card { display: none; }
-.gallery-card.show { display: flex; }
-.gallery {
+.gallery-panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+.gallery-panel .panel-title {
+  font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.gallery-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
   gap: 8px;
 }
 .gallery-thumb {
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  overflow: hidden;
-  cursor: pointer;
-  opacity: 0.7;
-  transition: opacity 0.15s, border-color 0.15s;
+  border-radius: var(--radius-xs); overflow: hidden;
+  border: 1px solid var(--border); cursor: pointer;
+  opacity: 0.65; transition: opacity 0.15s, border-color 0.15s; position: relative;
 }
-.gallery-thumb:hover, .gallery-thumb.active { opacity: 1; border-color: var(--primary); }
-.gallery-thumb { position: relative; }
+.gallery-thumb:hover, .gallery-thumb.active { opacity: 1; border-color: var(--accent); }
+.gallery-thumb img { width: 100%; height: 80px; object-fit: cover; display: block; }
 .gallery-thumb .del {
-  position: absolute; top: 2px; right: 2px;
-  background: rgba(0,0,0,0.5); color: #fff;
-  width: 20px; height: 20px; border-radius: 50%;
-  font-size: 12px; line-height: 20px; text-align: center;
-  cursor: pointer; opacity: 0; transition: opacity 0.15s;
+  position: absolute; top: 3px; right: 3px; width: 18px; height: 18px;
+  background: rgba(0,0,0,0.5); color: #fff; border-radius: 50%;
+  font-size: 11px; line-height: 18px; text-align: center; cursor: pointer;
+  opacity: 0; transition: opacity 0.15s;
 }
 .gallery-thumb:hover .del { opacity: 1; }
-.gallery-thumb img { width: 100%; height: 90px; object-fit: cover; display: block; }
 
-/* ── Toast / Cost ── */
+/* ── Cost bar ── */
+.cost-bar {
+  display: flex; align-items: center; justify-content: center; gap: 16px;
+  padding: 12px;
+  font-size: 0.78rem; color: var(--text-dim);
+}
+.cost-bar input {
+  width: 50px; background: transparent; color: var(--text);
+  border: none; border-bottom: 1px solid var(--border);
+  text-align: center; font-size: 0.78rem; font-family: var(--font);
+  padding: 2px 4px;
+}
+
+/* ── Toast ── */
 .toast {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
+  position: fixed; bottom: 24px; left: 50%;
   transform: translateX(-50%) translateY(20px);
-  padding: 12px 24px;
-  border-radius: var(--radius);
-  font-size: 0.9rem;
-  font-weight: 500;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.3s, transform 0.3s;
-  z-index: 100;
+  padding: 12px 24px; border-radius: var(--radius);
+  font-size: 0.9rem; font-weight: 500;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.3s, transform 0.3s; z-index: 100;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-.toast.ok { background: #1a3a2f; color: #2dd4a8; border: 1px solid rgba(45,212,168,0.2); }
+.toast.ok { background: #1a3a2f; color: #4ade80; border: 1px solid rgba(74,222,128,0.2); }
 .toast.err { background: #3a1a1a; color: #f87171; border: 1px solid rgba(248,113,113,0.2); }
 
-.cost-pill {
-  text-align: center;
-  font-size: 0.8rem;
-  color: var(--text-dim);
-}
-.cost-pill input {
-  width: 55px;
-  background: transparent;
-  color: var(--text);
-  border: none;
-  border-bottom: 1px solid var(--border);
-  text-align: center;
-  font-size: 0.8rem;
-  font-family: var(--font);
-  padding: 2px 4px;
+/* ── Animations ── */
+@keyframes fadeIn { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform: translateY(0); } }
+.fade-in { animation: fadeIn 0.35s ease forwards; }
+
+/* ── Mobile ── */
+@media (max-width: 960px) {
+  .header-inner { padding: 0 16px; }
+  .header-nav { display: none; }
+  .main { padding: 20px 16px 60px; }
+  .output-grid { grid-template-columns: 1fr; }
+  .output-cell { aspect-ratio: 1 / 1; }
 }
 </style>
 </head>
 <body>
-<div class="app">
-  <div class="brand">
-    <h1>Creative Studio</h1>
-    <p>AI product photography for CPG &amp; DTC brands</p>
-  </div>
 
-  <!-- 1. Product Upload -->
-  <div class="card">
-    <div class="card-title">1. Your Product</div>
-    <div class="dropzone" id="dropzone">
-      <input type="file" id="fileInput" accept="image/*">
-      <div class="icon">&#128247;</div>
-      <div class="label">Click or drop your product photo</div>
-      <div class="hint">PNG / JPG / WEBP — helps the AI keep your exact packaging</div>
-      <div class="file-name" id="fileName"></div>
+<header class="header">
+  <div class="header-inner">
+    <a href="/" class="header-brand">
+      <div class="mark">CS</div>
+      <span class="name">Creative Studio</span>
+    </a>
+    <nav class="header-nav">
+      <a href="/" class="active">Studio</a>
+      <a href="/status">Status</a>
+      <a href="/" onclick="alert('Coming soon')">API</a>
+    </nav>
+    <div class="credits-pill">
+      <span>Today: <span class="amt" id="costToday">$0.00</span></span>
+      <span class="sep">|</span>
+      <span>Limit: $<input type="number" id="costLimit" value="5.00" step="0.50" min="0" style="width:44px;background:transparent;color:var(--text);border:none;border-bottom:1px solid var(--border);text-align:center;font-size:0.78rem;font-family:var(--font);padding:2px;"></span>
     </div>
-    <div class="preview-wrap" id="previewWrap">
-      <img id="previewImg" alt="Product preview">
-    </div>
-    <button class="remove-btn" id="removeBtn" style="display:none;">Remove product</button>
   </div>
+</header>
 
-  <!-- 2. Scene + Presets -->
-  <div class="card">
-    <div class="card-title">2. Scene</div>
-    <div class="prompt-area">
-      <label for="prompt">Describe the shot</label>
-      <textarea id="prompt" placeholder="e.g. Premium protein tub on a clean oak shelf in a boutique fitness store, warm overhead lighting, shallow depth of field, product photography style"></textarea>
-      <div class="chip-row" id="presetRow">
-        <div class="preset-chip" data-preset="amazon">Amazon white</div>
-        <div class="preset-chip" data-preset="instagram">Instagram lifestyle</div>
-        <div  class="preset-chip" data-preset="email">Email banner</div>
-        <div class="preset-chip" data-preset="pinterest">Pinterest</div>
+<main class="main">
+
+  <!-- Sidebar Controls -->
+  <aside class="sidebar">
+
+    <!-- 1. Product -->
+    <div class="panel">
+      <div class="panel-header"><span class="num">1</span> Your Product</div>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept="image/*">
+        <div class="icon">&#128248;</div>
+        <div class="label">Drop product photo here</div>
+        <div class="hint">PNG, JPG, WEBP</div>
+        <div class="file-name" id="fileName"></div>
+        <div class="remove" id="removeBtn">Remove</div>
       </div>
-      <div class="hint">Be specific about setting, lighting, and mood. The AI builds the scene around your product.</div>
+      <div class="sidebar-preview" id="previewWrap">
+        <img id="previewImg" alt="Product preview">
+      </div>
     </div>
-  </div>
 
-  <!-- 3. Aspect Ratio -->
-  <div class="card">
-    <div class="card-title">3. Aspect Ratio</div>
-    <div class="chip-row" id="aspectRow">
-      <div class="aspect-chip active" data-ratio="1:1">1:1</div>
-      <div class="aspect-chip" data-ratio="4:3">4:3</div>
-      <div class="aspect-chip" data-ratio="16:9">16:9</div>
-      <div class="aspect-chip" data-ratio="9:16">9:16</div>
-      <div class="aspect-chip" data-ratio="2:3">2:3</div>
-      <div class="aspect-chip" data-ratio="4:5">4:5</div>
+    <!-- 2. Scene -->
+    <div class="panel">
+      <div class="panel-header"><span class="num">2</span> Scene</div>
+      <div class="prompt-box">
+        <textarea id="prompt" placeholder="e.g. Premium protein tub on a clean oak shelf in a boutique fitness store, warm overhead lighting, shallow depth of field, product photography style"></textarea>
+        <div class="preset-row" id="presetRow">
+          <div class="preset-chip" data-preset="amazon">Amazon white</div>
+          <div class="preset-chip" data-preset="instagram">Instagram</div>
+          <div class="preset-chip" data-preset="email">Email banner</div>
+          <div class="preset-chip" data-preset="pinterest">Pinterest</div>
+        </div>
+        <div class="hint">Be specific about setting, lighting, and mood.</div>
+      </div>
     </div>
-  </div>
 
-  <!-- 4. Quality -->
-  <div class="card">
-    <div class="card-title">4. Quality</div>
-    <div class="chip-row" id="qualityRow">
-      <div class="quality-chip active" data-tier="fast" data-cost="0.07">Fast &middot; $0.07 &middot; draft</div>
-      <div class="quality-chip" data-tier="balanced" data-cost="0.07">Balanced &middot; $0.07 &middot; 2K</div>
-      <div class="quality-chip" data-tier="quality" data-cost="0.20">Quality &middot; $0.20 &middot; 2K</div>
+    <!-- 3. Aspect Ratio -->
+    <div class="panel">
+      <div class="panel-header"><span class="num">3</span> Aspect Ratio</div>
+      <div class="chip-row" id="aspectRow">
+        <div class="aspect-chip active" data-ratio="1:1">1:1</div>
+        <div class="aspect-chip" data-ratio="4:3">4:3</div>
+        <div class="aspect-chip" data-ratio="16:9">16:9</div>
+        <div class="aspect-chip" data-ratio="9:16">9:16</div>
+        <div class="aspect-chip" data-ratio="2:3">2:3</div>
+        <div class="aspect-chip" data-ratio="4:5">4:5</div>
+      </div>
     </div>
-  </div>
 
-  <!-- Batch toggle -->
-  <div class="batch-row" id="batchRow" style="display:flex; gap:10px; align-items:center; justify-content:center; font-size:0.85rem; color:var(--text-secondary);">
-    <label style="cursor:pointer; display:flex; align-items:center; gap:6px;">
-      <input type="checkbox" id="batchToggle" style="accent-color:var(--primary);">
-      Generate 4 variations (slower)
-    </label>
-  </div>
-
-  <!-- 5. Generate -->
-  <button class="gen-btn" id="genBtn">
-    <div class="spinner"></div>
-    <span class="label" id="genLabel">Generate 4 Images</span>
-  </button>
-
-  <!-- Output -->
-  <div class="output-wrap" id="outputWrap">
-    <div class="output-grid" id="outputGrid"></div>
-    <div class="output-meta">
-      <span id="outputMeta">Generated &middot; 0 images</span>
-      <a class="download-btn" id="downloadBtn" download>Download All</a>
+    <!-- 4. Quality -->
+    <div class="panel">
+      <div class="panel-header"><span class="num">4</span> Quality</div>
+      <div class="chip-row" id="qualityRow">
+        <div class="quality-chip active" data-tier="fast" data-cost="0.07">Fast &middot; $0.07</div>
+        <div class="quality-chip" data-tier="balanced" data-cost="0.07">Balanced &middot; $0.07</div>
+        <div class="quality-chip" data-tier="quality" data-cost="0.20">Quality &middot; $0.20</div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;color:var(--text-dim);cursor:pointer;margin-top:4px;">
+        <input type="checkbox" id="batchToggle" style="accent-color:var(--accent);">
+        Generate 4 variations (slower)
+      </label>
     </div>
-  </div>
 
-  <!-- Session Gallery -->
-  <div class="card gallery-card" id="galleryCard">
-    <div class="card-title">Session Gallery</div>
-    <div class="gallery" id="gallery"></div>
-    <button class="gen-btn" id="clearGallery" style="margin-top:12px; padding:8px 16px; font-size:0.85rem; background:var(--surface-hover); color:var(--text-secondary);">Clear Gallery</button>
-  </div>
+    <!-- Generate -->
+    <div class="gen-btn-wrap">
+      <button class="gen-btn" id="genBtn">
+        <div class="spinner"></div>
+        <span class="label" id="genLabel">Generate Image</span>
+        <span class="meta" id="genMeta"></span>
+      </button>
+    </div>
 
-  <div class="cost-pill">
-    Cost today: <span id="costToday">$0.00</span> &nbsp;|&nbsp;
-    Limit: $<input type="number" id="costLimit" value="5.00" step="0.50" min="0">
-  </div>
-</div>
+  </aside>
+
+  <!-- Canvas -->
+  <section class="canvas">
+
+    <!-- Output Stage -->
+    <div class="output-stage">
+      <div class="stage-header">
+        <span class="stage-title">Output</span>
+        <span class="stage-title" id="outputMeta" style="font-weight:500;"></span>
+      </div>
+      <div class="stage-body" id="stageBody">
+        <div class="empty-state" id="emptyState">
+          <div class="icon">&#127912;</div>
+          <h3>No images yet</h3>
+          <p>Configure your shot on the left and hit Generate to create product photography</p>
+        </div>
+        <div class="output-grid" id="outputGrid" style="display:none;"></div>
+      </div>
+    </div>
+
+    <!-- Gallery -->
+    <div class="gallery-panel" id="galleryCard" style="display:none;">
+      <div class="panel-title">
+        <span>Session Gallery</span>
+        <span style="font-size:0.75rem;color:var(--text-dim);cursor:pointer;" id="clearGallery">Clear</span>
+      </div>
+      <div class="gallery-grid" id="gallery"></div>
+    </div>
+
+  </section>
+
+</main>
 
 <div class="toast" id="toast"></div>
 
 <script>
-const $ = id => document.getElementById(id);
+const $ = id = document.getElementById(id);
 let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [] };
 
 const PRESETS = {
@@ -1249,27 +1356,27 @@ const PRESETS = {
 
 // ── Chip selectors ──
 function initChips(rowId, key, cls) {
-  $(rowId).addEventListener('click', e => {
+  $(rowId).addEventListener('click', e =\u003e {
     const chip = e.target.closest('.' + cls);
     if (!chip) return;
-    document.querySelectorAll('#' + rowId + ' .' + cls).forEach(c => c.classList.remove('active'));
+    document.querySelectorAll('#' + rowId + ' .' + cls).forEach(c =\u003e c.classList.remove('active'));
     chip.classList.add('active');
     state[key] = chip.dataset.tier || chip.dataset.ratio || chip.dataset.preset;
   });
 }
 initChips('qualityRow', 'tier', 'quality-chip');
 
-// Aspect chips
-$('aspectRow').addEventListener('click', e => {
+// Aspect chips (separate to avoid initChips eating preset clicks)
+$('aspectRow').addEventListener('click', e =\u003e {
   const chip = e.target.closest('.aspect-chip');
   if (!chip) return;
-  document.querySelectorAll('#aspectRow .aspect-chip').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('#aspectRow .aspect-chip').forEach(c =\u003e c.classList.remove('active'));
   chip.classList.add('active');
   state.aspect = chip.dataset.ratio;
 });
 
 // ── Presets ──
-$('presetRow').addEventListener('click', e => {
+$('presetRow').addEventListener('click', e =\u003e {
   const chip = e.target.closest('.preset-chip');
   if (!chip) return;
   const key = chip.dataset.preset;
@@ -1277,42 +1384,50 @@ $('presetRow').addEventListener('click', e => {
   if (!p) return;
   $('prompt').value = p.prompt;
   state.aspect = p.aspect;
-  // highlight matching aspect chip
-  document.querySelectorAll('.aspect-chip').forEach(c => {
+  document.querySelectorAll('.aspect-chip').forEach(c =\u003e {
     c.classList.toggle('active', c.dataset.ratio === p.aspect);
   });
-  // highlight preset
-  document.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.preset-chip').forEach(c =\u003e c.classList.remove('active'));
   chip.classList.add('active');
 });
 
-// ── File dropzone ──
+// ── Dropzone with mouse glow ──
 const dz = $('dropzone'), fi = $('fileInput');
-const onFile = file => {
+dz.addEventListener('mousemove', e =\u003e {
+  const rect = dz.getBoundingClientRect();
+  dz.style.setProperty('--mx', ((e.clientX - rect.left) / rect.width * 100) + '%');
+  dz.style.setProperty('--my', ((e.clientY - rect.top) / rect.height * 100) + '%');
+});
+
+const onFile = file =\u003e {
   if (!file || !file.type.startsWith('image/')) return;
   state.prodImage = file;
   $('fileName').textContent = file.name;
   const url = URL.createObjectURL(file);
   $('previewImg').src = url;
   $('previewWrap').style.display = 'block';
-  $('removeBtn').style.display = 'block';
+  $('removeBtn').style.display = 'inline-block';
+  dz.querySelector('.label').textContent = 'Replace product photo';
+  dz.querySelector('.icon').textContent = '🔄';
   updateGenLabel();
 };
-fi.addEventListener('change', e => onFile(e.target.files[0]));
+fi.addEventListener('change', e =\u003e onFile(e.target.files[0]));
+dz.addEventListener('dragover', e =\u003e { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', () =\u003e dz.classList.remove('dragover'));
+dz.addEventListener('drop', e =\u003e {
+  e.preventDefault(); dz.classList.remove('dragover');
+  onFile(e.dataTransfer.files[0]);
+});
 
-$('removeBtn').addEventListener('click', () => {
+$('removeBtn').addEventListener('click', () =\u003e {
   state.prodImage = null;
   $('fileName').textContent = '';
   $('previewWrap').style.display = 'none';
   $('removeBtn').style.display = 'none';
   fi.value = '';
+  dz.querySelector('.label').textContent = 'Drop product photo here';
+  dz.querySelector('.icon').textContent = '📸';
   updateGenLabel();
-});
-dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
-dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
-dz.addEventListener('drop', e => {
-  e.preventDefault(); dz.classList.remove('dragover');
-  onFile(e.dataTransfer.files[0]);
 });
 
 function updateGenLabel() {
@@ -1320,6 +1435,7 @@ function updateGenLabel() {
   const count = state.prodImage ? 1 : (batch ? 4 : 1);
   const label = state.prodImage ? 'Generate Composite' : (batch ? 'Generate 4 Images' : 'Generate Image');
   $('genLabel').textContent = label;
+  $('genMeta').textContent = batch && !state.prodImage ? '~2 min' : '~30s';
 }
 $('batchToggle').addEventListener('change', updateGenLabel);
 
@@ -1332,55 +1448,53 @@ async function getCostToday() {
 }
 
 function addToGallery(images) {
-  images.forEach(img => state.gallery.push(img));
+  images.forEach(img =\u003e state.gallery.push(img));
   renderGallery();
 }
 
 function renderGallery() {
   const g = $('gallery');
   g.innerHTML = '';
-  state.gallery.forEach((img, idx) => {
+  state.gallery.forEach((img, idx) =\u003e {
     const thumb = document.createElement('div');
     thumb.className = 'gallery-thumb';
-    thumb.innerHTML = `<img src="${img.url}" alt=""><div class="del" data-idx="${idx}">×</div>`;
-    thumb.querySelector('.del').addEventListener('click', (e) => {
+    thumb.innerHTML = '\u003cimg src="' + img.url + '" alt=""\u003e\u003cdiv class="del" data-idx="' + idx + '"\u003e×\u003c/div\u003e';
+    thumb.querySelector('.del').addEventListener('click', (e) =\u003e {
       e.stopPropagation();
       state.gallery.splice(idx, 1);
       renderGallery();
     });
-    thumb.addEventListener('click', () => loadIntoOutput([img]));
+    thumb.addEventListener('click', () =\u003e loadIntoOutput([img]));
     g.appendChild(thumb);
   });
-  $('galleryCard').classList.toggle('show', state.gallery.length > 0);
+  $('galleryCard').style.display = state.gallery.length > 0 ? 'block' : 'none';
 }
 
 function loadIntoOutput(images) {
   const grid = $('outputGrid');
   grid.innerHTML = '';
+  grid.style.display = 'grid';
   grid.className = 'output-grid' + (images.length === 1 ? ' single' : '');
-  images.forEach(img => {
+  $('emptyState').style.display = 'none';
+
+  images.forEach((img, i) =\u003e {
     const cell = document.createElement('div');
-    cell.className = 'output-cell';
-    cell.innerHTML = `<img src="${img.url}" alt=""><a class="dl-overlay" href="${img.url}" download="${img.name}">Download</a>`;
+    cell.className = 'output-cell fade-in';
+    cell.style.animationDelay = (i * 0.08) + 's';
+    cell.innerHTML = '\u003cimg src="' + img.url + '" alt=""\u003e\u003cdiv class="actions"\u003e\u003ca href="' + img.url + '" download="' + img.name + '"\u003eDownload PNG\u003c/a\u003e\u003c/div\u003e';
     grid.appendChild(cell);
   });
-  const totalCost = images.reduce((s, img) => s + (img.cost || 0), 0);
-  $('outputMeta').textContent = `Generated · ${images.length} image${images.length > 1 ? 's' : ''} · $${totalCost.toFixed(2)}`;
-  $('clearGallery').style.display = images.length > 1 ? 'none' : 'block';
-  // Update main download btn to zip all (fallback: first image)
-  const first = images[0];
-  $('downloadBtn').href = first ? first.url : '#';
-  $('downloadBtn').download = first ? first.name : '';
-  $('outputWrap').classList.add('show');
+
+  const totalCost = images.reduce((s, img) =\u003e s + (img.cost || 0), 0);
+  $('outputMeta').textContent = images.length + ' image' + (images.length > 1 ? 's' : '') + ' \u00b7 $' + totalCost.toFixed(2);
 }
 
 // ── Generate ──
-$('genBtn').addEventListener('click', async () => {
+$('genBtn').addEventListener('click', async () =\u003e {
   const prompt = $('prompt').value.trim();
   if (!prompt) { showToast('Enter a scene description', 'err'); return; }
   if (state.generating) return;
 
-  // Cost guardrail
   const limit = parseFloat($('costLimit').value) || 5;
   if (limit < 0 || isNaN(limit)) { showToast('Invalid cost limit', 'err'); return; }
   const costToday = await getCostToday();
@@ -1388,14 +1502,14 @@ $('genBtn').addEventListener('click', async () => {
   const count = state.prodImage ? 1 : (batch ? 4 : 1);
   const est = state.prodImage ? 0.20 : (0.07 * count);
   if (costToday + est > limit) {
-    showToast(`Would exceed $${limit.toFixed(2)} cost limit. Raise limit or wait until tomorrow.`, 'err');
+    showToast('Would exceed $' + limit.toFixed(2) + ' cost limit', 'err');
     return;
   }
 
   state.generating = true;
   $('genBtn').disabled = true;
   $('genBtn').classList.add('generating');
-  $('outputWrap').classList.remove('show');
+  $('outputMeta').textContent = '';
 
   try {
     let data;
@@ -1424,14 +1538,10 @@ $('genBtn').addEventListener('click', async () => {
       return;
     }
 
-    // Async batch: server returned a job_id to poll
     if (data.job_id && data.status === 'running') {
-      showToast('Batch started — polling...', 'ok');
+      showToast('Batch started — this takes ~2 minutes', 'ok');
       const result = await pollJob(data.job_id, count);
-      if (result.error) {
-        showToast(result.error, 'err');
-        return;
-      }
+      if (result.error) { showToast(result.error, 'err'); return; }
       data = result;
     }
 
@@ -1453,38 +1563,35 @@ $('genBtn').addEventListener('click', async () => {
 });
 
 async function pollJob(jobId, expectedCount) {
-  const maxWait = 300; // seconds
-  const interval = 4;  // seconds
+  const maxWait = 300;
+  const interval = 4;
   const start = Date.now();
   let dots = 0;
-  const spinnerLabel = () => {
-    dots = (dots + 1) % 4;
-    return 'Generating' + '.'.repeat(dots) + ` (${Math.round((Date.now()-start)/1000)}s)`;
-  };
 
   while (true) {
     const elapsed = (Date.now() - start) / 1000;
     if (elapsed > maxWait) {
       return { error: 'Timed out waiting for batch generation' };
     }
-    // Update button label with elapsed time
-    $('genLabel').textContent = spinnerLabel();
+    dots = (dots + 1) % 4;
+    $('genLabel').textContent = 'Generating' + '.'.repeat(dots) + ' (' + Math.round(elapsed) + 's)';
 
-    await new Promise(r => setTimeout(r, interval * 1000));
-    const r = await fetch(`/api/jobs/${jobId}`);
+    await new Promise(r =\u003e setTimeout(r, interval * 1000));
+    const r = await fetch('/api/jobs/' + jobId);
     const d = await r.json();
 
     if (d.status === 'done') {
+      $('genLabel').textContent = state.prodImage ? 'Generate Composite' : (expectedCount > 1 ? 'Generate 4 Images' : 'Generate Image');
       return { images: d.images || [], message: d.message || 'Done!', session_id: d.session_id };
     }
     if (d.status === 'error') {
+      $('genLabel').textContent = state.prodImage ? 'Generate Composite' : (expectedCount > 1 ? 'Generate 4 Images' : 'Generate Image');
       return { error: d.error || 'Generation failed' };
     }
-    // still running, loop
   }
 }
 
-$('clearGallery').addEventListener('click', () => {
+$('clearGallery').addEventListener('click', () =\u003e {
   state.gallery = [];
   renderGallery();
 });
@@ -1502,8 +1609,8 @@ function showToast(msg, type) {
   const t = $('toast');
   t.textContent = msg;
   t.className = 'toast ' + type;
-  requestAnimationFrame(() => t.classList.add('show'));
-  setTimeout(() => t.classList.remove('show'), 3000);
+  requestAnimationFrame(() =\u003e t.classList.add('show'));
+  setTimeout(() =\u003e t.classList.remove('show'), 3000);
 }
 </script>
 </body>
