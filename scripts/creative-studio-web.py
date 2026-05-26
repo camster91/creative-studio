@@ -2434,14 +2434,12 @@ def api_export_zip():
             except Exception as e:
                 zf.writestr(f"image-{i+1}-error.txt", str(e))
     buf.seek(0)
-    return (
-        send_from_directory(
-            str(DATA_DIR),
-            "export.zip",
-            as_attachment=True,
-            mimetype="application/zip",
-        ),
-        200,
+    from flask import send_file
+    return send_file(
+        buf,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="creative-studio-export.zip",
     )
 
 
