@@ -2086,6 +2086,84 @@ def api_costs():
     return jsonify(costs)
 
 
+@app.route("/status")
+def status_page():
+    """Live status page showing container health, active jobs, cost today."""
+    costs = load_costs()
+    today = datetime.now().strftime("%Y-%m-%d")
+    cost_today = costs.get("by_date", {}).get(today, 0.0)
+    total = costs.get("total", 0.0)
+    image_count = costs.get("image_count", 0)
+
+    # Active jobs
+    with _jobs_lock:
+        jobs_list = []
+        for jid, j in list(_jobs.items())[-20:]:
+            jobs_list.append({
+                "id": jid,
+                "status": j["status"],
+                "elapsed": round(time.time() - j["started_at"], 1) if j["started_at"] else None,
+            })
+        active_jobs = [j for j in jobs_list if j["status"] == "running"]
+
+    # Build job rows HTML
+    if active_jobs:
+        job_rows = "\n".join(
+            '<div class="job-row"><span>' + j["id"][:16] + '...</span><span class="badge running">running (' + str(j["elapsed"]) + 's)</span></div>'
+            for j in active_jobs
+        )
+    else:
+        job_rows = '<div class="job-row"><span>No active jobs</span><span class="badge ok">idle</span></div>'
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+    cost_class = "warn" if cost_today > 3 else "ok"
+
+    html = (
+        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
+        '<title>Status | Creative Studio</title>'
+        '<style>'
+        ':root { --bg:#0a0a0f; --surface:#14141b; --border:rgba(255,255,255,0.08); --text:#f0f0f5; --text2:#9a9aa8; --ok:#2dd4a8; --warn:#fbbf24; --err:#f87171; --primary:#ff6b4a; --font:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif; }'
+        'body { font-family:var(--font); background:var(--bg); color:var(--text); padding:40px 24px; max-width:640px; margin:0 auto; }'
+        'h1 { font-size:1.3rem; margin-bottom:4px; } h1 span { color:var(--primary); }'
+        '.subtitle { color:var(--text2); font-size:0.9rem; margin-bottom:28px; }'
+        '.card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:16px; }'
+        '.card-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text2); margin-bottom:12px; font-weight:600; }'
+        '.metric { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); }'
+        '.metric:last-child { border:none; }'
+        '.metric .val { font-weight:700; font-size:1.1rem; }'
+        '.metric .lbl { color:var(--text2); font-size:0.85rem; }'
+        '.ok { color:var(--ok); } .warn { color:var(--warn); } .err { color:var(--err); }'
+        '.job-row { display:flex; justify-content:space-between; font-size:0.85rem; padding:6px 0; border-bottom:1px solid var(--border); }'
+        '.job-row:last-child { border:none; }'
+        '.badge { display:inline-block; padding:2px 8px; border-radius:100px; font-size:0.7rem; font-weight:600; }'
+        '.badge.ok { background:rgba(45,212,168,0.12); color:var(--ok); }'
+        '.badge.running { background:rgba(251,191,36,0.12); color:var(--warn); }'
+        '.badge.err { background:rgba(248,113,113,0.12); color:var(--err); }'
+        'a { color:var(--primary); text-decoration:none; } a:hover { text-decoration:underline; }'
+        '.refresh { text-align:center; margin-top:20px; font-size:0.8rem; color:var(--text2); }'
+        '</style></head><body>'
+        '<h1>Creative Studio <span>Status</span></h1>'
+        '<div class="subtitle">' + timestamp + '</div>'
+        '<div class="card"><div class="card-title">Cost Tracker</div>'
+        '<div class="metric"><span class="lbl">Today</span><span class="val ' + cost_class + '">$' + f"{cost_today:.2f}" + '</span></div>'
+        '<div class="metric"><span class="lbl">All time</span><span class="val">$' + f"{total:.2f}" + '</span></div>'
+        '<div class="metric"><span class="lbl">Images generated</span><span class="val">' + str(image_count) + '</span></div>'
+        '</div>'
+        '<div class="card"><div class="card-title">Active Jobs <span style="color:var(--text2);font-weight:400;">(' + str(len(active_jobs)) + ' running)</span></div>'
+        + job_rows +
+        '</div>'
+        '<div class="card"><div class="card-title">Quick Links</div>'
+        '<div class="metric"><span class="lbl"><a href="/">Back to Studio</a></span></span></div>'
+        '<div class="metric"><span class="lbl"><a href="/api/costs">Raw costs JSON</a></span></span></div>'
+        '</div>'
+        '<div class="refresh">Auto-refreshes every 30s — or <a href="/status">reload now</a></div>'
+        '<script>setTimeout(()=>location.reload(),30000);</script>'
+        '</body></html>'
+    )
+    return html
+
+
 @app.route("/image/<path:subpath>")
 @rate_limited
 def serve_image(subpath):
