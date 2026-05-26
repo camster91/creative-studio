@@ -23,9 +23,17 @@ from flask import Flask, render_template_string, request, jsonify, send_from_dir
 from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
 
 # ─── Config ────────────────────────────────────────────────────────────
-API_KEY = os.environ.get("GEMINI_API_KEY")
-if not API_KEY:
-    raise RuntimeError("GEMINI_API_KEY environment variable is required")
+# Server fallback key (optional). When absent, app runs in BYOK mode.
+SERVER_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+
+
+def _get_api_key() -> str:
+    """Return the active API key: user's X-API-Key header, or server fallback, or empty."""
+    user_key = request.headers.get("X-API-Key", "").strip()
+    if user_key:
+        return user_key
+    return SERVER_API_KEY
+
 
 # Session / cost / output dirs
 if os.environ.get("CREATIVE_DATA_DIR"):
@@ -224,6 +232,7 @@ _TIER_COST = {
 def run_cli_generate(
     prompt: str,
     mode: str,
+    api_key: str,
     tier: str,
     aspect: str,
     smart: bool,
@@ -237,7 +246,7 @@ def run_cli_generate(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
-    env["GEMINI_API_KEY"] = API_KEY
+    env["GEMINI_API_KEY"] = api_key
     env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
 
     images = []
@@ -303,7 +312,7 @@ def run_cli_generate(
 
 
 def run_cli_composite(
-    prompt: str, product_path: str, aspect: str, tier: str = "quality"
+    prompt: str, product_path: str, api_key: str, aspect: str, tier: str = "quality"
 ) -> List[Dict]:
     out_dir = OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d") / "composite"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -326,7 +335,7 @@ def run_cli_composite(
         fname,
     ]
     env = os.environ.copy()
-    env["GEMINI_API_KEY"] = API_KEY
+    env["GEMINI_API_KEY"] = api_key
 
     try:
         subprocess.run(
@@ -351,7 +360,7 @@ def run_cli_composite(
     return [{"error": "Composite produced no output"}]
 
 
-def run_cli_export(source_path: str, presets: str) -> List[Dict]:
+def run_cli_export(source_path: str, presets: str, api_key: str) -> List[Dict]:
     args = [
         "bash",
         str(Path(__file__).parent.parent / "launch.sh"),
@@ -362,7 +371,7 @@ def run_cli_export(source_path: str, presets: str) -> List[Dict]:
         presets,
     ]
     env = os.environ.copy()
-    env["GEMINI_API_KEY"] = API_KEY
+    env["GEMINI_API_KEY"] = api_key
     env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
     try:
         subprocess.run(
@@ -388,7 +397,7 @@ def run_cli_export(source_path: str, presets: str) -> List[Dict]:
         return [{"error": str(e)}]
 
 
-def run_cli_qc(image_path: str) -> dict:
+def run_cli_qc(image_path: str, api_key: str) -> dict:
     args = [
         "bash",
         str(Path(__file__).parent.parent / "launch.sh"),
@@ -397,7 +406,7 @@ def run_cli_qc(image_path: str) -> dict:
         image_path,
     ]
     env = os.environ.copy()
-    env["GEMINI_API_KEY"] = API_KEY
+    env["GEMINI_API_KEY"] = api_key
     # Parse stdout for QC results
     try:
         result = subprocess.run(
@@ -434,7 +443,7 @@ def run_cli_qc(image_path: str) -> dict:
         return {"quality_score": 0, "error": str(e), "issues": []}
 
 
-def run_cli_refine(image_path: str, changes: str, tier: str) -> List[Dict]:
+def run_cli_refine(image_path: str, changes: str, api_key: str, tier: str) -> List[Dict]:
     # Since refine needs a session folder from variations, we'll do a "revise" via direct mode
     # with the original image as reference + changes in prompt
     out_dir = OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d") / "refine"
@@ -456,7 +465,7 @@ def run_cli_refine(image_path: str, changes: str, tier: str) -> List[Dict]:
         fname,
     ]
     env = os.environ.copy()
-    env["GEMINI_API_KEY"] = API_KEY
+    env["GEMINI_API_KEY"] = api_key
     try:
         subprocess.run(
             args, capture_output=True, text=True, timeout=300, env=env, check=True
@@ -508,6 +517,7 @@ _VARIATION_SUFFIXES = [
 
 def run_cli_variations(
     prompt: str,
+    api_key: str,
     count: int,
     tier: str,
     aspect: str,
@@ -552,7 +562,7 @@ def run_cli_variations(
             args += ["--input-image", input_image]
 
         env = os.environ.copy()
-        env["GEMINI_API_KEY"] = API_KEY
+        env["GEMINI_API_KEY"] = api_key
         env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
 
         try:
@@ -655,7 +665,7 @@ def run_cli_refine_from_variation(
     ]
 
     env = os.environ.copy()
-    env["GEMINI_API_KEY"] = API_KEY
+    env["GEMINI_API_KEY"] = api_key
     env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
 
     try:
@@ -687,6 +697,7 @@ _chat_sessions: Dict[str, dict] = {}  # session_key → {turn, current_input, hi
 
 def run_cli_chat_turn(
     session_key: str,
+    api_key: str,
     prompt: str,
     tier: str,
     aspect: str,
@@ -735,7 +746,7 @@ def run_cli_chat_turn(
         args += ["--input-image", current_input]
 
     env = os.environ.copy()
-    env["GEMINI_API_KEY"] = API_KEY
+    env["GEMINI_API_KEY"] = api_key
     env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
 
     images = []
@@ -1370,6 +1381,56 @@ body {
   .footer-inner { flex-direction: column; text-align: center; }
   .hero-section h1 { font-size: 1.9rem; }
 }
+
+
+/* ── API Key Panel ── */
+.apikey-panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.apikey-panel .panel-header {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.apikey-panel .panel-header .icon { font-size: 1rem; }
+.apikey-input-wrap {
+  position: relative;
+  display: flex; gap: 8px;
+}
+.apikey-input-wrap input {
+  flex: 1; padding: 10px 14px; border: 1px solid var(--border);
+  border-radius: var(--radius-xs); background: var(--surface);
+  color: var(--text); font-family: var(--font); font-size: 0.85rem;
+  outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+}
+.apikey-input-wrap input:focus {
+  border-color: rgba(255,107,53,0.45); box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.apikey-input-wrap input.valid { border-color: var(--success); }
+.apikey-input-wrap input.invalid { border-color: var(--danger); }
+.apikey-btn {
+  padding: 9px 16px; border-radius: var(--radius-xs);
+  border: 1px solid var(--border); background: var(--surface-hover);
+  color: var(--text); font-family: var(--font); font-size: 0.82rem;
+  font-weight: 600; cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.apikey-btn:hover { background: var(--surface); }
+.apikey-hint {
+  font-size: 0.75rem; color: var(--text-dim); line-height: 1.5;
+}
+.apikey-hint a { color: var(--accent); text-decoration: none; }
+.apikey-hint a:hover { text-decoration: underline; }
+.apikey-status {
+  font-size: 0.78rem; font-weight: 500; display: none;
+}
+.apikey-status.ok { color: var(--success); display: block; }
+.apikey-status.err { color: var(--danger); display: block; }
 </style>
 </head>
 <body>
@@ -1397,6 +1458,20 @@ body {
 
   <!-- Sidebar Controls -->
   <aside class="sidebar">
+
+    <!-- 0. API Key (BYOK) -->
+    <div class="apikey-panel" id="apikeyPanel">
+      <div class="panel-header"><span class="icon">🔑</span> API Key</div>
+      <div class="apikey-input-wrap">
+        <input type="password" id="apikeyInput" placeholder="Paste your Gemini API key..." autocomplete="off">
+        <button class="apikey-btn" id="apikeyBtn">Save</button>
+      </div>
+      <div class="apikey-status" id="apikeyStatus"></div>
+      <div class="apikey-hint">
+        Bring your own key from <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>.
+        We don't store or train on your key. Cost is paid directly to Google.
+      </div>
+    </div>
 
     <!-- 1. Product -->
     <div class="panel">
@@ -1506,10 +1581,10 @@ body {
   <div class="hero-section" id="heroSection">
     <div class="hero-inner">
       <h1>AI product photography for <span>DTC brands</span> that ship</h1>
-      <p>Upload your product. Describe the scene. Get studio-grade shots in seconds. No photographer, no studio, no retouching.</p>
+      <p>Upload your product. Describe the scene. Get studio-grade shots in seconds. Bring your own Gemini API key. Pay Google directly. No credit card, no subscription, no retouching.</p>
       <div class="hero-cta">
         <button class="hero-btn" onclick="document.getElementById('editor').scrollIntoView({behavior:'smooth'})">Try free →</button>
-        <span class="hero-note">$0.07 per image. No credit card required.</span>
+        <span class="hero-note">$0.07/image when you bring your own API key.</span>
       </div>
       <div class="hero-stats">
         <div class="stat"><span class="stat-num">30s</span><span class="stat-lbl">per shot</span></div>
@@ -1650,8 +1725,8 @@ body {
           <p>DTC founders, CPG brands with monthly content calendars, Shopify operators, Amazon sellers needing white-background shots, and design agencies that need volume fast. Anyone who needs photos but doesn't have $500/day for a studio.</p>
         </details>
         <details class="faq-item">
-          <summary>Can I use this for client work?</summary>
-          <p>Yes. Every output is yours to use commercially. Brand it, sell it, bundle it into client deliverables. The tool is self-hosted so your client's IP stays private.</p>
+          <summary>Do you store my API key or credit card?</summary>
+          <p>No. Your API key lives in your browser's localStorage — we never see it on our server unless you pass it in the header. No credit card required. You pay Google directly for generation.</p>
         </details>
         <details class="faq-item">
           <summary>What happens to my product photos?</summary>
@@ -1669,7 +1744,7 @@ body {
   <div class="cta-banner">
     <div class="cta-inner">
       <h2>Ready to replace your product photographer?</h2>
-      <p>Start generating in the editor above. First image is free when you bring your own API key.</p>
+      <p>Start generating in the editor above. Paste your Gemini key and go.</p>
       <button class="hero-btn" onclick="document.getElementById('editor').scrollIntoView({behavior:'smooth'})">Open Studio →</button>
     </div>
   </div>
@@ -1699,6 +1774,59 @@ body {
 <script>
 const $ = id = document.getElementById(id);
 let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [] };
+
+// ── API Key (BYOK) ──
+const API_KEY_STORAGE = 'cs_api_key';
+function loadApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
+function saveApiKey(key) { localStorage.setItem(API_KEY_STORAGE, key); }
+function getApiKey() { return loadApiKey(); }
+
+function updateFetchOptions(opts = {}) {
+  const key = getApiKey();
+  if (key) {
+    opts.headers = opts.headers || {};
+    opts.headers['X-API-Key'] = key;
+  }
+  return opts;
+}
+
+async function validateApiKey(key) {
+  try {
+    const r = await fetch('/api/validate-key', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key })
+    });
+    return await r.json();
+  } catch (e) { return { valid: false, error: e.message }; }
+}
+
+$('apikeyBtn').addEventListener('click', async () => {
+  const key = $('apikeyInput').value.trim();
+  if (!key) { showToast('Paste a key first', 'err'); return; }
+  $('apikeyStatus').textContent = 'Checking...';
+  $('apikeyStatus').className = 'apikey-status';
+  const result = await validateApiKey(key);
+  if (result.valid) {
+    saveApiKey(key);
+    $('apikeyStatus').textContent = 'Key saved ✓';
+    $('apikeyStatus').className = 'apikey-status ok';
+    $('apikeyInput').className = 'valid';
+    showToast('API key saved', 'ok');
+  } else {
+    $('apikeyStatus').textContent = result.error || 'Invalid key';
+    $('apikeyStatus').className = 'apikey-status err';
+    $('apikeyInput').className = 'invalid';
+  }
+});
+
+// Load saved key on startup
+const savedKey = loadApiKey();
+if (savedKey) {
+  $('apikeyInput').value = savedKey;
+  $('apikeyInput').className = 'valid';
+  $('apikeyStatus').textContent = 'Key loaded ✓';
+  $('apikeyStatus').className = 'apikey-status ok';
+}
 
 const PRESETS = {
   amazon:    { prompt: 'Clean pure white background, soft shadow underneath, studio lighting, product centered, ecommerce photography, high detail', aspect: '1:1' },
@@ -1794,7 +1922,7 @@ $('batchToggle').addEventListener('change', updateGenLabel);
 
 async function getCostToday() {
   try {
-    const r = await fetch('/api/costs');
+    const r = await fetch('/api/costs', updateFetchOptions());
     const d = await r.json();
     return d.today || 0;
   } catch (e) { return 0; }
@@ -1872,17 +2000,17 @@ $('genBtn').addEventListener('click', async () =\u003e {
       fd.append('product', state.prodImage);
       fd.append('aspect_ratio', state.aspect);
       fd.append('tier', state.tier);
-      const resp = await fetch('/api/composite', { method: 'POST', body: fd });
+      const resp = await fetch('/api/composite', updateFetchOptions({ method: 'POST', body: fd }));
       data = await resp.json();
     } else {
       const body = {
         prompt, mode: 'direct', tier: state.tier,
         aspect_ratio: state.aspect, variations: count
       };
-      const resp = await fetch('/api/generate', {
+      const resp = await fetch('/api/generate', updateFetchOptions({
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
-      });
+      }));
       data = await resp.json();
     }
 
@@ -1951,7 +2079,7 @@ $('clearGallery').addEventListener('click', () =\u003e {
 
 async function refreshCost() {
   try {
-    const r = await fetch('/api/costs');
+    const r = await fetch('/api/costs', updateFetchOptions());
     const d = await r.json();
     $('costToday').textContent = '$' + (d.today?.toFixed(2) || '0.00');
   } catch (e) { console.log('cost fetch failed', e); }
@@ -2008,9 +2136,12 @@ def api_generate():
     # Async: if variations > 1, run in background thread
     if variations > 1:
         job_id = _job_id()
+        api_key = _get_api_key()
+        if not api_key:
+            return jsonify({"error": "No API key. Add your Gemini key in the sidebar panel or set GEMINI_API_KEY on the server."}), 400
 
         def _do_generate():
-            images = run_cli_generate(prompt, mode, tier, aspect, smart, variations=variations)
+            images = run_cli_generate(prompt, mode, api_key, tier, aspect, smart, variations=variations)
             for img in images:
                 if "error" not in img:
                     add_entry(
@@ -2033,7 +2164,11 @@ def api_generate():
         return jsonify({"job_id": job_id, "status": "running", "message": "Generation started"})
 
     # Sync: single image (fast path)
-    images = run_cli_generate(prompt, mode, tier, aspect, smart, variations=1)
+    api_key = _get_api_key()
+    if not api_key:
+        return jsonify({"error": "No API key. Add your Gemini key in the sidebar panel or set GEMINI_API_KEY on the server."}), 400
+
+    images = run_cli_generate(prompt, mode, api_key, tier, aspect, smart, variations=1)
     for img in images:
         if "error" not in img:
             add_entry(
@@ -2080,6 +2215,38 @@ def api_job_status(job_id):
     return jsonify(resp)
 
 
+@app.route("/api/validate-key", methods=["POST"])
+@rate_limited
+def api_validate_key():
+    """Check if a Gemini API key is valid by attempting a tiny generation."""
+    data = request.json or {}
+    key = data.get("key", "").strip()
+    if not key:
+        return jsonify({"error": "Key required"}), 400
+    if not key.startswith("AIza"):
+        return jsonify({"error": "Invalid format — Gemini keys start with AIza..."}), 400
+
+    # Quick ping: attempt to list models via curl-like subprocess
+    import urllib.request, urllib.error
+    req = urllib.request.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read()
+            if resp.status == 200:
+                return jsonify({"valid": True, "message": "Key is valid"})
+    except urllib.error.HTTPError as e:
+        if e.code == 400:
+            return jsonify({"valid": False, "error": "Invalid API key"}), 200
+        return jsonify({"valid": False, "error": f"HTTP {e.code}"}), 200
+    except Exception as e:
+        return jsonify({"valid": False, "error": str(e)}), 200
+
+    return jsonify({"valid": True, "message": "Key looks valid"})
+
+
 @app.route("/api/composite", methods=["POST"])
 @rate_limited
 def api_composite():
@@ -2097,7 +2264,11 @@ def api_composite():
     product_path = tmp_dir / f"product_{int(time.time())}_{f.filename}"
     f.save(str(product_path))
 
-    images = run_cli_composite(prompt, str(product_path), aspect)
+    api_key = _get_api_key()
+    if not api_key:
+        return jsonify({"error": "No API key. Add your Gemini key in the sidebar panel or set GEMINI_API_KEY on the server."}), 400
+
+    images = run_cli_composite(prompt, str(product_path), api_key, aspect)
     for img in images:
         add_entry(
             session_id,
@@ -2139,7 +2310,7 @@ def api_export():
     else:
         return jsonify({"error": "Image required"}), 400
 
-    images = run_cli_export(str(src_path), presets)
+    images = run_cli_export(str(src_path), presets, _get_api_key())
     selected_list = [p.strip() for p in presets.split(",") if p.strip()]
     for img in images:
         add_entry(
@@ -2207,7 +2378,7 @@ def api_qc():
     else:
         return jsonify({"error": "Image required"}), 400
 
-    qc = run_cli_qc(str(img_path))
+    qc = run_cli_qc(str(img_path), _get_api_key())
     return jsonify({"message": f"QC Score: {qc['quality_score']}/10", "qc": qc})
 
 
@@ -2245,7 +2416,7 @@ def api_refine():
     else:
         return jsonify({"error": "changes or pins required"}), 400
 
-    images = run_cli_refine(image_path, full_changes, tier)
+    images = run_cli_refine(image_path, full_changes, _get_api_key(), tier)
     for img in images:
         add_entry(
             session_id,
@@ -2287,7 +2458,7 @@ def api_variations():
         input_image = str(tmp_dir / f"variations_ref_{int(time.time())}_{f.filename}")
         f.save(input_image)
 
-    images, session_key = run_cli_variations(
+    images, session_key = run_cli_variations(_get_api_key(), 
         prompt=prompt,
         count=count,
         tier=tier,
@@ -2385,7 +2556,7 @@ def api_chat():
         if session_key not in _chat_sessions:
             pass  # run_cli_chat_turn handles first-turn initialization
 
-    images, sess = run_cli_chat_turn(
+    images, sess = run_cli_chat_turn(_get_api_key(), 
         session_key=session_key,
         prompt=prompt,
         tier=tier,
