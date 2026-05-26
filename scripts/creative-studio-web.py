@@ -1165,6 +1165,19 @@ body {
   text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px;
   display: flex; justify-content: space-between; align-items: center;
 }
+.gallery-toolbar {
+  display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;
+}
+.gallery-toolbar button {
+  font-size: 0.72rem; padding: 4px 10px; border-radius: var(--radius-xs);
+  border: 1px solid var(--border); background: var(--bg-hover);
+  color: var(--text-secondary); cursor: pointer; font-family: var(--font);
+  transition: all 0.15s;
+}
+.gallery-toolbar button:hover { border-color: var(--accent); color: var(--text); }
+.gallery-toolbar button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.gallery-toolbar button.primary:hover { background: var(--accent-hover); }
+.gallery-toolbar .count { margin-left: auto; font-size: 0.72rem; color: var(--text-dim); }
 .gallery-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
@@ -1175,10 +1188,23 @@ body {
   border: 1px solid var(--border); cursor: pointer;
   opacity: 0.65; transition: opacity 0.15s, border-color 0.15s; position: relative;
 }
-.gallery-thumb:hover, .gallery-thumb.active { opacity: 1; border-color: var(--accent); }
+.gallery-thumb:hover, .gallery-thumb.active, .gallery-thumb.selected { opacity: 1; border-color: var(--accent); }
+.gallery-thumb.selected::after {
+  content: '';
+  position: absolute; inset: 0; border: 2px solid var(--accent); border-radius: var(--radius-xs);
+  pointer-events: none;
+}
 .gallery-thumb img { width: 100%; height: 80px; object-fit: cover; display: block; }
+.gallery-thumb .check {
+  position: absolute; top: 4px; left: 4px; width: 16px; height: 16px;
+  background: rgba(0,0,0,0.5); border-radius: 3px; border: 1px solid rgba(255,255,255,0.3);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; color: #fff; opacity: 0; transition: opacity 0.15s;
+}
+.gallery-thumb:hover .check, .gallery-thumb.selected .check { opacity: 1; }
+.gallery-thumb.selected .check { background: var(--accent); border-color: var(--accent); }
 .gallery-thumb .del {
-  position: absolute; top: 3px; right: 3px; width: 18px; height: 18px;
+  position: absolute; top: 4px; right: 4px; width: 18px; height: 18px;
   background: rgba(0,0,0,0.5); color: #fff; border-radius: 50%;
   font-size: 11px; line-height: 18px; text-align: center; cursor: pointer;
   opacity: 0; transition: opacity 0.15s;
@@ -1566,7 +1592,14 @@ body {
     <div class="gallery-panel" id="galleryCard" style="display:none;">
       <div class="panel-title">
         <span>Session Gallery</span>
-        <span style="font-size:0.75rem;color:var(--text-dim);cursor:pointer;" id="clearGallery">Clear</span>
+        <span style="font-size:0.75rem;color:var(--text-dim);cursor:pointer;" id="clearGallery">Clear all</span>
+      </div>
+      <div class="gallery-toolbar" id="galleryToolbar" style="display:none;">
+        <button id="selectAllBtn">Select all</button>
+        <button id="deselectAllBtn">Deselect</button>
+        <button id="downloadZipBtn" class="primary">Download ZIP</button>
+        <button id="deleteSelectedBtn" style="color:var(--danger)">Delete</button>
+        <span class="count" id="selectedCount">0 selected</span>
       </div>
       <div class="gallery-grid" id="gallery"></div>
     </div>
@@ -1774,7 +1807,7 @@ body {
 
 <script>
 const $ = id = document.getElementById(id);
-let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [] };
+let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [], selected: new Set() };
 
 // ── API Key (BYOK) ──
 const API_KEY_STORAGE = 'cs_api_key';
@@ -1930,27 +1963,107 @@ async function getCostToday() {
 }
 
 function addToGallery(images) {
-  images.forEach(img =\u003e state.gallery.push(img));
+  images.forEach(img => state.gallery.push(img));
   renderGallery();
 }
 
 function renderGallery() {
   const g = $('gallery');
   g.innerHTML = '';
-  state.gallery.forEach((img, idx) =\u003e {
+  state.gallery.forEach((img, idx) => {
     const thumb = document.createElement('div');
-    thumb.className = 'gallery-thumb';
-    thumb.innerHTML = '\u003cimg src="' + img.url + '" alt=""\u003e\u003cdiv class="del" data-idx="' + idx + '"\u003e×\u003c/div\u003e';
-    thumb.querySelector('.del').addEventListener('click', (e) =\u003e {
+    const isSel = state.selected.has(idx);
+    thumb.className = 'gallery-thumb' + (isSel ? ' selected' : '');
+    thumb.innerHTML = '<img src="' + img.url + '" alt=""><div class="check">' + (isSel ? '✓' : '') + '</div><div class="del" data-idx="' + idx + '">×</div>';
+    thumb.querySelector('.del').addEventListener('click', (e) => {
       e.stopPropagation();
       state.gallery.splice(idx, 1);
+      state.selected.delete(idx);
+      const newSelected = new Set();
+      state.selected.forEach(i => { if (i < idx) newSelected.add(i); else if (i > idx) newSelected.add(i - 1); });
+      state.selected = newSelected;
       renderGallery();
+      updateToolbar();
     });
-    thumb.addEventListener('click', () =\u003e loadIntoOutput([img]));
+    thumb.addEventListener('click', (e) => {
+      if (e.shiftKey && state.lastClicked !== null) {
+        const start = Math.min(state.lastClicked, idx);
+        const end = Math.max(state.lastClicked, idx);
+        for (let i = start; i <= end; i++) state.selected.add(i);
+      } else {
+        if (state.selected.has(idx)) state.selected.delete(idx);
+        else state.selected.add(idx);
+        state.lastClicked = idx;
+      }
+      renderGallery();
+      updateToolbar();
+    });
     g.appendChild(thumb);
   });
   $('galleryCard').style.display = state.gallery.length > 0 ? 'block' : 'none';
+  updateToolbar();
 }
+
+function updateToolbar() {
+  const hasSel = state.selected.size > 0;
+  $('galleryToolbar').style.display = state.gallery.length > 0 ? 'flex' : 'none';
+  $('selectedCount').textContent = state.selected.size + ' selected';
+  $('downloadZipBtn').disabled = !hasSel;
+  $('deleteSelectedBtn').disabled = !hasSel;
+}
+
+$('selectAllBtn').addEventListener('click', () => {
+  state.gallery.forEach((_, i) => state.selected.add(i));
+  renderGallery();
+});
+$('deselectAllBtn').addEventListener('click', () => {
+  state.selected.clear();
+  renderGallery();
+});
+$('deleteSelectedBtn').addEventListener('click', () => {
+  if (!state.selected.size) return;
+  const remaining = state.gallery.filter((_, i) => !state.selected.has(i));
+  state.gallery = remaining;
+  state.selected.clear();
+  renderGallery();
+  showToast('Deleted selected images', 'ok');
+});
+$('downloadZipBtn').addEventListener('click', async () => {
+  if (!state.selected.size) { showToast('Select images first', 'err'); return; }
+  const urls = [];
+  state.selected.forEach(i => { if (state.gallery[i]) urls.push(state.gallery[i].url); });
+  try {
+    const r = await fetch('/api/export-zip', updateFetchOptions({
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({urls})
+    }));
+    if (!r.ok) throw new Error('ZIP failed');
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'creative-studio-export.zip';
+    a.click();
+    showToast('ZIP downloaded', 'ok');
+  } catch (e) { showToast('Export failed: ' + e.message, 'err'); }
+});
+
+async function loadServerGallery() {
+  try {
+    const r = await fetch('/api/sessions');
+    const d = await r.json();
+    if (d.sessions) {
+      d.sessions.forEach(s => {
+        (s.entries || []).forEach(e => {
+          if (e.image_url && !state.gallery.find(g => g.url === e.image_url)) {
+            state.gallery.push({ url: e.image_url, name: e.note || 'image.png', cost: e.cost || 0, model: e.model || '' });
+          }
+        });
+      });
+      renderGallery();
+    }
+  } catch (e) { console.log('session load failed', e); }
+}
+loadServerGallery();
 
 function loadIntoOutput(images) {
   const grid = $('outputGrid');
@@ -2295,6 +2408,41 @@ def api_validate_key():
         return jsonify({"valid": False, "error": str(e)}), 200
 
     return jsonify({"valid": True, "message": "Key looks valid"})
+
+
+@app.route("/api/export-zip", methods=["POST"])
+@rate_limited
+def api_export_zip():
+    import io, zipfile, urllib.request
+    data = request.json or {}
+    urls = data.get("urls", [])
+    if not urls:
+        return jsonify({"error": "No URLs provided"}), 400
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, url in enumerate(urls):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "CreativeStudio/1.0"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    ext = ".png"
+                    ct = resp.headers.get("Content-Type", "")
+                    if "jpeg" in ct or "jpg" in ct:
+                        ext = ".jpg"
+                    elif "webp" in ct:
+                        ext = ".webp"
+                    zf.writestr(f"image-{i+1}{ext}", resp.read())
+            except Exception as e:
+                zf.writestr(f"image-{i+1}-error.txt", str(e))
+    buf.seek(0)
+    return (
+        send_from_directory(
+            str(DATA_DIR),
+            "export.zip",
+            as_attachment=True,
+            mimetype="application/zip",
+        ),
+        200,
+    )
 
 
 @app.route("/api/composite", methods=["POST"])
