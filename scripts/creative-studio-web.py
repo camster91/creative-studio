@@ -303,6 +303,7 @@ def run_cli_generate(
                     "name": f.name,
                     "cost": cost,
                     "model": model_used,
+                    "ratio": aspect,
                 }
             )
 
@@ -351,6 +352,7 @@ def run_cli_composite(
                     "name": fname,
                     "cost": cost,
                     "model": model_used,
+                    "ratio": aspect,
                 }
             ]
     except subprocess.CalledProcessError as e:
@@ -1129,20 +1131,30 @@ body {
   position: relative; aspect-ratio: 1 / 1;
 }
 .output-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.output-cell .actions {
-  position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: flex-end;
-  padding: 12px; opacity: 0; transition: opacity 0.2s;
-  background: linear-gradient(to top, rgba(0,0,0,0.5), transparent 50%);
+.output-cell .cell-bar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px; opacity: 0; transition: opacity 0.2s;
+  background: linear-gradient(to top, rgba(0,0,0,0.65), transparent);
 }
-.output-cell:hover .actions { opacity: 1; }
-.output-cell .actions a {
-  padding: 8px 14px; border-radius: var(--radius-xs);
-  background: rgba(255,255,255,0.12); backdrop-filter: blur(8px);
-  color: #fff; font-size: 0.78rem; font-weight: 600; text-decoration: none;
-  border: 1px solid rgba(255,255,255,0.15);
-  transition: background 0.15s;
+.output-cell:hover .cell-bar { opacity: 1; }
+.output-cell .cell-bar .left { display: flex; align-items: center; gap: 6px; }
+.output-cell .cell-bar .pill {
+  padding: 3px 8px; border-radius: 100px;
+  background: rgba(255,255,255,0.1); backdrop-filter: blur(6px);
+  color: #fff; font-size: 0.68rem; font-weight: 500; border: 1px solid rgba(255,255,255,0.1);
 }
-.output-cell .actions a:hover { background: rgba(255,255,255,0.2); }
+.output-cell .cell-bar .pill.ratio { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.85); }
+.output-cell .cell-bar .pill.cost { background: rgba(45,212,168,0.15); color: #4ade80; border-color: rgba(74,222,128,0.25); }
+.output-cell .cell-bar .pill.model { background: rgba(96,165,250,0.12); color: #93bbfc; border-color: rgba(96,165,250,0.2); }
+.output-cell .cell-bar .right { display: flex; gap: 6px; }
+.output-cell .cell-bar .right a, .output-cell .cell-bar .right span {
+  padding: 5px 10px; border-radius: var(--radius-xs);
+  background: rgba(255,255,255,0.1); backdrop-filter: blur(6px);
+  color: #fff; font-size: 0.72rem; font-weight: 600; text-decoration: none;
+  border: 1px solid rgba(255,255,255,0.12); cursor: pointer; transition: background 0.15s;
+}
+.output-cell .cell-bar .right a:hover, .output-cell .cell-bar .right span:hover { background: rgba(255,255,255,0.2); }
 
 /* ── Empty state ── */
 .empty-state {
@@ -2065,6 +2077,23 @@ async function loadServerGallery() {
 }
 loadServerGallery();
 
+// Delegate click for Save-to-gallery on output cells
+$('outputGrid').addEventListener('click', (e) => {
+  const btn = e.target.closest('.add-to-gallery');
+  if (!btn) return;
+  const url = btn.dataset.url;
+  const name = btn.dataset.name;
+  const cost = parseFloat(btn.dataset.cost) || 0;
+  const model = btn.dataset.model || '';
+  if (!state.gallery.find(g => g.url === url)) {
+    state.gallery.push({ url, name, cost, model, ratio: state.aspect });
+    renderGallery();
+    showToast('Saved to gallery', 'ok');
+  } else {
+    showToast('Already in gallery', 'err');
+  }
+});
+
 function loadIntoOutput(images) {
   const grid = $('outputGrid');
   grid.innerHTML = '';
@@ -2076,7 +2105,7 @@ function loadIntoOutput(images) {
     const cell = document.createElement('div');
     cell.className = 'output-cell fade-in';
     cell.style.animationDelay = (i * 0.08) + 's';
-    cell.innerHTML = '<img src="' + img.url + '" alt=""><div class="actions"><a href="' + img.url + '" download="' + img.name + '">Download PNG</a></div>';
+    cell.innerHTML = buildCellHTML(img);
     grid.appendChild(cell);
   });
 
@@ -2093,14 +2122,33 @@ function appendToOutput(images) {
     const cell = document.createElement('div');
     cell.className = 'output-cell fade-in';
     cell.style.animationDelay = (i * 0.08) + 's';
-    cell.innerHTML = '<img src="' + img.url + '" alt=""><div class="actions"><a href="' + img.url + '" download="' + img.name + '">Download PNG</a></div>';
+    cell.innerHTML = buildCellHTML(img);
     grid.appendChild(cell);
   });
 
-  // Recalculate total cost across all visible cells
   const allCells = grid.querySelectorAll('.output-cell');
-  const totalCost = images.reduce((s, img) => s + (img.cost || 0), 0); // approximate, since we don't have all costs
+  const totalCost = images.reduce((s, img) => s + (img.cost || 0), 0);
   $('outputMeta').textContent = allCells.length + ' images · streaming...';
+}
+
+function buildCellHTML(img) {
+  const ratio = img.ratio || '';
+  const cost = img.cost ? '$' + img.cost.toFixed(2) : '';
+  const model = img.model ? img.model.replace('gemini-3.1-flash-image-preview', 'Flash').replace('gemini-3-pro-image-preview', 'Pro') : '';
+  return (
+    '<img src="' + img.url + '" alt="">' +
+    '<div class="cell-bar">' +
+      '<div class="left">' +
+        (ratio ? '<span class="pill ratio">' + ratio + '</span>' : '') +
+        (cost ? '<span class="pill cost">' + cost + '</span>' : '') +
+        (model ? '<span class="pill model">' + model + '</span>' : '') +
+      '</div>' +
+      '<div class="right">' +
+        '<a href="' + img.url + '" download="' + img.name + '">Download</a>' +
+        '<span class="add-to-gallery" data-url="' + img.url + '" data-name="' + img.name + '" data-cost="' + (img.cost||0) + '" data-model="' + (img.model||'') + '">Save</span>' +
+      '</div>' +
+    '</div>'
+  );
 }
 
 // ── Generate ──
@@ -2303,6 +2351,7 @@ def api_generate():
                             "cost": img.get("cost", 0),
                             "image_url": img.get("url", ""),
                             "model": img.get("model", ""),
+                            "ratio": img.get("ratio", aspect),
                             "note": f"{img.get('name', '')} ({img.get('model', '')})",
                         },
                     )
@@ -2339,6 +2388,7 @@ def api_generate():
                     "cost": img.get("cost", 0),
                     "image_url": img.get("url", ""),
                     "model": img.get("model", ""),
+                    "ratio": img.get("ratio", aspect),
                     "note": f"{img.get('name', '')} ({img.get('model', '')})",
                 },
             )
@@ -2473,6 +2523,7 @@ def api_composite():
                 "cost": img.get("cost", 0),
                 "image_url": img.get("url", ""),
                 "model": img.get("model", ""),
+                "ratio": img.get("ratio", aspect),
                 "note": img.get("name", ""),
             },
         )
