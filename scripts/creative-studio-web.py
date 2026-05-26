@@ -12,6 +12,7 @@ import time
 import uuid
 import re
 import subprocess
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict
@@ -809,6 +810,48 @@ def rate_limited(f):
         return f(*args, **kwargs)
     return wrapper
 
+# ── Async Job System ──────────────────────────────────────────────────
+_jobs: Dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+
+
+def _job_id() -> str:
+    return "job_" + uuid.uuid4().hex[:12]
+
+
+def _run_job_background(
+    job_id: str,
+    fn,
+    *args,
+    **kwargs,
+):
+    """Run a long-running generation function in a background thread."""
+
+    def _worker():
+        try:
+            result = fn(*args, **kwargs)
+            with _jobs_lock:
+                _jobs[job_id]["status"] = "done"
+                _jobs[job_id]["result"] = result
+                _jobs[job_id]["finished_at"] = time.time()
+        except Exception as e:
+            with _jobs_lock:
+                _jobs[job_id]["status"] = "error"
+                _jobs[job_id]["error"] = str(e)
+                _jobs[job_id]["finished_at"] = time.time()
+
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "status": "running",
+            "started_at": time.time(),
+            "result": None,
+            "error": None,
+            "finished_at": None,
+        }
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+
 # ── Frontend HTML ─────────────────────────────────────────────────────
 
 HTML_TEMPLATE = r"""
@@ -1362,8 +1405,6 @@ $('genBtn').addEventListener('click', async () => {
       const resp = await fetch('/api/composite', { method: 'POST', body: fd });
       data = await resp.json();
     } else {
-      const batch = $('batchToggle').checked;
-      const count = batch ? 4 : 1;
       const body = {
         prompt, mode: 'direct', tier: state.tier,
         aspect_ratio: state.aspect, variations: count
@@ -1375,9 +1416,20 @@ $('genBtn').addEventListener('click', async () => {
       data = await resp.json();
     }
 
-    if (data.error || (data.images && data.images[0]?.error)) {
-      showToast(data.error || data.images[0].error || 'Generation failed', 'err');
+    if (data.error) {
+      showToast(data.error, 'err');
       return;
+    }
+
+    // Async batch: server returned a job_id to poll
+    if (data.job_id && data.status === 'running') {
+      showToast('Batch started — polling...', 'ok');
+      const result = await pollJob(data.job_id, count);
+      if (result.error) {
+        showToast(result.error, 'err');
+        return;
+      }
+      data = result;
     }
 
     if (data.images && data.images.length) {
@@ -1396,6 +1448,38 @@ $('genBtn').addEventListener('click', async () => {
     $('genBtn').classList.remove('generating');
   }
 });
+
+async function pollJob(jobId, expectedCount) {
+  const maxWait = 300; // seconds
+  const interval = 4;  // seconds
+  const start = Date.now();
+  let dots = 0;
+  const spinnerLabel = () => {
+    dots = (dots + 1) % 4;
+    return 'Generating' + '.'.repeat(dots) + ` (${Math.round((Date.now()-start)/1000)}s)`;
+  };
+
+  while (true) {
+    const elapsed = (Date.now() - start) / 1000;
+    if (elapsed > maxWait) {
+      return { error: 'Timed out waiting for batch generation' };
+    }
+    // Update button label with elapsed time
+    $('genLabel').textContent = spinnerLabel();
+
+    await new Promise(r => setTimeout(r, interval * 1000));
+    const r = await fetch(`/api/jobs/${jobId}`);
+    const d = await r.json();
+
+    if (d.status === 'done') {
+      return { images: d.images || [], message: d.message || 'Done!', session_id: d.session_id };
+    }
+    if (d.status === 'error') {
+      return { error: d.error || 'Generation failed' };
+    }
+    // still running, loop
+  }
+}
 
 $('clearGallery').addEventListener('click', () => {
   state.gallery = [];
@@ -1444,7 +1528,6 @@ def api_generate():
     mode = data.get("mode", "direct")
     tier = data.get("tier", "balanced")
     aspect = data.get("aspect_ratio", "16:9")
-    # Force smart enhancement on every request — improves output quality regardless of user input
     smart = True
     variations = int(data.get("variations", 1))
     session_id = data.get("session_id", new_session_id())
@@ -1459,7 +1542,35 @@ def api_generate():
             if "error" not in figma_ctx:
                 prompt = enhance_prompt_with_figma(prompt, figma_ctx)
 
-    images = run_cli_generate(prompt, mode, tier, aspect, smart, variations=variations)
+    # Async: if variations > 1, run in background thread
+    if variations > 1:
+        job_id = _job_id()
+
+        def _do_generate():
+            images = run_cli_generate(prompt, mode, tier, aspect, smart, variations=variations)
+            for img in images:
+                if "error" not in img:
+                    add_entry(
+                        session_id,
+                        {
+                            "type": mode,
+                            "prompt": prompt[:100],
+                            "cost": img.get("cost", 0),
+                            "image_url": img.get("url", ""),
+                            "model": img.get("model", ""),
+                            "note": f"{img.get('name', '')} ({img.get('model', '')})",
+                        },
+                    )
+            costs = load_costs()
+            costs["session_count"] = len(list(SESSIONS_DIR.glob("*.json")))
+            save_costs(costs)
+            return {"images": images, "session_id": session_id, "message": f"Generated {len(images)} image(s)"}
+
+        _run_job_background(job_id, _do_generate)
+        return jsonify({"job_id": job_id, "status": "running", "message": "Generation started"})
+
+    # Sync: single image (fast path)
+    images = run_cli_generate(prompt, mode, tier, aspect, smart, variations=1)
     for img in images:
         if "error" not in img:
             add_entry(
@@ -1485,6 +1596,25 @@ def api_generate():
             "session_id": session_id,
         }
     )
+
+
+@app.route("/api/jobs/<job_id>", methods=["GET"])
+@rate_limited
+def api_job_status(job_id):
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    resp = {
+        "job_id": job_id,
+        "status": job["status"],
+        "started_at": job["started_at"],
+    }
+    if job["status"] == "done":
+        resp.update(job["result"])
+    elif job["status"] == "error":
+        resp["error"] = job["error"]
+    return jsonify(resp)
 
 
 @app.route("/api/composite", methods=["POST"])
