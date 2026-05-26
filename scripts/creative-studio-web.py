@@ -934,6 +934,26 @@ body {
   color: var(--primary);
 }
 .preset-chip { font-size: 0.78rem; padding: 6px 12px; }
+.preset-chip.active {
+  border-color: var(--primary);
+  background: var(--primary-glow);
+  color: var(--primary);
+}
+
+/* ── Remove button ── */
+.remove-btn {
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  align-self: flex-start;
+}
+.remove-btn:hover { color: #f87171; border-color: rgba(248,113,113,0.3); }
 
 /* ── Generate Button ── */
 .gen-btn {
@@ -965,6 +985,13 @@ body {
 .gen-btn.generating .spinner { display: block; }
 .gen-btn.generating .label { display: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Mobile */
+@media (max-width: 480px) {
+  .output-grid { grid-template-columns: 1fr; }
+  .output-cell img { height: 180px; }
+  .app { padding: 24px 16px 60px; }
+}
 
 /* ── Output grid ── */
 .output-wrap { display: none; flex-direction: column; gap: 16px; }
@@ -1015,6 +1042,15 @@ body {
   transition: opacity 0.15s, border-color 0.15s;
 }
 .gallery-thumb:hover, .gallery-thumb.active { opacity: 1; border-color: var(--primary); }
+.gallery-thumb { position: relative; }
+.gallery-thumb .del {
+  position: absolute; top: 2px; right: 2px;
+  background: rgba(0,0,0,0.5); color: #fff;
+  width: 20px; height: 20px; border-radius: 50%;
+  font-size: 12px; line-height: 20px; text-align: center;
+  cursor: pointer; opacity: 0; transition: opacity 0.15s;
+}
+.gallery-thumb:hover .del { opacity: 1; }
 .gallery-thumb img { width: 100%; height: 90px; object-fit: cover; display: block; }
 
 /* ── Toast / Cost ── */
@@ -1068,12 +1104,13 @@ body {
       <input type="file" id="fileInput" accept="image/*">
       <div class="icon">&#128247;</div>
       <div class="label">Click or drop your product photo</div>
-      <div class="hint">PNG / JPG / WEBF — helps the AI keep your exact packaging</div>
+      <div class="hint">PNG / JPG / WEBP — helps the AI keep your exact packaging</div>
       <div class="file-name" id="fileName"></div>
     </div>
     <div class="preview-wrap" id="previewWrap">
       <img id="previewImg" alt="Product preview">
     </div>
+    <button class="remove-btn" id="removeBtn" style="display:none;">Remove product</button>
   </div>
 
   <!-- 2. Scene + Presets -->
@@ -1100,6 +1137,8 @@ body {
       <div class="aspect-chip" data-ratio="4:3">4:3</div>
       <div class="aspect-chip" data-ratio="16:9">16:9</div>
       <div class="aspect-chip" data-ratio="9:16">9:16</div>
+      <div class="aspect-chip" data-ratio="2:3">2:3</div>
+      <div class="aspect-chip" data-ratio="4:5">4:5</div>
     </div>
   </div>
 
@@ -1111,6 +1150,14 @@ body {
       <div class="quality-chip" data-tier="balanced" data-cost="0.07">Balanced &middot; $0.07 &middot; 2K</div>
       <div class="quality-chip" data-tier="quality" data-cost="0.20">Quality &middot; $0.20 &middot; 2K</div>
     </div>
+  </div>
+
+  <!-- Batch toggle -->
+  <div class="batch-row" id="batchRow" style="display:flex; gap:10px; align-items:center; justify-content:center; font-size:0.85rem; color:var(--text-secondary);">
+    <label style="cursor:pointer; display:flex; align-items:center; gap:6px;">
+      <input type="checkbox" id="batchToggle" style="accent-color:var(--primary);">
+      Generate 4 variations (slower)
+    </label>
   </div>
 
   <!-- 5. Generate -->
@@ -1151,7 +1198,7 @@ const PRESETS = {
   amazon:    { prompt: 'Clean pure white background, soft shadow underneath, studio lighting, product centered, ecommerce photography, high detail', aspect: '1:1' },
   instagram: { prompt: 'Lifestyle flatlay on textured surface, natural soft window light from left, shallow depth of field, lifestyle product photography', aspect: '1:1' },
   email:     { prompt: 'Product on clean gradient background, dramatic side lighting, hero shot, wide composition', aspect: '16:9' },
-  pinterest: { prompt: 'Product in styled scene with complementary props, warm golden tones, overhead 45 degree angle, editorial style', aspect: '2:3' },
+  pinterest: { prompt: 'Product in styled scene with complementary props, warm golden tones, overhead 45 degree angle, editorial style', aspect: '4:5' },
 };
 
 // ── Chip selectors ──
@@ -1165,7 +1212,15 @@ function initChips(rowId, key, cls) {
   });
 }
 initChips('qualityRow', 'tier', 'quality-chip');
-initChips('aspectRow', 'aspect', 'aspect-chip');
+
+// Aspect chips
+$('aspectRow').addEventListener('click', e => {
+  const chip = e.target.closest('.aspect-chip');
+  if (!chip) return;
+  document.querySelectorAll('#aspectRow .aspect-chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  state.aspect = chip.dataset.ratio;
+});
 
 // ── Presets ──
 $('presetRow').addEventListener('click', e => {
@@ -1194,9 +1249,19 @@ const onFile = file => {
   const url = URL.createObjectURL(file);
   $('previewImg').src = url;
   $('previewWrap').style.display = 'block';
+  $('removeBtn').style.display = 'block';
   updateGenLabel();
 };
 fi.addEventListener('change', e => onFile(e.target.files[0]));
+
+$('removeBtn').addEventListener('click', () => {
+  state.prodImage = null;
+  $('fileName').textContent = '';
+  $('previewWrap').style.display = 'none';
+  $('removeBtn').style.display = 'none';
+  fi.value = '';
+  updateGenLabel();
+});
 dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
 dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
 dz.addEventListener('drop', e => {
@@ -1205,9 +1270,12 @@ dz.addEventListener('drop', e => {
 });
 
 function updateGenLabel() {
-  const label = state.prodImage ? 'Generate Composite' : 'Generate 4 Images';
+  const batch = $('batchToggle').checked;
+  const count = state.prodImage ? 1 : (batch ? 4 : 1);
+  const label = state.prodImage ? 'Generate Composite' : (batch ? 'Generate 4 Images' : 'Generate Image');
   $('genLabel').textContent = label;
 }
+$('batchToggle').addEventListener('change', updateGenLabel);
 
 async function getCostToday() {
   try {
@@ -1228,7 +1296,12 @@ function renderGallery() {
   state.gallery.forEach((img, idx) => {
     const thumb = document.createElement('div');
     thumb.className = 'gallery-thumb';
-    thumb.innerHTML = `<img src="${img.url}" alt="">`;
+    thumb.innerHTML = `<img src="${img.url}" alt=""><div class="del" data-idx="${idx}">×</div>`;
+    thumb.querySelector('.del').addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.gallery.splice(idx, 1);
+      renderGallery();
+    });
     thumb.addEventListener('click', () => loadIntoOutput([img]));
     g.appendChild(thumb);
   });
@@ -1263,8 +1336,11 @@ $('genBtn').addEventListener('click', async () => {
 
   // Cost guardrail
   const limit = parseFloat($('costLimit').value) || 5;
+  if (limit < 0 || isNaN(limit)) { showToast('Invalid cost limit', 'err'); return; }
   const costToday = await getCostToday();
-  const est = state.prodImage ? 0.20 : (0.07 * 4);
+  const batch = $('batchToggle').checked;
+  const count = state.prodImage ? 1 : (batch ? 4 : 1);
+  const est = state.prodImage ? 0.20 : (0.07 * count);
   if (costToday + est > limit) {
     showToast(`Would exceed $${limit.toFixed(2)} cost limit. Raise limit or wait until tomorrow.`, 'err');
     return;
@@ -1286,9 +1362,11 @@ $('genBtn').addEventListener('click', async () => {
       const resp = await fetch('/api/composite', { method: 'POST', body: fd });
       data = await resp.json();
     } else {
+      const batch = $('batchToggle').checked;
+      const count = batch ? 4 : 1;
       const body = {
         prompt, mode: 'direct', tier: state.tier,
-        aspect_ratio: state.aspect, variations: 4
+        aspect_ratio: state.aspect, variations: count
       };
       const resp = await fetch('/api/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
