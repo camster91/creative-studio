@@ -1249,6 +1249,43 @@ body {
 .toast.ok { background: #1a3a2f; color: #4ade80; border: 1px solid rgba(74,222,128,0.2); }
 .toast.err { background: #3a1a1a; color: #f87171; border: 1px solid rgba(248,113,113,0.2); }
 
+/* ── Lightbox ── */
+.lightbox-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(0,0,0,0.92); backdrop-filter: blur(12px);
+  display: none; align-items: center; justify-content: center;
+}
+.lightbox-overlay.active { display: flex; }
+.lightbox-inner {
+  position: relative; max-width: 90vw; max-height: 90vh;
+  display: flex; flex-direction: column; align-items: center; gap: 16px;
+}
+.lightbox-img {
+  max-width: 85vw; max-height: 75vh; object-fit: contain;
+  border-radius: var(--radius-sm); border: 1px solid var(--border);
+}
+.lightbox-meta {
+  display: flex; gap: 8px; align-items: center;
+}
+.lightbox-close {
+  position: absolute; top: -40px; right: 0;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15);
+  color: #fff; font-size: 1.2rem; cursor: pointer; display: flex;
+  align-items: center; justify-content: center; transition: background 0.15s;
+}
+.lightbox-close:hover { background: rgba(255,255,255,0.2); }
+.lightbox-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px; border-radius: 50%;
+  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15);
+  color: #fff; font-size: 1.2rem; cursor: pointer; display: flex;
+  align-items: center; justify-content: center;
+}
+.lightbox-nav:hover { background: rgba(255,255,255,0.2); }
+.lightbox-nav.prev { left: -60px; }
+.lightbox-nav.next { right: -60px; }
+
 /* ── Animations ── */
 @keyframes fadeIn { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform: translateY(0); } }
 .fade-in { animation: fadeIn 0.35s ease forwards; }
@@ -1819,7 +1856,7 @@ body {
 
 <script>
 const $ = id = document.getElementById(id);
-let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [], selected: new Set() };
+let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [], selected: new Set(), lastClicked: null, outputImages: [] };
 
 // ── API Key (BYOK) ──
 const API_KEY_STORAGE = 'cs_api_key';
@@ -2100,6 +2137,7 @@ function loadIntoOutput(images) {
   grid.style.display = 'grid';
   grid.className = 'output-grid' + (images.length === 1 ? ' single' : '');
   $('emptyState').style.display = 'none';
+  state.outputImages = images.slice();
 
   images.forEach((img, i) => {
     const cell = document.createElement('div');
@@ -2117,6 +2155,7 @@ function appendToOutput(images) {
   const grid = $('outputGrid');
   grid.style.display = 'grid';
   $('emptyState').style.display = 'none';
+  images.forEach(img => state.outputImages.push(img));
 
   images.forEach((img, i) => {
     const cell = document.createElement('div');
@@ -2286,9 +2325,81 @@ function showToast(msg, type) {
   const t = $('toast');
   t.textContent = msg;
   t.className = 'toast ' + type;
-  requestAnimationFrame(() =\u003e t.classList.add('show'));
-  setTimeout(() =\u003e t.classList.remove('show'), 3000);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => t.classList.remove('show'), 3000);
 }
+
+// ── Lightbox ──
+const lightbox = {
+  overlay: null, img: null, meta: null, list: [], idx: 0,
+  init() {
+    this.overlay = document.createElement('div');
+    this.overlay.className = 'lightbox-overlay';
+    this.overlay.innerHTML = (
+      '<div class="lightbox-inner">' +
+        '<button class="lightbox-close">×</button>' +
+        '<img class="lightbox-img" src="" alt="">' +
+        '<div class="lightbox-meta"></div>' +
+        '<button class="lightbox-nav prev">‹</button>' +
+        '<button class="lightbox-nav next">›</button>' +
+      '</div>'
+    );
+    document.body.appendChild(this.overlay);
+    this.img = this.overlay.querySelector('.lightbox-img');
+    this.meta = this.overlay.querySelector('.lightbox-meta');
+    this.overlay.querySelector('.lightbox-close').addEventListener('click', () => this.close());
+    this.overlay.querySelector('.lightbox-nav.prev').addEventListener('click', (e) => { e.stopPropagation(); this.prev(); });
+    this.overlay.querySelector('.lightbox-nav.next').addEventListener('click', (e) => { e.stopPropagation(); this.next(); });
+    this.overlay.addEventListener('click', (e) => { if (e.target === this.overlay) this.close(); });
+    document.addEventListener('keydown', (e) => {
+      if (!this.overlay.classList.contains('active')) return;
+      if (e.key === 'Escape') this.close();
+      if (e.key === 'ArrowLeft') this.prev();
+      if (e.key === 'ArrowRight') this.next();
+    });
+  },
+  open(imgList, startIdx) {
+    this.list = imgList;
+    this.idx = startIdx || 0;
+    this.render();
+    this.overlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  },
+  close() {
+    this.overlay.classList.remove('active');
+    document.body.style.overflow = '';
+  },
+  render() {
+    const img = this.list[this.idx];
+    if (!img) return;
+    this.img.src = img.url;
+    const ratio = img.ratio || '';
+    const cost = img.cost ? '$' + img.cost.toFixed(2) : '';
+    const model = img.model ? img.model.replace('gemini-3.1-flash-image-preview', 'Flash').replace('gemini-3-pro-image-preview', 'Pro') : '';
+    this.meta.innerHTML = (
+      (ratio ? '<span class="pill ratio">' + ratio + '</span>' : '') +
+      (cost ? '<span class="pill cost">' + cost + '</span>' : '') +
+      (model ? '<span class="pill model">' + model + '</span>' : '') +
+      '<a href="' + img.url + '" download="' + img.name + '" style="margin-left:8px;padding:4px 10px;border-radius:var(--radius-xs);background:rgba(255,255,255,0.1);color:#fff;font-size:0.72rem;text-decoration:none;">Download</a>'
+    );
+  },
+  prev() { if (this.idx > 0) { this.idx--; this.render(); } },
+  next() { if (this.idx < this.list.length - 1) { this.idx++; this.render(); } }
+};
+lightbox.init();
+
+// Wire lightbox clicks on output grid + gallery
+function wireLightbox(container, getImgList) {
+  container.addEventListener('click', (e) => {
+    const img = e.target.closest('img');
+    if (!img) return;
+    const list = getImgList();
+    const idx = list.findIndex(i => i.url === img.src);
+    if (idx !== -1) lightbox.open(list, idx);
+  });
+}
+wireLightbox($('outputGrid'), () => state.outputImages);
+wireLightbox($('gallery'), () => state.gallery);
 </script>
 </body>
 </html>
