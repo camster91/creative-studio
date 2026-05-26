@@ -28,7 +28,10 @@ if not API_KEY:
     raise RuntimeError("GEMINI_API_KEY environment variable is required")
 
 # Session / cost / output dirs
-DATA_DIR = Path.home() / ".creative-studio-data"
+if os.environ.get("CREATIVE_DATA_DIR"):
+    DATA_DIR = Path(os.environ["CREATIVE_DATA_DIR"])
+else:
+    DATA_DIR = Path.home() / ".creative-studio-data"
 SESSIONS_DIR = DATA_DIR / "sessions"
 COST_DB = DATA_DIR / "costs.json"
 

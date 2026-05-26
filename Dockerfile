@@ -37,9 +37,11 @@ USER appuser
 ENV PYTHONUNBUFFERED=1
 ENV FLASK_APP=scripts.creative-studio-web
 ENV PORT=5173
+ENV CREATIVE_OUTPUT_DIR=/app/outputs
+ENV CREATIVE_DATA_DIR=/app/data
 
-# The volume for persistent outputs
-VOLUME ["/app/outputs"]
+# The volume for persistent outputs + data
+VOLUME ["/app/outputs", "/app/data"]
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
