@@ -1212,6 +1212,164 @@ body {
   .output-grid { grid-template-columns: 1fr; }
   .output-cell { aspect-ratio: 1 / 1; }
 }
+
+
+/* ── Landing Sections ── */
+.landing {
+  border-top: 1px solid var(--border);
+  padding-top: 80px;
+}
+
+/* Hero */
+.hero-section {
+  padding: 60px 24px;
+  text-align: center;
+}
+.hero-inner { max-width: 720px; margin: 0 auto; }
+.hero-section h1 {
+  font-size: 2.6rem; font-weight: 700; letter-spacing: -0.02em;
+  line-height: 1.15; margin-bottom: 18px;
+}
+.hero-section h1 span { color: var(--accent); }
+.hero-section p {
+  font-size: 1.05rem; color: var(--text-secondary); line-height: 1.6;
+  max-width: 560px; margin: 0 auto 28px;
+}
+.hero-cta {
+  display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;
+  margin-bottom: 48px;
+}
+.hero-btn {
+  padding: 14px 28px; border-radius: var(--radius-sm);
+  background: var(--accent); color: #fff; border: none;
+  font-family: var(--font); font-size: 0.95rem; font-weight: 600;
+  cursor: pointer; transition: all 0.2s; text-decoration: none; display: inline-block;
+}
+.hero-btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
+.hero-note { font-size: 0.82rem; color: var(--text-dim); }
+.hero-stats {
+  display: flex; justify-content: center; gap: 40px; flex-wrap: wrap;
+}
+.stat { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.stat-num { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
+.stat-lbl { font-size: 0.78rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* Trust bar */
+.trust-bar { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 28px 24px; }
+.trust-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; justify-content: center; gap: 28px; flex-wrap: wrap; }
+.trust-label { font-size: 0.78rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.trust-logos { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+.trust-logo {
+  padding: 8px 18px; border-radius: var(--radius-xs);
+  border: 1px solid var(--border); background: var(--bg-elevated);
+  font-size: 0.82rem; font-weight: 500; color: var(--text-secondary);
+}
+
+/* Features grid */
+.features-grid {
+  max-width: 1100px; margin: 0 auto;
+  padding: 64px 24px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
+}
+@media (max-width: 960px) { .features-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 600px) { .features-grid { grid-template-columns: 1fr; } }
+.feature-card {
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 28px;
+  display: flex; flex-direction: column; gap: 12px;
+  transition: border-color 0.2s;
+}
+.feature-card:hover { border-color: var(--border-strong); }
+.feature-icon { font-size: 1.6rem; margin-bottom: 4px; }
+.feature-card h3 { font-size: 0.95rem; font-weight: 600; }
+.feature-card p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; }
+
+/* How it works */
+.how-section { padding: 64px 24px; border-top: 1px solid var(--border); }
+.how-inner { max-width: 960px; margin: 0 auto; }
+.how-inner h2 { text-align: center; font-size: 1.6rem; font-weight: 700; margin-bottom: 40px; }
+.steps-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+@media (max-width: 720px) { .steps-row { grid-template-columns: 1fr; } }
+.step { display: flex; flex-direction: column; gap: 10px; }
+.step-num {
+  font-size: 2.2rem; font-weight: 700; color: var(--accent); opacity: 0.35;
+  line-height: 1;
+}
+.step h4 { font-size: 0.95rem; font-weight: 600; margin-top: 4px; }
+.step p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; }
+
+/* Pricing */
+.pricing-section { padding: 64px 24px; border-top: 1px solid var(--border); }
+.pricing-inner { max-width: 900px; margin: 0 auto; text-align: center; }
+.pricing-inner h2 { font-size: 1.6rem; font-weight: 700; margin-bottom: 8px; }
+.pricing-sub { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 40px; }
+.tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 720px) { .tiers { grid-template-columns: 1fr; max-width: 380px; margin: 0 auto; } }
+.tier {
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 28px; text-align: left;
+  position: relative;
+}
+.tier-popular { border-color: rgba(255,107,53,0.35); background: var(--accent-glow); }
+.tier-badge {
+  position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+  background: var(--accent); color: #fff; font-size: 0.7rem; font-weight: 600;
+  padding: 4px 12px; border-radius: 100px; letter-spacing: 0.02em;
+}
+.tier-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-secondary); font-weight: 600; margin-bottom: 8px;
+}
+.tier-price { font-size: 2.2rem; font-weight: 700; }
+.tier-unit { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 20px; }
+.tier-features { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.tier-features li {
+  font-size: 0.85rem; color: var(--text-secondary); padding-left: 18px;
+  position: relative;
+}
+.tier-features li::before {
+  content: ''; position: absolute; left: 0; top: 8px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--accent); opacity: 0.6;
+}
+
+/* FAQ */
+.faq-section { padding: 64px 24px; border-top: 1px solid var(--border); }
+.faq-inner { max-width: 680px; margin: 0 auto; }
+.faq-inner h2 { font-size: 1.6rem; font-weight: 700; margin-bottom: 28px; text-align: center; }
+.faq-item { border-bottom: 1px solid var(--border); }
+.faq-item summary {
+  padding: 18px 0; font-size: 0.95rem; font-weight: 500; cursor: pointer;
+  list-style: none; display: flex; justify-content: space-between; align-items: center;
+}
+.faq-item summary::after { content: '+'; font-size: 1.2rem; color: var(--text-dim); }
+.faq-item[open] summary::after { content: '−'; }
+.faq-item p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; padding-bottom: 18px; }
+
+/* CTA Banner */
+.cta-banner { padding: 64px 24px; text-align: center; border-top: 1px solid var(--border); }
+.cta-inner { max-width: 560px; margin: 0 auto; }
+.cta-banner h2 { font-size: 1.5rem; font-weight: 700; margin-bottom: 10px; }
+.cta-banner p { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 24px; }
+
+/* Footer */
+.landing-footer { border-top: 1px solid var(--border); padding: 32px 24px; }
+.footer-inner {
+  max-width: 1100px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;
+}
+.footer-brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 0.9rem; }
+.footer-mark {
+  width: 24px; height: 24px; background: var(--accent); border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: #fff; font-weight: 700;
+}
+.footer-links { display: flex; gap: 20px; }
+.footer-links a { font-size: 0.82rem; color: var(--text-secondary); text-decoration: none; transition: color 0.15s; }
+.footer-links a:hover { color: var(--text); }
+.footer-copy { font-size: 0.78rem; color: var(--text-dim); }
+@media (max-width: 600px) {
+  .footer-inner { flex-direction: column; text-align: center; }
+  .hero-section h1 { font-size: 1.9rem; }
+}
 </style>
 </head>
 <body>
@@ -1235,7 +1393,7 @@ body {
   </div>
 </header>
 
-<main class="main">
+<main class="main" id="editor">
 
   <!-- Sidebar Controls -->
   <aside class="sidebar">
@@ -1340,6 +1498,201 @@ body {
   </section>
 
 </main>
+
+<!-- ═══════ LANDING / COMMERCIAL CONTENT ═══════ -->
+<section class="landing" id="landing">
+
+  <!-- Hero pitch (shown when not logged in) -->
+  <div class="hero-section" id="heroSection">
+    <div class="hero-inner">
+      <h1>AI product photography for <span>DTC brands</span> that ship</h1>
+      <p>Upload your product. Describe the scene. Get studio-grade shots in seconds. No photographer, no studio, no retouching.</p>
+      <div class="hero-cta">
+        <button class="hero-btn" onclick="document.getElementById('editor').scrollIntoView({behavior:'smooth'})">Try free →</button>
+        <span class="hero-note">$0.07 per image. No credit card required.</span>
+      </div>
+      <div class="hero-stats">
+        <div class="stat"><span class="stat-num">30s</span><span class="stat-lbl">per shot</span></div>
+        <div class="stat"><span class="stat-num">$0.07</span><span class="stat-lbl">starting cost</span></div>
+        <div class="stat"><span class="stat-num">6</span><span class="stat-lbl">aspect ratios</span></div>
+        <div class="stat"><span class="stat-num">4</span><span class="stat-lbl">platform presets</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trusted by (logos) -->
+  <div class="trust-bar">
+    <div class="trust-inner">
+      <span class="trust-label">Built for teams that need volume, speed, and consistency:</span>
+      <div class="trust-logos">
+        <div class="trust-logo">CPG Brand</div>
+        <div class="trust-logo">Shopify Store</div>
+        <div class="trust-logo">Design Agency</div>
+        <div class="trust-logo">Amazon Seller</div>
+        <div class="trust-logo">Pinterest Shop</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Features Grid -->
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="feature-icon">📸</div>
+      <h3>Product Compositing</h3>
+      <p>Upload your real product photo. The AI places it into any scene you describe — white background, lifestyle flatlay, or hero banner.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🎨</div>
+      <h3>Platform Presets</h3>
+      <p>One click sets the optimal prompt + aspect ratio for Amazon, Instagram, Pinterest, or email banners.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">⚡</div>
+      <h3>Batch 4-Up</h3>
+      <p>Generate 4 variations at once. Async polling means you can leave the tab and come back when your grid is ready.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">💰</div>
+      <h3>Pay-Per-Image</h3>
+      <p>No subscription. No minimums. Fast tier at $0.07, Quality at $0.20. Cost guardrail keeps your team on budget.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔒</div>
+      <h3>Private Generation</h3>
+      <p>Everything runs on your own Coolify instance. Your products, prompts, and outputs never touch a third-party AI gallery.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📱</div>
+      <h3>6 Aspect Ratios</h3>
+      <p>1:1 for feeds, 16:9 for banners, 9:16 for Stories, 4:5 for Pinterest, 4:3 for catalog, 2:3 for editorial.</p>
+    </div>
+  </div>
+
+  <!-- How it works -->
+  <div class="how-section">
+    <div class="how-inner">
+      <h2>How it works</h2>
+      <div class="steps-row">
+        <div class="step">
+          <div class="step-num">01</div>
+          <h4>Upload product</h4>
+          <p>Drag your product photo into the dropzone. PNG, JPG, or WEBP. The AI keeps your exact packaging.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">02</div>
+          <h4>Describe the scene</h4>
+          <p>Type what you want — or click a preset. "Clean white background, soft shadow, studio lighting."</p>
+        </div>
+        <div class="step">
+          <div class="step-num">03</div>
+          <h4>Download &amp; ship</h4>
+          <p>Single image in ~30s. Batch 4-up in ~2 min. Download PNGs and drop them straight into your storefront.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pricing -->
+  <div class="pricing-section" id="pricing">
+    <div class="pricing-inner">
+      <h2>Simple pricing</h2>
+      <p class="pricing-sub">No subscriptions. No minimums. Pay only for what you generate.</p>
+      <div class="tiers">
+        <div class="tier">
+          <div class="tier-label">Fast</div>
+          <div class="tier-price">$0.07</div>
+          <div class="tier-unit">per image</div>
+          <ul class="tier-features">
+            <li>Draft quality — great for mocks &amp; variants</li>
+            <li>1K resolution</li>
+            <li>~30 seconds</li>
+            <li>All 6 aspect ratios</li>
+          </ul>
+        </div>
+        <div class="tier tier-popular">
+          <div class="tier-badge">Most popular</div>
+          <div class="tier-label">Balanced</div>
+          <div class="tier-price">$0.07</div>
+          <div class="tier-unit">per image</div>
+          <ul class="tier-features">
+            <li>2K output with better lighting</li>
+            <li>Same cost as Fast</li>
+            <li>~30 seconds</li>
+            <li>Recommended for most shots</li>
+          </ul>
+        </div>
+        <div class="tier">
+          <div class="tier-label">Quality</div>
+          <div class="tier-price">$0.20</div>
+          <div class="tier-unit">per image</div>
+          <ul class="tier-features">
+            <li>Pro-grade detail &amp; depth</li>
+            <li>2K resolution</li>
+            <li>Best for hero shots</li>
+            <li>Product compositing</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FAQ -->
+  <div class="faq-section" id="faq">
+    <div class="faq-inner">
+      <h2>FAQ</h2>
+      <div class="faq-list">
+        <details class="faq-item">
+          <summary>What makes this different from Midjourney or DALL-E?</summary>
+          <p>Creative Studio is built for product photography workflows. It composites your real product into AI-generated scenes, maintains packaging accuracy, and outputs in exact platform aspect ratios. No prompt engineering required — presets handle the setup.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Who is this for?</summary>
+          <p>DTC founders, CPG brands with monthly content calendars, Shopify operators, Amazon sellers needing white-background shots, and design agencies that need volume fast. Anyone who needs photos but doesn't have $500/day for a studio.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Can I use this for client work?</summary>
+          <p>Yes. Every output is yours to use commercially. Brand it, sell it, bundle it into client deliverables. The tool is self-hosted so your client's IP stays private.</p>
+        </details>
+        <details class="faq-item">
+          <summary>What happens to my product photos?</summary>
+          <p>They stay on your own server. We don't train on them, sell them, or use them for model improvement. You control the instance, the outputs, and the data.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Do you store credit card info?</summary>
+          <p>No credit card required. You bring your own Gemini API key and pay Google directly. We only track per-image cost to help you budget.</p>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <!-- CTA Banner -->
+  <div class="cta-banner">
+    <div class="cta-inner">
+      <h2>Ready to replace your product photographer?</h2>
+      <p>Start generating in the editor above. First image is free when you bring your own API key.</p>
+      <button class="hero-btn" onclick="document.getElementById('editor').scrollIntoView({behavior:'smooth'})">Open Studio →</button>
+    </div>
+  </div>
+
+</section>
+
+<!-- ═══════ FOOTER ═══════ -->
+<footer class="landing-footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <div class="footer-mark">CS</div>
+      <span>Creative Studio</span>
+    </div>
+    <div class="footer-links">
+      <a href="/status">Status</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+      <a href="mailto:hello@ashbi.ca">Contact</a>
+    </div>
+    <div class="footer-copy">Built by Ashbi Design. Self-hosted on your own infrastructure.</div>
+  </div>
+</footer>
+
 
 <div class="toast" id="toast"></div>
 
