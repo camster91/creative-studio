@@ -28,10 +28,7 @@ RUN chown -R appuser:appuser /app
 RUN uv pip install gunicorn
 
 # Create writable directories for output
-RUN mkdir -p /app/data/sessions /app/outputs /app/data/uploads && chown -R appuser:appuser /app/data /app/outputs
-
-# Switch to app user
-USER appuser
+RUN mkdir -p /app/data/sessions /app/outputs /app/data/uploads
 
 # Environment
 ENV PYTHONUNBUFFERED=1
