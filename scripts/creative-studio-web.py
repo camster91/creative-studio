@@ -1506,6 +1506,34 @@ body {
 }
 .apikey-status.ok { color: var(--success); display: block; }
 .apikey-status.err { color: var(--danger); display: block; }
+
+/* ── Prompt History ── */
+.prompt-history {
+  max-height: 200px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.prompt-history-item {
+  padding: 8px 10px; border-radius: var(--radius-xs);
+  background: var(--bg-hover); border: 1px solid var(--border);
+  font-size: 0.82rem; color: var(--text-secondary);
+  cursor: pointer; transition: all 0.15s;
+  display: flex; align-items: center; gap: 8px;
+  line-height: 1.3;
+}
+.prompt-history-item:hover {
+  border-color: var(--accent); color: var(--text);
+  background: rgba(255,107,53,0.05);
+}
+.prompt-history-item .prompt-text {
+  flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.prompt-history-item .prompt-meta {
+  font-size: 0.68rem; color: var(--text-dim); white-space: nowrap;
+}
+.prompt-history-empty {
+  font-size: 0.78rem; color: var(--text-dim); padding: 8px 0;
+}
+
 </style>
 </head>
 <body>
@@ -1578,6 +1606,12 @@ body {
         </div>
         <div class="hint">Be specific about setting, lighting, and mood.</div>
       </div>
+    </div>
+
+    <!-- Prompt History -->
+    <div class="panel" id="promptHistoryPanel" style="display:none;">
+      <div class="panel-header"><span class="num" style="background:var(--accent);color:#fff;">↺</span> Prompt History</div>
+      <div class="prompt-history" id="promptHistory"></div>
     </div>
 
     <!-- 3. Aspect Ratio -->
@@ -1856,7 +1890,7 @@ body {
 
 <script>
 const $ = id = document.getElementById(id);
-let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [], selected: new Set(), lastClicked: null, outputImages: [] };
+let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [], selected: new Set(), lastClicked: null, outputImages: [], lastPrompt: '' };
 
 // ── API Key (BYOK) ──
 const API_KEY_STORAGE = 'cs_api_key';
@@ -2114,20 +2148,29 @@ async function loadServerGallery() {
 }
 loadServerGallery();
 
-// Delegate click for Save-to-gallery on output cells
+// Delegate click for Save-to-gallery + Copy-prompt on output cells
 $('outputGrid').addEventListener('click', (e) => {
   const btn = e.target.closest('.add-to-gallery');
-  if (!btn) return;
-  const url = btn.dataset.url;
-  const name = btn.dataset.name;
-  const cost = parseFloat(btn.dataset.cost) || 0;
-  const model = btn.dataset.model || '';
-  if (!state.gallery.find(g => g.url === url)) {
-    state.gallery.push({ url, name, cost, model, ratio: state.aspect });
-    renderGallery();
-    showToast('Saved to gallery', 'ok');
-  } else {
-    showToast('Already in gallery', 'err');
+  if (btn) {
+    const url = btn.dataset.url;
+    const name = btn.dataset.name;
+    const cost = parseFloat(btn.dataset.cost) || 0;
+    const model = btn.dataset.model || '';
+    if (!state.gallery.find(g => g.url === url)) {
+      state.gallery.push({ url, name, cost, model, ratio: state.aspect });
+      renderGallery();
+      showToast('Saved to gallery', 'ok');
+    } else {
+      showToast('Already in gallery', 'err');
+    }
+    return;
+  }
+  const copyBtn = e.target.closest('.copy-prompt');
+  if (copyBtn) {
+    const prompt = decodeURIComponent(copyBtn.dataset.prompt || '');
+    if (prompt) {
+      navigator.clipboard.writeText(prompt).then(() => showToast('Prompt copied', 'ok')).catch(() => showToast('Copy failed', 'err'));
+    }
   }
 });
 
@@ -2174,8 +2217,9 @@ function buildCellHTML(img) {
   const ratio = img.ratio || '';
   const cost = img.cost ? '$' + img.cost.toFixed(2) : '';
   const model = img.model ? img.model.replace('gemini-3.1-flash-image-preview', 'Flash').replace('gemini-3-pro-image-preview', 'Pro') : '';
+  const prompt = img.prompt || state.lastPrompt || '';
   return (
-    '<img src="' + img.url + '" alt="">' +
+    '<img src="' + img.url + '" alt="" data-prompt="' + encodeURIComponent(prompt) + '">' +
     '<div class="cell-bar">' +
       '<div class="left">' +
         (ratio ? '<span class="pill ratio">' + ratio + '</span>' : '') +
@@ -2183,6 +2227,7 @@ function buildCellHTML(img) {
         (model ? '<span class="pill model">' + model + '</span>' : '') +
       '</div>' +
       '<div class="right">' +
+        '<span class="copy-prompt" data-prompt="' + encodeURIComponent(prompt) + '" title="Copy prompt">📋</span>' +
         '<a href="' + img.url + '" download="' + img.name + '">Download</a>' +
         '<span class="add-to-gallery" data-url="' + img.url + '" data-name="' + img.name + '" data-cost="' + (img.cost||0) + '" data-model="' + (img.model||'') + '">Save</span>' +
       '</div>' +
@@ -2195,6 +2240,7 @@ $('genBtn').addEventListener('click', async () =\u003e {
   const prompt = $('prompt').value.trim();
   if (!prompt) { showToast('Enter a scene description', 'err'); return; }
   if (state.generating) return;
+  state.lastPrompt = prompt;
 
   const limit = parseFloat($('costLimit').value) || 5;
   if (limit < 0 || isNaN(limit)) { showToast('Invalid cost limit', 'err'); return; }
@@ -2350,7 +2396,16 @@ const lightbox = {
     this.overlay.querySelector('.lightbox-close').addEventListener('click', () => this.close());
     this.overlay.querySelector('.lightbox-nav.prev').addEventListener('click', (e) => { e.stopPropagation(); this.prev(); });
     this.overlay.querySelector('.lightbox-nav.next').addEventListener('click', (e) => { e.stopPropagation(); this.next(); });
-    this.overlay.addEventListener('click', (e) => { if (e.target === this.overlay) this.close(); });
+    this.overlay.addEventListener('click', (e) => {
+      if (e.target === this.overlay) this.close();
+      const copyBtn = e.target.closest('.copy-lightbox');
+      if (copyBtn) {
+        const prompt = decodeURIComponent(copyBtn.dataset.prompt || '');
+        if (prompt) {
+          navigator.clipboard.writeText(prompt).then(() => showToast('Prompt copied', 'ok')).catch(() => showToast('Copy failed', 'err'));
+        }
+      }
+    });
     document.addEventListener('keydown', (e) => {
       if (!this.overlay.classList.contains('active')) return;
       if (e.key === 'Escape') this.close();
@@ -2376,10 +2431,12 @@ const lightbox = {
     const ratio = img.ratio || '';
     const cost = img.cost ? '$' + img.cost.toFixed(2) : '';
     const model = img.model ? img.model.replace('gemini-3.1-flash-image-preview', 'Flash').replace('gemini-3-pro-image-preview', 'Pro') : '';
+    const prompt = img.prompt || state.lastPrompt || '';
     this.meta.innerHTML = (
       (ratio ? '<span class="pill ratio">' + ratio + '</span>' : '') +
       (cost ? '<span class="pill cost">' + cost + '</span>' : '') +
       (model ? '<span class="pill model">' + model + '</span>' : '') +
+      (prompt ? '<span class="copy-lightbox" data-prompt="' + encodeURIComponent(prompt) + '" style="cursor:pointer;margin-left:6px;padding:4px 10px;border-radius:var(--radius-xs);background:rgba(255,255,255,0.08);color:#fff;font-size:0.72rem;"">📋 Copy prompt</span>' : '') +
       '<a href="' + img.url + '" download="' + img.name + '" style="margin-left:8px;padding:4px 10px;border-radius:var(--radius-xs);background:rgba(255,255,255,0.1);color:#fff;font-size:0.72rem;text-decoration:none;">Download</a>'
     );
   },
@@ -2400,6 +2457,49 @@ function wireLightbox(container, getImgList) {
 }
 wireLightbox($('outputGrid'), () => state.outputImages);
 wireLightbox($('gallery'), () => state.gallery);
+
+// ── Keyboard shortcuts ──
+$('prompt').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    $('genBtn').click();
+  }
+});
+
+// ── Prompt history from server sessions ──
+async function loadPromptHistory() {
+  try {
+    const r = await fetch('/api/sessions');
+    const d = await r.json();
+    const prompts = [];
+    const seen = new Set();
+    (d.sessions || []).forEach(s => {
+      (s.entries || []).forEach(e => {
+        const p = e.prompt || '';
+        if (p && !seen.has(p)) { seen.add(p); prompts.push({ text: p, date: s.created_at || '' }); }
+      });
+    });
+    const container = $('promptHistory');
+    if (prompts.length) {
+      $('promptHistoryPanel').style.display = 'block';
+      container.innerHTML = prompts.slice(0, 10).map(p =>
+        '<div class="prompt-history-item" data-prompt="' + encodeURIComponent(p.text) + '">' +
+          '<span class="prompt-text">' + p.text + '</span>' +
+          '<span class="prompt-meta">' + (p.date ? p.date.split('T')[0] : '') + '</span>' +
+        '</div>'
+      ).join('');
+      container.querySelectorAll('.prompt-history-item').forEach(el => {
+        el.addEventListener('click', () => {
+          $('prompt').value = decodeURIComponent(el.dataset.prompt);
+          $('prompt').focus();
+        });
+      });
+    } else {
+      $('promptHistoryPanel').style.display = 'none';
+    }
+  } catch (e) { console.log('prompt history load failed', e); }
+}
+loadPromptHistory();
 </script>
 </body>
 </html>
