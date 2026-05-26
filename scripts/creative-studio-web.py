@@ -1156,6 +1156,23 @@ body {
 }
 .output-cell .cell-bar .right a:hover, .output-cell .cell-bar .right span:hover { background: rgba(255,255,255,0.2); }
 
+/* ── Skeleton placeholder ── */
+.skeleton-cell {
+  border-radius: var(--radius-sm); overflow: hidden;
+  border: 1px solid var(--border); background: var(--bg);
+  position: relative; aspect-ratio: 1 / 1;
+}
+.skeleton-cell::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.04), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* ── Empty state ── */
 .empty-state {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -2258,6 +2275,18 @@ $('genBtn').addEventListener('click', async () =\u003e {
   $('genBtn').classList.add('generating');
   $('outputMeta').textContent = '';
 
+  // Show skeleton placeholders
+  const grid = $('outputGrid');
+  grid.innerHTML = '';
+  grid.style.display = 'grid';
+  grid.className = 'output-grid' + (count === 1 ? ' single' : '');
+  $('emptyState').style.display = 'none';
+  for (let i = 0; i < count; i++) {
+    const sk = document.createElement('div');
+    sk.className = 'skeleton-cell';
+    grid.appendChild(sk);
+  }
+
   try {
     let data;
     if (state.prodImage) {
@@ -2298,8 +2327,21 @@ $('genBtn').addEventListener('click', async () =\u003e {
       if (!streamed) {
         loadIntoOutput(data.images);
         addToGallery(data.images);
+      } else if (data.partial) {
+        const grid3 = $('outputGrid');
+        const retry = document.createElement('div');
+        retry.className = 'output-cell';
+        retry.style.display = 'flex'; retry.style.alignItems = 'center'; retry.style.justifyContent = 'center';
+        retry.style.flexDirection = 'column'; retry.style.gap = '8px'; retry.style.color = 'var(--text-dim)';
+        retry.innerHTML = '<div style="font-size:0.85rem;font-weight:600;">' + data.got + '/' + data.expected + ' generated</div><button id="retryBtn" style="padding:6px 14px;border-radius:var(--radius-xs);border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:var(--font);font-size:0.78rem;cursor:pointer;">Retry missing</button>';
+        grid3.appendChild(retry);
+        $('retryBtn').addEventListener('click', () => {
+          $('genBtn').click();
+        });
+        showToast(data.message, 'ok');
+      } else {
+        showToast(data.message || 'Done!', 'ok');
       }
-      showToast(data.message || 'Done!', 'ok');
       refreshCost();
     } else {
       showToast('No images returned', 'err');
@@ -2336,7 +2378,12 @@ async function pollJob(jobId, expectedCount) {
     if (d.partial && d.partial.images && d.partial.images.length > streamedCount) {
       const newImages = d.partial.images.slice(streamedCount);
       streamedCount = d.partial.images.length;
-      // Append new images to output grid without clearing existing
+      // Remove skeleton placeholders, then append real images
+      const grid2 = $('outputGrid');
+      const skeletons = grid2.querySelectorAll('.skeleton-cell');
+      skeletons.forEach((sk, idx) => {
+        if (idx < streamedCount) sk.remove();
+      });
       appendToOutput(newImages);
       addToGallery(newImages);
       $('genLabel').textContent = 'Generating ' + streamedCount + '/' + expectedCount + '...';
@@ -2344,6 +2391,11 @@ async function pollJob(jobId, expectedCount) {
 
     if (d.status === 'done') {
       $('genLabel').textContent = state.prodImage ? 'Generate Composite' : (expectedCount > 1 ? 'Generate 4 Images' : 'Generate Image');
+      $('outputGrid').querySelectorAll('.skeleton-cell').forEach(sk => sk.remove());
+      const got = d.images ? d.images.length : 0;
+      if (got < expectedCount) {
+        return { images: d.images || [], partial: true, expected: expectedCount, got, message: d.message || 'Partial: ' + got + '/' + expectedCount, session_id: d.session_id };
+      }
       return { images: d.images || [], message: d.message || 'Done!', session_id: d.session_id };
     }
     if (d.status === 'error') {
