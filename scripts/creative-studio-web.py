@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Optional, List, Dict
 from functools import wraps
 
-from flask import Flask, render_template_string, request, jsonify, send_from_directory
+from flask import Flask, render_template_string, request, jsonify, send_from_directory, send_file
 
 from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
 
@@ -2434,7 +2434,6 @@ def api_export_zip():
             except Exception as e:
                 zf.writestr(f"image-{i+1}-error.txt", str(e))
     buf.seek(0)
-    from flask import send_file
     return send_file(
         buf,
         mimetype="application/zip",
