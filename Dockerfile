@@ -48,4 +48,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
 EXPOSE 5173
 
 # Run via gunicorn (production WSGI server)
-CMD ["uv", "run", "gunicorn", "-w", "2", "-b", "0.0.0.0:5173", "--access-logfile", "-", "--error-logfile", "-", "scripts.creative-studio-web:app"]
+CMD ["uv", "run", "gunicorn", "-w", "2", "-b", "0.0.0.0:5173", "--timeout", "300", "--access-logfile", "-", "--error-logfile", "-", "scripts.creative-studio-web:app"]
