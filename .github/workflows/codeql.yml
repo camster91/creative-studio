@@ -20,7 +20,32 @@ jobs:
         language: ['javascript-typescript', 'python']
     steps:
       - uses: actions/checkout@v4
+
+      # Setup Python so CodeQL can resolve imports and analyze Python code
+      - name: Setup Python
+        if: matrix.language == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        if: matrix.language == 'python'
+        run: |
+          pip install -r requirements.txt 2>/dev/null || pip install google-genai pillow
+
+      # Setup Node.js for JavaScript/TypeScript analysis
+      - name: Setup Node.js
+        if: matrix.language == 'javascript-typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Node.js dependencies
+        if: matrix.language == 'javascript-typescript'
+        run: npm ci 2>/dev/null || true
+
       - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
+
       - uses: github/codeql-action/analyze@v4

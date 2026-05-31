@@ -153,10 +153,10 @@ auto-fix)
     echo "  Fix: $FIX"
     echo ""
 
-    uv run "$PYTHON_SCRIPT" auto-fix \
-        --prompt "$FIX" \
-        --input-image "$INPUT" \
-        --tier quality
+    uv run "$PYTHON_SCRIPT" refine \
+        --session "$(dirname "$INPUT")" \
+        --pick "$(basename "$INPUT")" \
+        --changes "$FIX"
 
     echo ""
     echo "  Check the output. If not perfect, run another fix:"
@@ -174,10 +174,10 @@ upscale)
     echo "── Upscaling: $(basename "$INPUT") → $res"
 
     uv run "$PYTHON_SCRIPT" direct \
-        --prompt "Upscale this image to 4K, preserve all details exactly, no changes to composition or style" \
+        --prompt "Upscale to $res. Preserve all details exactly. No changes to composition, style, or content." \
         --input-image "$INPUT" \
         --tier ultra \
-        --resolution 4K
+        --resolution "$res"
 
     echo ""
     echo "  Upscaled version saved to outputs folder."
