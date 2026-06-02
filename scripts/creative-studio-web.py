@@ -18,21 +18,57 @@ from datetime import datetime
 from typing import Optional, List, Dict
 from functools import wraps
 
-from flask import Flask, render_template_string, request, jsonify, send_from_directory, send_file
+from flask import Flask, render_template, request, jsonify, send_from_directory, send_file
 
 from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
 
 # ─── Config ────────────────────────────────────────────────────────────
-# Server fallback key (optional). When absent, app runs in BYOK mode.
-SERVER_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+# ── BYOK / server-fallback config ───────────────────────────────────────
+# GEMINI_API_KEY env var sets a server-side fallback key (opt-in).
+# CREATIVE_ALLOW_SERVER_FALLBACK=true is REQUIRED for the fallback to be used.
+# When the fallback is disabled, every generation endpoint requires a user-supplied
+# key via the X-API-Key header. Default OFF for shipped/public deploys.
+SERVER_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+ALLOW_SERVER_FALLBACK = os.environ.get("CREATIVE_ALLOW_SERVER_FALLBACK", "").lower() in ("1", "true", "yes")
 
 
 def _get_api_key() -> str:
-    """Return the active API key: user's X-API-Key header, or server fallback, or empty."""
+    """Return the active API key for this request.
+
+    Order:
+    1. X-API-Key header (per-request BYOK)
+    2. Server fallback (only if CREATIVE_ALLOW_SERVER_FALLBACK=true)
+    3. Empty string (caller should reject with 402)
+    """
     user_key = request.headers.get("X-API-Key", "").strip()
     if user_key:
         return user_key
-    return SERVER_API_KEY
+    if ALLOW_SERVER_FALLBACK and SERVER_API_KEY:
+        return SERVER_API_KEY
+    return ""
+
+
+def _require_api_key() -> tuple:
+    """Return (key, None) if a key is available, else (None, error_response).
+
+    Returns a tuple of (Optional[str], Optional[Response]) so callers can do
+    `api_key, err = _require_api_key(); if err: return err`.
+    """
+    key: Optional[str] = _get_api_key()
+    if not key:
+        return None, (
+            jsonify(
+                {
+                    "error": "BYOK required",
+                    "message": (
+                        "Add your Gemini API key in the editor sidebar. "
+                        "We don't store or train on your key — cost is billed directly to your Google account."
+                    ),
+                }
+            ),
+            402,
+        )
+    return key, None
 
 
 # Session / cost / output dirs
@@ -862,7 +898,10 @@ def chat_reset(session_key: str) -> dict:
 
 
 # ─── Flask App ─────────────────────────────────────────────────────────
-app = Flask(__name__)
+APP_ROOT = Path(__file__).parent.parent
+TEMPLATES_DIR = APP_ROOT / "templates"
+STATIC_DIR = APP_ROOT / "static"
+app = Flask(__name__, template_folder=str(TEMPLATES_DIR), static_folder=str(STATIC_DIR))
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32))
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32MB uploads
 
@@ -926,1809 +965,26 @@ def _run_job_background(
     t.start()
 
 
-# ── Frontend HTML ─────────────────────────────────────────────────────
+# ── Frontend templates & static files ──────────────────────────────────
+# Templates live in ./templates/ (landing.html, app.html)
+# CSS + JS live in ./static/ (served at /static/*)
+LANDING_TEMPLATE = "landing.html"
+APP_TEMPLATE = "app.html"
 
-HTML_TEMPLATE = r"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Creative Studio — AI Product Photography</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-:root {
-  --bg: #0c0c10;
-  --bg-elevated: #141419;
-  --bg-hover: #1a1a22;
-  --surface: #1e1e28;
-  --surface-hover: #262632;
-  --border: rgba(255,255,255,0.06);
-  --border-strong: rgba(255,255,255,0.10);
-  --text: #f2f2f7;
-  --text-secondary: #a1a1aa;
-  --text-dim: #71717a;
-  --accent: #ff6b35;
-  --accent-hover: #ff7f4d;
-  --accent-glow: rgba(255,107,53,0.12);
-  --accent-glow-strong: rgba(255,107,53,0.20);
-  --success: #22c55e;
-  --danger: #ef4444;
-  --radius: 14px;
-  --radius-sm: 8px;
-  --radius-xs: 6px;
-  --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 0 0 1px var(--border);
-  --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-}
-
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; }
-body {
-  font-family: var(--font);
-  background: var(--bg);
-  color: var(--text);
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-  min-height: 100vh;
-}
-
-/* ── Header ── */
-.header {
-  position: sticky; top: 0; z-index: 50;
-  background: rgba(12,12,16,0.85);
-  backdrop-filter: blur(16px);
-  border-bottom: 1px solid var(--border);
-}
-.header-inner {
-  max-width: 1280px; margin: 0 auto;
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 24px; height: 60px;
-}
-.header-brand {
-  display: flex; align-items: center; gap: 10px; text-decoration: none;
-}
-.header-brand .mark {
-  width: 28px; height: 28px; background: var(--accent);
-  border-radius: 7px; display: flex; align-items: center; justify-content: center;
-  font-size: 14px; color: #fff; font-weight: 700;
-}
-.header-brand .name {
-  font-size: 0.95rem; font-weight: 700; color: var(--text); letter-spacing: -0.01em;
-}
-.header-nav { display: flex; align-items: center; gap: 4px; }
-.header-nav a {
-  padding: 6px 14px; border-radius: var(--radius-xs);
-  font-size: 0.82rem; font-weight: 500; color: var(--text-secondary);
-  text-decoration: none; transition: all 0.2s;
-}
-.header-nav a:hover { color: var(--text); background: var(--bg-hover); }
-.header-nav a.active { color: var(--text); background: var(--bg-hover); }
-
-.credits-pill {
-  display: flex; align-items: center; gap: 8px;
-  padding: 5px 14px; border-radius: 100px;
-  border: 1px solid var(--border); background: var(--bg-elevated);
-  font-size: 0.78rem; color: var(--text-secondary);
-}
-.credits-pill .amt { font-weight: 600; color: var(--text); }
-.credits-pill .sep { color: var(--border-strong); }
-.upgrade-btn {
-  font-size: 0.75rem; font-weight: 600; color: var(--accent);
-  text-decoration: none; padding: 3px 10px; border-radius: 100px;
-  border: 1px solid rgba(255,107,53,0.25); background: var(--accent-glow);
-  transition: all 0.15s; cursor: pointer;
-}
-.upgrade-btn:hover { background: var(--accent-glow-strong); }
-
-/* ── Layout ── */
-.main {
-  max-width: 1280px; margin: 0 auto;
-  padding: 32px 24px 80px;
-  display: grid;
-  grid-template-columns: 380px 1fr;
-  gap: 32px;
-}
-@media (max-width: 960px) {
-  .main { grid-template-columns: 1fr; }
-}
-
-.sidebar { display: flex; flex-direction: column; gap: 20px; }
-.canvas { display: flex; flex-direction: column; gap: 24px; }
-
-/* ── Panel ── */
-.panel {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 22px;
-  display: flex; flex-direction: column;
-  gap: 18px;
-}
-.panel-header {
-  display: flex; align-items: center; gap: 10px;
-  font-size: 0.78rem; font-weight: 600;
-  color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em;
-}
-.panel-header .num {
-  width: 22px; height: 22px; border-radius: 50%;
-  background: var(--surface); border: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 0.7rem; font-weight: 700; color: var(--text-dim);
-}
-
-/* ── Dropzone ── */
-.dropzone {
-  position: relative; border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  padding: 36px 20px; text-align: center; cursor: pointer;
-  transition: all 0.2s; overflow: hidden;
-}
-.dropzone::before {
-  content: ''; position: absolute; inset: 0;
-  background: radial-gradient(600px circle at var(--mx,50%) var(--my,50%), var(--accent-glow-strong), transparent 40%);
-  opacity: 0; transition: opacity 0.4s; pointer-events: none;
-}
-.dropzone:hover::before, .dropzone.dragover::before { opacity: 1; }
-.dropzone:hover, .dropzone.dragover {
-  border-color: rgba(255,107,53,0.35); background: var(--surface-hover);
-}
-.dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; z-index: 2; }
-.dropzone .icon { font-size: 1.4rem; margin-bottom: 10px; opacity: 0.7; }
-.dropzone .label { font-size: 0.9rem; font-weight: 500; color: var(--text); }
-.dropzone .hint { font-size: 0.78rem; color: var(--text-dim); margin-top: 5px; }
-.dropzone .file-name { margin-top: 10px; font-size: 0.8rem; color: var(--text-secondary); word-break: break-all; }
-.dropzone .remove {
-  margin-top: 10px; font-size: 0.75rem; color: var(--danger); cursor: pointer;
-  display: none; text-decoration: underline;
-}
-
-/* ── Preview in sidebar ── */
-.sidebar-preview {
-  display: none; border-radius: var(--radius-sm); overflow: hidden;
-  border: 1px solid var(--border); background: var(--bg);
-}
-.sidebar-preview img { width: 100%; max-height: 200px; object-fit: cover; display: block; }
-
-/* ── Prompt ── */
-.prompt-box textarea {
-  width: 100%; padding: 14px; border: 1px solid var(--border);
-  border-radius: var(--radius-sm); background: var(--surface);
-  color: var(--text); font-family: var(--font); font-size: 0.9rem;
-  line-height: 1.5; resize: vertical; min-height: 90px; outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-.prompt-box textarea:focus {
-  border-color: rgba(255,107,53,0.45);
-  box-shadow: 0 0 0 3px var(--accent-glow);
-}
-.prompt-box .hint { font-size: 0.78rem; color: var(--text-dim); margin-top: 8px; }
-
-/* ── Presets ── */
-.preset-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.preset-chip {
-  padding: 7px 14px; border-radius: 100px;
-  border: 1px solid var(--border); background: var(--surface);
-  color: var(--text-secondary); font-size: 0.78rem; font-weight: 500;
-  cursor: pointer; transition: all 0.15s; user-select: none;
-}
-.preset-chip:hover { border-color: var(--border-strong); color: var(--text); background: var(--surface-hover); }
-.preset-chip.active {
-  border-color: var(--accent); background: var(--accent-glow); color: var(--accent);
-}
-
-/* ── Chips ── */
-.chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.quality-chip, .aspect-chip {
-  padding: 8px 16px; border-radius: var(--radius-xs);
-  border: 1px solid var(--border); background: var(--surface);
-  color: var(--text-secondary); font-size: 0.82rem; font-weight: 500;
-  cursor: pointer; transition: all 0.15s; user-select: none;
-}
-.quality-chip:hover, .aspect-chip:hover { border-color: var(--border-strong); color: var(--text); background: var(--surface-hover); }
-.quality-chip.active, .aspect-chip.active {
-  border-color: var(--accent); background: var(--accent-glow); color: var(--accent);
-}
-
-/* ── Generate Button ── */
-.gen-btn-wrap { margin-top: 4px; }
-.gen-btn {
-  width: 100%; padding: 16px 24px;
-  border: none; border-radius: var(--radius-sm);
-  background: var(--accent); color: #fff;
-  font-family: var(--font); font-size: 0.95rem; font-weight: 600;
-  cursor: pointer; transition: all 0.2s;
-  display: flex; align-items: center; justify-content: center; gap: 10px;
-  position: relative; overflow: hidden;
-}
-.gen-btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
-.gen-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-.gen-btn .spinner {
-  width: 18px; height: 18px;
-  border: 2px solid rgba(255,255,255,0.3);
-  border-top-color: #fff; border-radius: 50%;
-  animation: spin 0.8s linear infinite; display: none;
-}
-.gen-btn.generating .spinner { display: block; }
-.gen-btn.generating .label { display: none; }
-.gen-btn .meta {
-  position: absolute; right: 16px; font-size: 0.75rem; font-weight: 500;
-  color: rgba(255,255,255,0.7); opacity: 0; transition: opacity 0.2s;
-}
-.gen-btn:hover .meta { opacity: 1; }
-
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* ── Canvas output ── */
-.output-stage {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  min-height: 320px;
-  display: flex; flex-direction: column;
-}
-.output-stage .stage-header {
-  padding: 14px 20px; border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: space-between;
-}
-.output-stage .stage-title { font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); }
-.output-stage .stage-body {
-  flex: 1; padding: 20px;
-  display: flex; flex-direction: column; gap: 16px;
-}
-
-/* ── Output Grid ── */
-.output-grid {
-  display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px;
-}
-.output-grid.single { grid-template-columns: 1fr; }
-.output-cell {
-  border-radius: var(--radius-sm); overflow: hidden;
-  border: 1px solid var(--border); background: var(--bg);
-  position: relative;
-}
-.output-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
-/* Default + ratio classes */
-.output-cell, .output-cell.ratio-1-1 { aspect-ratio: 1 / 1; }
-.output-cell.ratio-4-3 { aspect-ratio: 4 / 3; }
-.output-cell.ratio-16-9 { aspect-ratio: 16 / 9; }
-.output-cell.ratio-9-16 { aspect-ratio: 9 / 16; }
-.output-cell.ratio-2-3 { aspect-ratio: 2 / 3; }
-.output-cell.ratio-4-5 { aspect-ratio: 4 / 5; }
-.output-cell .cell-bar {
-  position: absolute; bottom: 0; left: 0; right: 0;
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 10px; opacity: 0; transition: opacity 0.2s;
-  background: linear-gradient(to top, rgba(0,0,0,0.65), transparent);
-}
-.output-cell:hover .cell-bar { opacity: 1; }
-.output-cell .cell-bar .left { display: flex; align-items: center; gap: 6px; }
-.output-cell .cell-bar .pill {
-  padding: 3px 8px; border-radius: 100px;
-  background: rgba(255,255,255,0.1); backdrop-filter: blur(6px);
-  color: #fff; font-size: 0.68rem; font-weight: 500; border: 1px solid rgba(255,255,255,0.1);
-}
-.output-cell .cell-bar .pill.ratio { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.85); }
-.output-cell .cell-bar .pill.cost { background: rgba(45,212,168,0.15); color: #4ade80; border-color: rgba(74,222,128,0.25); }
-.output-cell .cell-bar .pill.model { background: rgba(96,165,250,0.12); color: #93bbfc; border-color: rgba(96,165,250,0.2); }
-.output-cell .cell-bar .pill.dims { background: rgba(255,255,255,0.06); color: var(--text-dim); border-color: rgba(255,255,255,0.08); font-size: 0.62rem; }
-.output-cell .cell-bar .right { display: flex; gap: 6px; }
-.output-cell .cell-bar .right a, .output-cell .cell-bar .right span {
-  padding: 5px 10px; border-radius: var(--radius-xs);
-  background: rgba(255,255,255,0.1); backdrop-filter: blur(6px);
-  color: #fff; font-size: 0.72rem; font-weight: 600; text-decoration: none;
-  border: 1px solid rgba(255,255,255,0.12); cursor: pointer; transition: background 0.15s;
-}
-.output-cell .cell-bar .right a:hover, .output-cell .cell-bar .right span:hover { background: rgba(255,255,255,0.2); }
-
-/* ── Skeleton placeholder ── */
-.skeleton-cell {
-  border-radius: var(--radius-sm); overflow: hidden;
-  border: 1px solid var(--border); background: var(--bg);
-  position: relative; aspect-ratio: 1 / 1;
-}
-.skeleton-cell.ratio-4-3 { aspect-ratio: 4 / 3; }
-.skeleton-cell.ratio-16-9 { aspect-ratio: 16 / 9; }
-.skeleton-cell.ratio-9-16 { aspect-ratio: 9 / 16; }
-.skeleton-cell.ratio-2-3 { aspect-ratio: 2 / 3; }
-.skeleton-cell.ratio-4-5 { aspect-ratio: 4 / 5; }
-.skeleton-cell::after {
-  content: ''; position: absolute; inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.04), transparent);
-  background-size: 200% 100%;
-  animation: shimmer 1.4s infinite;
-}
-@keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
-/* ── Empty state ── */
-.empty-state {
-  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 18px; color: var(--text-dim); text-align: center; padding: 40px;
-}
-.empty-state .icon { font-size: 2.5rem; opacity: 0.3; }
-.empty-state h3 { font-size: 1.1rem; font-weight: 600; color: var(--text-secondary); }
-.empty-state p { font-size: 0.88rem; max-width: 420px; line-height: 1.5; }
-.empty-state p strong { color: var(--text); }
-.empty-tips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; max-width: 600px; margin-top: 8px; }
-.empty-tip {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-  padding: 16px 12px; display: flex; flex-direction: column; gap: 6px; align-items: center;
-}
-.empty-tip .tip-icon { font-size: 1.4rem; }
-.empty-tip .tip-title { font-size: 0.82rem; font-weight: 600; color: var(--text); }
-.empty-tip .tip-desc { font-size: 0.74rem; color: var(--text-dim); line-height: 1.4; }
-@media (max-width: 720px) { .empty-tips { grid-template-columns: 1fr; max-width: 320px; } }
-
-/* ── Gallery ── */
-.gallery-panel {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px;
-}
-.gallery-panel .panel-title {
-  font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);
-  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px;
-  display: flex; justify-content: space-between; align-items: center;
-}
-.gallery-toolbar {
-  display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;
-}
-.gallery-toolbar button {
-  font-size: 0.72rem; padding: 4px 10px; border-radius: var(--radius-xs);
-  border: 1px solid var(--border); background: var(--bg-hover);
-  color: var(--text-secondary); cursor: pointer; font-family: var(--font);
-  transition: all 0.15s;
-}
-.gallery-toolbar button:hover { border-color: var(--accent); color: var(--text); }
-.gallery-toolbar button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-.gallery-toolbar button.primary:hover { background: var(--accent-hover); }
-.gallery-toolbar .count { margin-left: auto; font-size: 0.72rem; color: var(--text-dim); }
-.gallery-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
-  gap: 8px;
-}
-.gallery-thumb {
-  border-radius: var(--radius-xs); overflow: hidden;
-  border: 1px solid var(--border); cursor: pointer;
-  opacity: 0.65; transition: opacity 0.15s, border-color 0.15s; position: relative;
-}
-.gallery-thumb:hover, .gallery-thumb.active, .gallery-thumb.selected { opacity: 1; border-color: var(--accent); }
-.gallery-thumb.selected::after {
-  content: '';
-  position: absolute; inset: 0; border: 2px solid var(--accent); border-radius: var(--radius-xs);
-  pointer-events: none;
-}
-.gallery-thumb img { width: 100%; height: 80px; object-fit: cover; display: block; }
-.gallery-thumb .check {
-  position: absolute; top: 4px; left: 4px; width: 16px; height: 16px;
-  background: rgba(0,0,0,0.5); border-radius: 3px; border: 1px solid rgba(255,255,255,0.3);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 10px; color: #fff; opacity: 0; transition: opacity 0.15s;
-}
-.gallery-thumb:hover .check, .gallery-thumb.selected .check { opacity: 1; }
-.gallery-thumb.selected .check { background: var(--accent); border-color: var(--accent); }
-.gallery-thumb .del {
-  position: absolute; top: 4px; right: 4px; width: 18px; height: 18px;
-  background: rgba(0,0,0,0.5); color: #fff; border-radius: 50%;
-  font-size: 11px; line-height: 18px; text-align: center; cursor: pointer;
-  opacity: 0; transition: opacity 0.15s;
-}
-.gallery-thumb:hover .del { opacity: 1; }
-
-/* ── Cost bar ── */
-.cost-bar {
-  display: flex; align-items: center; justify-content: center; gap: 16px;
-  padding: 12px;
-  font-size: 0.78rem; color: var(--text-dim);
-}
-.cost-bar input {
-  width: 50px; background: transparent; color: var(--text);
-  border: none; border-bottom: 1px solid var(--border);
-  text-align: center; font-size: 0.78rem; font-family: var(--font);
-  padding: 2px 4px;
-}
-
-/* ── Toast ── */
-.toast {
-  position: fixed; bottom: 24px; left: 50%;
-  transform: translateX(-50%) translateY(20px);
-  padding: 12px 24px; border-radius: var(--radius);
-  font-size: 0.9rem; font-weight: 500;
-  opacity: 0; pointer-events: none;
-  transition: opacity 0.3s, transform 0.3s; z-index: 100;
-}
-.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-.toast.ok { background: #1a3a2f; color: #4ade80; border: 1px solid rgba(74,222,128,0.2); }
-.toast.err { background: #3a1a1a; color: #f87171; border: 1px solid rgba(248,113,113,0.2); }
-
-/* ── Lightbox ── */
-.lightbox-overlay {
-  position: fixed; inset: 0; z-index: 200;
-  background: rgba(0,0,0,0.92); backdrop-filter: blur(12px);
-  display: none; align-items: center; justify-content: center;
-}
-.lightbox-overlay.active { display: flex; }
-.lightbox-inner {
-  position: relative; max-width: 90vw; max-height: 90vh;
-  display: flex; flex-direction: column; align-items: center; gap: 16px;
-}
-.lightbox-img {
-  max-width: 85vw; max-height: 75vh; object-fit: contain;
-  border-radius: var(--radius-sm); border: 1px solid var(--border);
-}
-.lightbox-meta {
-  display: flex; gap: 8px; align-items: center;
-}
-.lightbox-close {
-  position: absolute; top: -40px; right: 0;
-  width: 36px; height: 36px; border-radius: 50%;
-  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15);
-  color: #fff; font-size: 1.2rem; cursor: pointer; display: flex;
-  align-items: center; justify-content: center; transition: background 0.15s;
-}
-.lightbox-close:hover { background: rgba(255,255,255,0.2); }
-.lightbox-nav {
-  position: absolute; top: 50%; transform: translateY(-50%);
-  width: 44px; height: 44px; border-radius: 50%;
-  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15);
-  color: #fff; font-size: 1.2rem; cursor: pointer; display: flex;
-  align-items: center; justify-content: center;
-}
-.lightbox-nav:hover { background: rgba(255,255,255,0.2); }
-.lightbox-nav.prev { left: -60px; }
-.lightbox-nav.next { right: -60px; }
-
-/* ── Animations ── */
-@keyframes fadeIn { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform: translateY(0); } }
-.fade-in { animation: fadeIn 0.35s ease forwards; }
-
-/* ── Mobile ── */
-@media (max-width: 960px) {
-  .header-inner { padding: 0 16px; }
-  .header-nav { display: none; }
-  .main { padding: 20px 16px 60px; }
-  .output-grid { grid-template-columns: 1fr; }
-  .output-cell, .output-cell.ratio-1-1 { aspect-ratio: 1 / 1; }
-}
-
-
-/* ── Landing Sections ── */
-.landing {
-  border-top: 1px solid var(--border);
-  padding-top: 80px;
-}
-
-/* Hero */
-.hero-section {
-  padding: 60px 24px;
-  text-align: center;
-}
-.hero-inner { max-width: 720px; margin: 0 auto; }
-.hero-section h1 {
-  font-size: 2.6rem; font-weight: 700; letter-spacing: -0.02em;
-  line-height: 1.15; margin-bottom: 18px;
-}
-.hero-section h1 span { color: var(--accent); }
-.hero-section p {
-  font-size: 1.05rem; color: var(--text-secondary); line-height: 1.6;
-  max-width: 560px; margin: 0 auto 28px;
-}
-.hero-cta {
-  display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;
-  margin-bottom: 48px;
-}
-.hero-btn {
-  padding: 14px 28px; border-radius: var(--radius-sm);
-  background: var(--accent); color: #fff; border: none;
-  font-family: var(--font); font-size: 0.95rem; font-weight: 600;
-  cursor: pointer; transition: all 0.2s; text-decoration: none; display: inline-block;
-}
-.hero-btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
-.hero-note { font-size: 0.82rem; color: var(--text-dim); }
-.hero-stats {
-  display: flex; justify-content: center; gap: 40px; flex-wrap: wrap;
-}
-.stat { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.stat-num { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
-.stat-lbl { font-size: 0.78rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
-
-/* Sample outputs showcase */
-.showcase-section { padding: 64px 24px; border-top: 1px solid var(--border); background: var(--bg); }
-.showcase-inner { max-width: 1100px; margin: 0 auto; }
-.showcase-head { text-align: center; margin-bottom: 36px; }
-.showcase-head h2 { font-size: 1.6rem; font-weight: 700; margin-bottom: 8px; }
-.showcase-head p { color: var(--text-secondary); font-size: 0.95rem; }
-.showcase-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
-  margin-bottom: 24px;
-}
-@media (max-width: 980px) { .showcase-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 540px) { .showcase-grid { grid-template-columns: 1fr; } }
-.showcase-card {
-  display: flex; flex-direction: column; gap: 10px;
-  background: var(--bg-elevated); border: 1px solid var(--border);
-  border-radius: var(--radius); overflow: hidden;
-  text-decoration: none; color: inherit;
-  transition: border-color 0.2s, transform 0.2s;
-}
-.showcase-card:hover { border-color: var(--accent); transform: translateY(-2px); }
-.showcase-img {
-  width: 100%; background: #0d0d12; display: flex; align-items: center; justify-content: center;
-  overflow: hidden;
-}
-.showcase-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.showcase-img.ratio-1-1 { aspect-ratio: 1 / 1; }
-.showcase-img.ratio-4-5 { aspect-ratio: 4 / 5; }
-.showcase-img.ratio-9-16 { aspect-ratio: 9 / 16; }
-.showcase-img.ratio-16-9 { aspect-ratio: 16 / 9; }
-.showcase-meta {
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 10px 12px 12px;
-}
-.showcase-label { font-size: 0.82rem; font-weight: 600; color: var(--text); }
-.showcase-tags { font-size: 0.72rem; color: var(--text-dim); }
-.showcase-foot { text-align: center; color: var(--text-dim); font-size: 0.82rem; margin-top: 16px; }
-
-/* How it works */
-.how-section { padding: 64px 24px; border-top: 1px solid var(--border); }
-.how-inner { max-width: 960px; margin: 0 auto; }
-.how-inner h2 { text-align: center; font-size: 1.6rem; font-weight: 700; margin-bottom: 40px; }
-.steps-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
-@media (max-width: 720px) { .steps-row { grid-template-columns: 1fr; } }
-.step { display: flex; flex-direction: column; gap: 10px; }
-.step-num {
-  font-size: 2.2rem; font-weight: 700; color: var(--accent); opacity: 0.35;
-  line-height: 1;
-}
-.step h4 { font-size: 0.95rem; font-weight: 600; margin-top: 4px; }
-.step p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; }
-
-/* Pricing */
-.pricing-section { padding: 64px 24px; border-top: 1px solid var(--border); }
-.pricing-inner { max-width: 900px; margin: 0 auto; text-align: center; }
-.pricing-inner h2 { font-size: 1.6rem; font-weight: 700; margin-bottom: 8px; }
-.pricing-sub { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 40px; }
-.tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; align-items: start; }
-@media (max-width: 980px) { .tiers { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 540px) { .tiers { grid-template-columns: 1fr; max-width: 380px; margin: 0 auto; } }
-.tier {
-  background: var(--bg-elevated); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 28px; text-align: left;
-  position: relative;
-}
-.tier-popular { border-color: rgba(255,107,53,0.35); background: var(--accent-glow); }
-.tier-badge {
-  position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
-  background: var(--accent); color: #fff; font-size: 0.7rem; font-weight: 600;
-  padding: 4px 12px; border-radius: 100px; letter-spacing: 0.02em;
-}
-.tier-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--text-secondary); font-weight: 600; margin-bottom: 8px;
-}
-.tier-price { font-size: 2.2rem; font-weight: 700; }
-.tier-unit { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 20px; }
-.tier-features { list-style: none; display: flex; flex-direction: column; gap: 8px; }
-.tier-features li {
-  font-size: 0.85rem; color: var(--text-secondary); padding-left: 18px;
-  position: relative;
-}
-.tier-features li::before {
-  content: ''; position: absolute; left: 0; top: 8px; width: 6px; height: 6px;
-  border-radius: 50%; background: var(--accent); opacity: 0.6;
-}
-
-/* FAQ */
-.faq-section { padding: 64px 24px; border-top: 1px solid var(--border); }
-.faq-inner { max-width: 680px; margin: 0 auto; }
-.faq-inner h2 { font-size: 1.6rem; font-weight: 700; margin-bottom: 28px; text-align: center; }
-.faq-item { border-bottom: 1px solid var(--border); }
-.faq-item summary {
-  padding: 18px 0; font-size: 0.95rem; font-weight: 500; cursor: pointer;
-  list-style: none; display: flex; justify-content: space-between; align-items: center;
-}
-.faq-item summary::after { content: '+'; font-size: 1.2rem; color: var(--text-dim); }
-.faq-item[open] summary::after { content: '−'; }
-.faq-item p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; padding-bottom: 18px; }
-
-/* CTA Banner */
-.cta-banner { padding: 64px 24px; text-align: center; border-top: 1px solid var(--border); }
-.cta-inner { max-width: 560px; margin: 0 auto; }
-.cta-banner h2 { font-size: 1.5rem; font-weight: 700; margin-bottom: 10px; }
-.cta-banner p { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 24px; }
-
-/* Footer */
-.landing-footer { border-top: 1px solid var(--border); padding: 32px 24px; }
-.footer-inner {
-  max-width: 1100px; margin: 0 auto;
-  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;
-}
-.footer-brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 0.9rem; }
-.footer-mark {
-  width: 24px; height: 24px; background: var(--accent); border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 11px; color: #fff; font-weight: 700;
-}
-.footer-links { display: flex; gap: 20px; }
-.footer-links a { font-size: 0.82rem; color: var(--text-secondary); text-decoration: none; transition: color 0.15s; }
-.footer-links a:hover { color: var(--text); }
-.footer-copy { font-size: 0.78rem; color: var(--text-dim); }
-@media (max-width: 600px) {
-  .footer-inner { flex-direction: column; text-align: center; }
-  .hero-section h1 { font-size: 1.9rem; }
-}
-
-
-/* ── API Key Panel ── */
-.apikey-panel {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.apikey-panel .panel-header {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);
-  text-transform: uppercase; letter-spacing: 0.06em;
-}
-.apikey-panel .panel-header .icon { font-size: 1rem; }
-.apikey-input-wrap {
-  position: relative;
-  display: flex; gap: 8px;
-}
-.apikey-input-wrap input {
-  flex: 1; padding: 10px 14px; border: 1px solid var(--border);
-  border-radius: var(--radius-xs); background: var(--surface);
-  color: var(--text); font-family: var(--font); font-size: 0.85rem;
-  outline: none; transition: border-color 0.2s, box-shadow 0.2s;
-}
-.apikey-input-wrap input:focus {
-  border-color: rgba(255,107,53,0.45); box-shadow: 0 0 0 3px var(--accent-glow);
-}
-.apikey-input-wrap input.valid { border-color: var(--success); }
-.apikey-input-wrap input.invalid { border-color: var(--danger); }
-.apikey-btn {
-  padding: 9px 16px; border-radius: var(--radius-xs);
-  border: 1px solid var(--border); background: var(--surface-hover);
-  color: var(--text); font-family: var(--font); font-size: 0.82rem;
-  font-weight: 600; cursor: pointer; transition: all 0.15s; white-space: nowrap;
-}
-.apikey-btn:hover { background: var(--surface); }
-.apikey-hint {
-  font-size: 0.75rem; color: var(--text-dim); line-height: 1.5;
-}
-.apikey-hint a { color: var(--accent); text-decoration: none; }
-.apikey-hint a:hover { text-decoration: underline; }
-.apikey-status {
-  font-size: 0.78rem; font-weight: 500; display: none;
-}
-.apikey-status.ok { color: var(--success); display: block; }
-.apikey-status.err { color: var(--danger); display: block; }
-.apikey-status.warn { color: var(--warning, #fbbf24); display: block; }
-
-/* ── Prompt History ── */
-.prompt-history {
-  max-height: 200px; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 6px;
-}
-.prompt-history-item {
-  padding: 8px 10px; border-radius: var(--radius-xs);
-  background: var(--bg-hover); border: 1px solid var(--border);
-  font-size: 0.82rem; color: var(--text-secondary);
-  cursor: pointer; transition: all 0.15s;
-  display: flex; align-items: center; gap: 8px;
-  line-height: 1.3;
-}
-.prompt-history-item:hover {
-  border-color: var(--accent); color: var(--text);
-  background: rgba(255,107,53,0.05);
-}
-.prompt-history-item .prompt-text {
-  flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.prompt-history-item .prompt-meta {
-  font-size: 0.68rem; color: var(--text-dim); white-space: nowrap;
-}
-.prompt-history-empty {
-  font-size: 0.78rem; color: var(--text-dim); padding: 8px 0;
-}
-
-</style>
-</head>
-<body>
-
-<header class="header">
-  <div class="header-inner">
-    <a href="/" class="header-brand">
-      <div class="mark">CS</div>
-      <span class="name">Creative Studio</span>
-    </a>
-    <nav class="header-nav">
-      <a href="/" class="active">Studio</a>
-      <a href="/status">Status</a>
-      <a href="/docs">API Docs</a>
-      <a href="/history">History</a>
-    </nav>
-    <div class="credits-pill">
-      <span>Today: <span class="amt" id="costToday">$0.00</span></span>
-      <span class="sep">|</span>
-      <span>Limit: $<input type="number" id="costLimit" value="5.00" step="0.50" min="0" style="width:44px;background:transparent;color:var(--text);border:none;border-bottom:1px solid var(--border);text-align:center;font-size:0.78rem;font-family:var(--font);padding:2px;"></span>
-    </div>
-  </div>
-</header>
-
-<main class="main" id="editor">
-
-  <!-- Sidebar Controls -->
-  <aside class="sidebar">
-
-    <!-- 0. API Key (BYOK) -->
-    <div class="apikey-panel" id="apikeyPanel">
-      <div class="panel-header"><span class="icon">🔑</span> API Key</div>
-      <div class="apikey-input-wrap">
-        <input type="password" id="apikeyInput" placeholder="Paste your Gemini API key..." autocomplete="off">
-        <button class="apikey-btn" id="apikeyBtn">Save</button>
-      </div>
-      <div class="apikey-status" id="apikeyStatus"></div>
-      <div class="apikey-hint">
-        Bring your own key from <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>.
-        We don't store or train on your key. Cost is paid directly to Google.
-      </div>
-    </div>
-
-    <!-- 1. Product -->
-    <div class="panel">
-      <div class="panel-header"><span class="num">1</span> Your Product</div>
-      <div class="dropzone" id="dropzone">
-        <input type="file" id="fileInput" accept="image/*">
-        <div class="icon">&#128248;</div>
-        <div class="label">Drop product photo here</div>
-        <div class="hint">PNG, JPG, WEBP</div>
-        <div class="file-name" id="fileName"></div>
-        <div class="remove" id="removeBtn">Remove</div>
-      </div>
-      <div class="sidebar-preview" id="previewWrap">
-        <img id="previewImg" alt="Product preview">
-      </div>
-    </div>
-
-    <!-- 2. Scene -->
-    <div class="panel">
-      <div class="panel-header"><span class="num">2</span> Scene</div>
-      <div class="prompt-box">
-        <textarea id="prompt" placeholder="e.g. Premium protein tub on a clean oak shelf in a boutique fitness store, warm overhead lighting, shallow depth of field, product photography style"></textarea>
-        <div class="preset-row" id="presetRow">
-          <div class="preset-chip" data-preset="amazon">Amazon white</div>
-          <div class="preset-chip" data-preset="instagram">Instagram</div>
-          <div class="preset-chip" data-preset="email">Email banner</div>
-          <div class="preset-chip" data-preset="pinterest">Pinterest</div>
-        </div>
-        <div class="hint">Be specific about setting, lighting, and mood.</div>
-      </div>
-    </div>
-
-    <!-- Prompt History -->
-    <div class="panel" id="promptHistoryPanel" style="display:none;">
-      <div class="panel-header"><span class="num" style="background:var(--accent);color:#fff;">↺</span> Prompt History</div>
-      <div class="prompt-history" id="promptHistory"></div>
-    </div>
-
-    <!-- 3. Aspect Ratio -->
-    <div class="panel">
-      <div class="panel-header"><span class="num">3</span> Aspect Ratio</div>
-      <div class="chip-row" id="aspectRow">
-        <div class="aspect-chip active" data-ratio="1:1">1:1</div>
-        <div class="aspect-chip" data-ratio="4:3">4:3</div>
-        <div class="aspect-chip" data-ratio="16:9">16:9</div>
-        <div class="aspect-chip" data-ratio="9:16">9:16</div>
-        <div class="aspect-chip" data-ratio="2:3">2:3</div>
-        <div class="aspect-chip" data-ratio="4:5">4:5</div>
-      </div>
-    </div>
-
-    <!-- 4. Quality -->
-    <div class="panel">
-      <div class="panel-header"><span class="num">4</span> Quality</div>
-      <div class="chip-row" id="qualityRow">
-        <div class="quality-chip active" data-tier="fast" data-cost="0.02">Fast &middot; $0.02</div>
-        <div class="quality-chip" data-tier="balanced" data-cost="0.045">Balanced &middot; $0.05</div>
-        <div class="quality-chip" data-tier="quality" data-cost="0.09">Quality &middot; $0.09</div>
-        <div class="quality-chip" data-tier="ultra" data-cost="0.24">Ultra &middot; $0.24</div>
-      </div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;color:var(--text-dim);cursor:pointer;margin-top:4px;">
-        <input type="checkbox" id="batchToggle" style="accent-color:var(--accent);">
-        Generate 4 variations (slower)
-      </label>
-    </div>
-
-    <!-- Generate -->
-    <div class="gen-btn-wrap">
-      <button class="gen-btn" id="genBtn">
-        <div class="spinner"></div>
-        <span class="label" id="genLabel">Generate Image</span>
-        <span class="meta" id="genMeta"></span>
-      </button>
-    </div>
-
-  </aside>
-
-  <!-- Canvas -->
-  <section class="canvas">
-
-    <!-- Output Stage -->
-    <div class="output-stage">
-      <div class="stage-header">
-        <span class="stage-title">Output</span>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <button id="downloadAllBtn" style="display:none;padding:4px 10px;border-radius:var(--radius-xs);border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);font-family:var(--font);font-size:0.72rem;cursor:pointer;">Download all</button>
-          <span class="stage-title" id="outputMeta" style="font-weight:500;"></span>
-        </div>
-      </div>
-      <div class="stage-body" id="stageBody">
-        <div class="empty-state" id="emptyState">
-          <div class="icon">🎨</div>
-          <h3>Ready when you are</h3>
-          <p>Describe a scene on the left, pick an aspect ratio, and hit <strong>Generate</strong>. Or drop a product photo first to use <strong>Product Compositing</strong> — your real product placed into an AI scene.</p>
-          <div class="empty-tips">
-            <div class="empty-tip">
-              <div class="tip-icon">📸</div>
-              <div class="tip-title">Product Compositing</div>
-              <div class="tip-desc">Drop a PNG with a transparent background, then describe the scene. Your exact packaging gets composited in.</div>
-            </div>
-            <div class="empty-tip">
-              <div class="tip-icon">⚡</div>
-              <div class="tip-title">Batch 4-Up</div>
-              <div class="tip-desc">Toggle "Generate 4 variations" for a Midjourney-style grid. ~2 min for 4 images.</div>
-            </div>
-            <div class="empty-tip">
-              <div class="tip-icon">🎯</div>
-              <div class="tip-title">Platform Presets</div>
-              <div class="tip-desc">Click Amazon, Instagram, Email, or Pinterest to auto-fill the prompt AND aspect ratio.</div>
-            </div>
-          </div>
-        </div>
-        <div class="output-grid" id="outputGrid" style="display:none;"></div>
-      </div>
-    </div>
-
-    <!-- Gallery -->
-    <div class="gallery-panel" id="galleryCard" style="display:none;">
-      <div class="panel-title">
-        <span>Session Gallery</span>
-        <span style="font-size:0.75rem;color:var(--text-dim);cursor:pointer;" id="clearGallery">Clear all</span>
-      </div>
-      <div class="gallery-toolbar" id="galleryToolbar" style="display:none;">
-        <button id="selectAllBtn">Select all</button>
-        <button id="deselectAllBtn">Deselect</button>
-        <button id="downloadZipBtn" class="primary">Download ZIP</button>
-        <button id="deleteSelectedBtn" style="color:var(--danger)">Delete</button>
-        <span class="count" id="selectedCount">0 selected</span>
-      </div>
-      <div class="gallery-grid" id="gallery"></div>
-    </div>
-
-  </section>
-
-</main>
-
-<!-- ═══════ LANDING / COMMERCIAL CONTENT ═══════ -->
-<section class="landing" id="landing">
-
-  <!-- Hero pitch -->
-  <div class="hero-section" id="heroSection">
-    <div class="hero-inner">
-      <h1>Studio-grade product photos for <span>CPG &amp; DTC operators</span></h1>
-      <p>Drop your packaging, describe the scene, get a campaign-ready image in 30 seconds. Your exact product. Every platform's aspect ratio. Costs less than a coffee.</p>
-      <div class="hero-cta">
-        <button class="hero-btn" onclick="document.getElementById('editor').scrollIntoView({behavior:'smooth'})">Try free →</button>
-        <span class="hero-note">$0.02–$0.24/image. Bring your own Gemini API key or use the shared demo key.</span>
-      </div>
-      <div class="hero-stats">
-        <div class="stat"><span class="stat-num">30s</span><span class="stat-lbl">per shot</span></div>
-        <div class="stat"><span class="stat-num">$0.02</span><span class="stat-lbl">starting cost</span></div>
-        <div class="stat"><span class="stat-num">6</span><span class="stat-lbl">aspect ratios</span></div>
-        <div class="stat"><span class="stat-num">4</span><span class="stat-lbl">platform presets</span></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Sample outputs gallery — real generations, not stock photos -->
-  <div class="showcase-section" id="showcase">
-    <div class="showcase-inner">
-      <div class="showcase-head">
-        <h2>Real outputs. Generated in the last hour.</h2>
-        <p>No stock photos. No mockups. These came out of the editor above.</p>
-      </div>
-      <div class="showcase-grid">
-        <a class="showcase-card" href="/image/2026-06-02/web/20260602-073157-web-79d77.png" target="_blank" rel="noopener">
-          <div class="showcase-img ratio-4-5"><img src="/image/2026-06-02/web/20260602-073157-web-79d77.png" alt="Artisan coffee bag on wooden shelf" loading="lazy"></div>
-          <div class="showcase-meta">
-            <span class="showcase-label">Instagram Feed</span>
-            <span class="showcase-tags">4:5 · $0.05 · Balanced</span>
-          </div>
-        </a>
-        <a class="showcase-card" href="/image/2026-06-02/web/20260602-073120-web-b3d96.png" target="_blank" rel="noopener">
-          <div class="showcase-img ratio-16-9"><img src="/image/2026-06-02/web/20260602-073120-web-b3d96.png" alt="Protein tub on gym counter, wide composition" loading="lazy"></div>
-          <div class="showcase-meta">
-            <span class="showcase-label">Email Banner</span>
-            <span class="showcase-tags">16:9 · $0.05 · Balanced</span>
-          </div>
-        </a>
-        <a class="showcase-card" href="/image/2026-06-02/web/20260602-073046-web-01b3f.png" target="_blank" rel="noopener">
-          <div class="showcase-img ratio-9-16"><img src="/image/2026-06-02/web/20260602-073046-web-01b3f.png" alt="Sneaker on concrete, vertical editorial" loading="lazy"></div>
-          <div class="showcase-meta">
-            <span class="showcase-label">Pinterest Pin</span>
-            <span class="showcase-tags">9:16 · $0.05 · Balanced</span>
-          </div>
-        </a>
-        <a class="showcase-card" href="/image/2026-06-02/web/20260602-072856-web-68448.png" target="_blank" rel="noopener">
-          <div class="showcase-img ratio-1-1"><img src="/image/2026-06-02/web/20260602-072856-web-68448.png" alt="Skincare bottle on wet stone" loading="lazy"></div>
-          <div class="showcase-meta">
-            <span class="showcase-label">Amazon PDP / Square Feed</span>
-            <span class="showcase-tags">1:1 · $0.05 · Balanced</span>
-          </div>
-        </a>
-      </div>
-      <p class="showcase-foot">Click any image to open the full PNG. Generate your own above — bring a product photo, get a campaign shot in under a minute.</p>
-    </div>
-  </div>
-
-  <!-- How it works -->
-  <div class="how-section">
-    <div class="how-inner">
-      <h2>How it works</h2>
-      <div class="steps-row">
-        <div class="step">
-          <div class="step-num">01</div>
-          <h4>Drop your product photo</h4>
-          <p>PNG with a transparent background works best. The AI keeps your exact packaging — flavor name, label text, color, all of it. No hallucinated SKUs.</p>
-        </div>
-        <div class="step">
-          <div class="step-num">02</div>
-          <h4>Pick a preset or type a scene</h4>
-          <p>Amazon white, Instagram, Pinterest, Email banner — each preset auto-fills the prompt and locks the right aspect ratio. Or type your own.</p>
-        </div>
-        <div class="step">
-          <div class="step-num">03</div>
-          <h4>Ship the PNG to your storefront</h4>
-          <p>One image in ~30 seconds. Batch 4-up in ~2 minutes. Download as PNG, drag into Shopify, Klaviyo, Amazon, Pinterest — wherever your buyers are.</p>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Pricing -->
-  <div class="pricing-section" id="pricing">
-    <div class="pricing-inner">
-      <h2>Simple pricing</h2>
-      <p class="pricing-sub">No subscriptions. No minimums. Pay only for what you generate.</p>
-      <div class="tiers">
-        <div class="tier">
-          <div class="tier-label">Fast</div>
-          <div class="tier-price">$0.02</div>
-          <div class="tier-unit">per image</div>
-          <ul class="tier-features">
-            <li>Draft quality — great for mocks &amp; variants</li>
-            <li>1K resolution (imagen-4.0)</li>
-            <li>~15 seconds</li>
-            <li>All 6 aspect ratios</li>
-          </ul>
-        </div>
-        <div class="tier tier-popular">
-          <div class="tier-badge">Most popular</div>
-          <div class="tier-label">Balanced</div>
-          <div class="tier-price">$0.05</div>
-          <div class="tier-unit">per image</div>
-          <ul class="tier-features">
-            <li>1K output with rich detail</li>
-            <li>Gemini Flash — fast + cheap</li>
-            <li>~30 seconds</li>
-            <li>Recommended for most shots</li>
-          </ul>
-        </div>
-        <div class="tier">
-          <div class="tier-label">Quality</div>
-          <div class="tier-price">$0.09</div>
-          <div class="tier-unit">per image</div>
-          <ul class="tier-features">
-            <li>2K resolution (Gemini Flash upscaled)</li>
-            <li>Better lighting &amp; depth</li>
-            <li>~30 seconds</li>
-            <li>Best for storefronts &amp; marketing</li>
-          </ul>
-        </div>
-        <div class="tier">
-          <div class="tier-label">Ultra</div>
-          <div class="tier-price">$0.24</div>
-          <div class="tier-unit">per image</div>
-          <ul class="tier-features">
-            <li>2K with Gemini Pro</li>
-            <li>Pro-grade detail &amp; depth</li>
-            <li>~45 seconds</li>
-            <li>Product compositing &amp; hero shots</li>
-          </ul>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- FAQ -->
-  <div class="faq-section" id="faq">
-    <div class="faq-inner">
-      <h2>FAQ</h2>
-      <div class="faq-list">
-        <details class="faq-item">
-          <summary>How is this different from Midjourney or DALL-E?</summary>
-          <p>Midjourney hallucinates fake product flavors, label text, and packaging details. Creative Studio keeps your real product intact via Product Compositing — drop a PNG of your actual packaging, the AI builds the scene around it without changing what's on the bottle. Plus every output is locked to a real platform aspect ratio (1:1, 4:5, 9:16, 16:9) so you don't have to crop a square for Amazon and a 4:5 for IG manually.</p>
-        </details>
-        <details class="faq-item">
-          <summary>Can I use this for a real product launch?</summary>
-          <p>Yes. The Quality ($0.09) and Ultra ($0.24) tiers are 2K and good enough for storefronts, paid social, and email. Most teams use Fast for internal mocks and Quality/Ultra for the final ship. CPG operators typically budget $5-10 per launch for the hero set.</p>
-        </details>
-        <details class="faq-item">
-          <summary>Do you train on my products or prompts?</summary>
-          <p>No. Everything runs on your own Coolify instance. Your product photos, prompts, and outputs never touch a third-party AI gallery or training dataset. Google only sees the request to generate the image, not your inputs as training data.</p>
-        </details>
-        <details class="faq-item">
-          <summary>What about my API key — is it safe?</summary>
-          <p>Your key lives in your browser's localStorage by default. If you don't paste one, the server uses a shared demo key. Either way, no credit card or signup needed — you pay Google directly per image.</p>
-        </details>
-        <details class="faq-item">
-          <summary>Can I run this on my own infrastructure?</summary>
-          <p>It's already a single Docker container — clone the repo, point it at your Gemini key, deploy anywhere. Most teams put it on their existing Coolify / Dokku / Fly.io instance alongside the rest of their stack.</p>
-        </details>
-      </div>
-    </div>
-  </div>
-
-  <!-- CTA Banner -->
-  <div class="cta-banner">
-    <div class="cta-inner">
-      <h2>Stop paying $500/day for studio time</h2>
-      <p>Paste your Gemini API key in the sidebar, drop a product photo, ship a campaign shot before your coffee gets cold.</p>
-      <button class="hero-btn" onclick="document.getElementById('editor').scrollIntoView({behavior:'smooth'})">Open the editor →</button>
-    </div>
-  </div>
-
-</section>
-
-<!-- ═══════ FOOTER ═══════ -->
-<footer class="landing-footer">
-  <div class="footer-inner">
-    <div class="footer-brand">
-      <div class="footer-mark">CS</div>
-      <span>Creative Studio</span>
-    </div>
-    <div class="footer-links">
-      <a href="/status">Status</a>
-      <a href="#pricing">Pricing</a>
-      <a href="#faq">FAQ</a>
-      <a href="mailto:hello@ashbi.ca">Contact</a>
-    </div>
-    <div class="footer-copy">Built by Ashbi Design. Self-hosted on your own infrastructure.</div>
-  </div>
-</footer>
-
-
-<div class="toast" id="toast"></div>
-
-<script>
-const $ = id => document.getElementById(id);
-let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [], selected: new Set(), lastClicked: null, outputImages: [], lastPrompt: '', apiKey: '' };
-
-// ── API Key (BYOK) ──
-const API_KEY_STORAGE='cs_api_key';
-function loadApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
-function saveApiKey(key) { localStorage.setItem(API_KEY_STORAGE, key); }
-function getApiKey() { return loadApiKey(); }
-
-function updateFetchOptions(opts = {}) {
-  const key = getApiKey();
-  if (key) {
-    opts.headers = opts.headers || {};
-    opts.headers['X-API-Key'] = key;
-  }
-  return opts;
-}
-
-async function validateApiKey(key) {
-  try {
-    const r = await fetch('/api/validate-key', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key })
-    });
-    return await r.json();
-  } catch (e) { return { valid: false, error: e.message }; }
-}
-
-$('apikeyBtn').addEventListener('click', async () => {
-  const key = $('apikeyInput').value.trim();
-  if (!key) { showToast('Paste a key first', 'err'); return; }
-  $('apikeyStatus').textContent = 'Checking...';
-  $('apikeyStatus').className = 'apikey-status';
-  const result = await validateApiKey(key);
-  if (result.valid) {
-    saveApiKey(key);
-    $('apikeyStatus').textContent = 'Key saved ✓';
-    $('apikeyStatus').className = 'apikey-status ok';
-    $('apikeyInput').className = 'valid';
-    showToast('API key saved', 'ok');
-  } else {
-    $('apikeyStatus').textContent = result.error || 'Invalid key';
-    $('apikeyStatus').className = 'apikey-status err';
-    $('apikeyInput').className = 'invalid';
-  }
-});
-
-// Load saved key on startup
-const savedKey = loadApiKey();
-if (savedKey) {
-  $('apikeyInput').value = savedKey;
-  $('apikeyInput').className = 'valid';
-  $('apikeyStatus').textContent = 'Key loaded ✓';
-  $('apikeyStatus').className = 'apikey-status ok';
-} else {
-  // Probe server: is there a fallback key?
-  fetch('/api/whoami', updateFetchOptions())
-    .then(r => r.json())
-    .then(info => {
-      if (info.server_has_fallback && !info.byok) {
-        $('apikeyStatus').textContent = 'Using shared demo key — paste your own for privacy';
-        $('apikeyStatus').className = 'apikey-status warn';
-        $('apikeyInput').placeholder = 'Paste your Gemini API key (recommended)...';
-      } else {
-        $('apikeyStatus').textContent = 'Add a Gemini API key to start';
-        $('apikeyStatus').className = 'apikey-status';
-      }
-    })
-    .catch(() => {});
-}
-
-const PRESETS = {
-  amazon:    { prompt: 'Clean pure white background, soft shadow underneath, studio lighting, product centered, ecommerce photography, high detail, ecommerce listing photo', aspect: '1:1' },
-  instagram: { prompt: 'Lifestyle flatlay on textured surface, natural soft window light from left, shallow depth of field, instagram feed aesthetic, warm tones, lifestyle product photography', aspect: '4:5' },
-  email:     { prompt: 'Product on clean gradient background, dramatic side lighting, hero shot, wide composition with negative space for headline text overlay', aspect: '16:9' },
-  pinterest: { prompt: 'Product in styled scene with complementary props, warm golden tones, overhead 45 degree angle, editorial style, pinterest pin composition', aspect: '2:3' },
-};
-
-// ── Chip selectors ──
-function initChips(rowId, key, cls) {
-  $(rowId).addEventListener('click', e => {
-    const chip = e.target.closest('.' + cls);
-    if (!chip) return;
-    document.querySelectorAll('#' + rowId + ' .' + cls).forEach(c => c.classList.remove('active'));
-    chip.classList.add('active');
-    state[key] = chip.dataset.tier || chip.dataset.ratio || chip.dataset.preset;
-  });
-}
-initChips('qualityRow', 'tier', 'quality-chip');
-
-// Aspect chips (separate to avoid initChips eating preset clicks)
-$('aspectRow').addEventListener('click', e => {
-  const chip = e.target.closest('.aspect-chip');
-  if (!chip) return;
-  document.querySelectorAll('#aspectRow .aspect-chip').forEach(c => c.classList.remove('active'));
-  chip.classList.add('active');
-  state.aspect = chip.dataset.ratio;
-});
-
-// ── Presets ──
-$('presetRow').addEventListener('click', e => {
-  const chip = e.target.closest('.preset-chip');
-  if (!chip) return;
-  const key = chip.dataset.preset;
-  const p = PRESETS[key];
-  if (!p) return;
-  $('prompt').value = p.prompt;
-  state.aspect = p.aspect;
-  document.querySelectorAll('.aspect-chip').forEach(c => {
-    c.classList.toggle('active', c.dataset.ratio === p.aspect);
-  });
-  document.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('active'));
-  chip.classList.add('active');
-});
-
-// ── Dropzone with mouse glow ──
-const dz = $('dropzone'), fi = $('fileInput');
-dz.addEventListener('mousemove', e => {
-  const rect = dz.getBoundingClientRect();
-  dz.style.setProperty('--mx', ((e.clientX - rect.left) / rect.width * 100) + '%');
-  dz.style.setProperty('--my', ((e.clientY - rect.top) / rect.height * 100) + '%');
-});
-
-const onFile = file => {
-  if (!file || !file.type.startsWith('image/')) return;
-  state.prodImage = file;
-  $('fileName').textContent = file.name;
-  const url = URL.createObjectURL(file);
-  $('previewImg').src = url;
-  $('previewWrap').style.display = 'block';
-  $('removeBtn').style.display = 'inline-block';
-  dz.querySelector('.label').textContent = 'Replace product photo';
-  dz.querySelector('.icon').textContent = '🔄';
-  updateGenLabel();
-};
-fi.addEventListener('change', e => onFile(e.target.files[0]));
-dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
-dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
-dz.addEventListener('drop', e => {
-  e.preventDefault(); dz.classList.remove('dragover');
-  onFile(e.dataTransfer.files[0]);
-});
-
-$('removeBtn').addEventListener('click', () => {
-  state.prodImage = null;
-  $('fileName').textContent = '';
-  $('previewWrap').style.display = 'none';
-  $('removeBtn').style.display = 'none';
-  fi.value = '';
-  dz.querySelector('.label').textContent = 'Drop product photo here';
-  dz.querySelector('.icon').textContent = '📸';
-  updateGenLabel();
-});
-
-function updateGenLabel() {
-  const batch = $('batchToggle').checked;
-  const count = state.prodImage ? 1 : (batch ? 4 : 1);
-  const label = state.prodImage ? 'Generate Composite' : (batch ? 'Generate 4 Images' : 'Generate Image');
-  $('genLabel').textContent = label;
-  // Per-tier pricing (must match data-cost on quality-chip + server _TIER_MODEL)
-  const TIER_COST = { fast: 0.02, balanced: 0.045, quality: 0.09, ultra: 0.24 };
-  const unit = TIER_COST[state.tier] || 0.045;
-  const cost = state.prodImage ? TIER_COST.quality : (unit * count);
-  const time = batch && !state.prodImage ? '~2 min' : '~30s';
-  $('genMeta').textContent = '$' + cost.toFixed(2) + ' · ' + time;
-}
-$('batchToggle').addEventListener('change', updateGenLabel);
-
-async function getCostToday() {
-  try {
-    const r = await fetch('/api/costs', updateFetchOptions());
-    const d = await r.json();
-    return d.today || 0;
-  } catch (e) { return 0; }
-}
-
-function addToGallery(images) {
-  images.forEach(img => state.gallery.push(img));
-  renderGallery();
-}
-
-function renderGallery() {
-  const g = $('gallery');
-  g.innerHTML = '';
-  state.gallery.forEach((img, idx) => {
-    const thumb = document.createElement('div');
-    const isSel = state.selected.has(idx);
-    thumb.className = 'gallery-thumb' + (isSel ? ' selected' : '');
-    thumb.innerHTML = '<img src="' + img.url + '" alt=""><div class="check">' + (isSel ? '✓' : '') + '</div><div class="del" data-idx="' + idx + '">×</div>';
-    thumb.querySelector('.del').addEventListener('click', (e) => {
-      e.stopPropagation();
-      state.gallery.splice(idx, 1);
-      state.selected.delete(idx);
-      const newSelected = new Set();
-      state.selected.forEach(i => { if (i < idx) newSelected.add(i); else if (i > idx) newSelected.add(i - 1); });
-      state.selected = newSelected;
-      renderGallery();
-      updateToolbar();
-    });
-    thumb.addEventListener('click', (e) => {
-      if (e.shiftKey && state.lastClicked !== null) {
-        const start = Math.min(state.lastClicked, idx);
-        const end = Math.max(state.lastClicked, idx);
-        for (let i = start; i <= end; i++) state.selected.add(i);
-      } else {
-        if (state.selected.has(idx)) state.selected.delete(idx);
-        else state.selected.add(idx);
-        state.lastClicked = idx;
-      }
-      renderGallery();
-      updateToolbar();
-    });
-    g.appendChild(thumb);
-  });
-  $('galleryCard').style.display = state.gallery.length > 0 ? 'block' : 'none';
-  updateToolbar();
-}
-
-function updateToolbar() {
-  const hasSel = state.selected.size > 0;
-  $('galleryToolbar').style.display = state.gallery.length > 0 ? 'flex' : 'none';
-  $('selectedCount').textContent = state.selected.size + ' selected';
-  $('downloadZipBtn').disabled = !hasSel;
-  $('deleteSelectedBtn').disabled = !hasSel;
-}
-
-$('selectAllBtn').addEventListener('click', () => {
-  state.gallery.forEach((_, i) => state.selected.add(i));
-  renderGallery();
-});
-$('deselectAllBtn').addEventListener('click', () => {
-  state.selected.clear();
-  renderGallery();
-});
-$('deleteSelectedBtn').addEventListener('click', () => {
-  if (!state.selected.size) return;
-  const remaining = state.gallery.filter((_, i) => !state.selected.has(i));
-  state.gallery = remaining;
-  state.selected.clear();
-  renderGallery();
-  showToast('Deleted selected images', 'ok');
-});
-$('downloadZipBtn').addEventListener('click', async () => {
-  if (!state.selected.size) { showToast('Select images first', 'err'); return; }
-  const urls = [];
-  state.selected.forEach(i => { if (state.gallery[i]) urls.push(state.gallery[i].url); });
-  try {
-    const r = await fetch('/api/export-zip', updateFetchOptions({
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({urls})
-    }));
-    if (!r.ok) throw new Error('ZIP failed');
-    const blob = await r.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'creative-studio-export.zip';
-    a.click();
-    showToast('ZIP downloaded', 'ok');
-  } catch (e) { showToast('Export failed: ' + e.message, 'err'); }
-});
-
-async function loadServerGallery() {
-  try {
-    const r = await fetch('/api/sessions');
-    const d = await r.json();
-    if (d.sessions) {
-      d.sessions.forEach(s => {
-        (s.entries || []).forEach(e => {
-          if (e.image_url && !state.gallery.find(g => g.url === e.image_url)) {
-            state.gallery.push({ url: e.image_url, name: e.note || 'image.png', cost: e.cost || 0, model: e.model || '' });
-          }
-        });
-      });
-      renderGallery();
-    }
-  } catch (e) { console.log('session load failed', e); }
-}
-loadServerGallery();
-
-// Delegate click for Save-to-gallery + Copy-prompt on output cells
-$('outputGrid').addEventListener('click', (e) => {
-  const btn = e.target.closest('.add-to-gallery');
-  if (btn) {
-    const url = btn.dataset.url;
-    const name = btn.dataset.name;
-    const cost = parseFloat(btn.dataset.cost) || 0;
-    const model = btn.dataset.model || '';
-    if (!state.gallery.find(g => g.url === url)) {
-      state.gallery.push({ url, name, cost, model, ratio: state.aspect });
-      renderGallery();
-      showToast('Saved to gallery', 'ok');
-    } else {
-      showToast('Already in gallery', 'err');
-    }
-    return;
-  }
-  const copyBtn = e.target.closest('.copy-prompt');
-  if (copyBtn) {
-    const prompt = decodeURIComponent(copyBtn.dataset.prompt || '');
-    if (prompt) {
-      navigator.clipboard.writeText(prompt).then(() => showToast('Prompt copied', 'ok')).catch(() => showToast('Copy failed', 'err'));
-    }
-  }
-});
-
-function loadIntoOutput(images) {
-  const grid = $('outputGrid');
-  grid.innerHTML = '';
-  grid.style.display = 'grid';
-  grid.className = 'output-grid' + (images.length === 1 ? ' single' : '');
-  $('emptyState').style.display = 'none';
-  state.outputImages = images.slice();
-
-  images.forEach((img, i) => {
-    const cell = document.createElement('div');
-    const ratioClass = (img.ratio || state.aspect || '1:1').replace(':', '-');
-    cell.className = 'output-cell fade-in ratio-' + ratioClass;
-    cell.style.animationDelay = (i * 0.08) + 's';
-    cell.innerHTML = buildCellHTML(img);
-    grid.appendChild(cell);
-  });
-
-  const totalCost = images.reduce((s, img) => s + (img.cost || 0), 0);
-  $('outputMeta').textContent = images.length + ' image' + (images.length > 1 ? 's' : '') + ' · $' + totalCost.toFixed(2);
-  $('downloadAllBtn').style.display = images.length > 0 ? 'inline-block' : 'none';
-}
-
-function appendToOutput(images) {
-  const grid = $('outputGrid');
-  grid.style.display = 'grid';
-  $('emptyState').style.display = 'none';
-  images.forEach(img => state.outputImages.push(img));
-
-  images.forEach((img, i) => {
-    const cell = document.createElement('div');
-    const ratioClass = (img.ratio || state.aspect || '1:1').replace(':', '-');
-    cell.className = 'output-cell fade-in ratio-' + ratioClass;
-    cell.style.animationDelay = (i * 0.08) + 's';
-    cell.innerHTML = buildCellHTML(img);
-    grid.appendChild(cell);
-  });
-
-  const allCells = grid.querySelectorAll('.output-cell');
-  const totalCost = images.reduce((s, img) => s + (img.cost || 0), 0);
-  $('outputMeta').textContent = allCells.length + ' images · streaming...';
-  $('downloadAllBtn').style.display = 'inline-block';
-}
-
-function dimBadge(ratio) {
-  const map = { '1:1': '1024×1024', '4:3': '1024×768', '16:9': '1024×576', '9:16': '576×1024', '2:3': '683×1024', '4:5': '819×1024' };
-  return map[ratio] || '';
-}
-
-function buildCellHTML(img) {
-  const ratio = img.ratio || '';
-  const cost = img.cost ? '$' + img.cost.toFixed(2) : '';
-  const model = img.model ? img.model.replace('gemini-3.1-flash-image-preview', 'Flash').replace('gemini-3-pro-image-preview', 'Pro') : '';
-  const prompt = img.prompt || state.lastPrompt || '';
-  const dims = ratio ? dimBadge(ratio) : '';
-  return (
-    '<img src="' + img.url + '" alt="" data-prompt="' + encodeURIComponent(prompt) + '">' +
-    '<div class="cell-bar">' +
-      '<div class="left">' +
-        (ratio ? '<span class="pill ratio">' + ratio + '</span>' : '') +
-        (cost ? '<span class="pill cost">' + cost + '</span>' : '') +
-        (model ? '<span class="pill model">' + model + '</span>' : '') +
-        (dims ? '<span class="pill dims">' + dims + '</span>' : '') +
-      '</div>' +
-      '<div class="right">' +
-        '<span class="copy-prompt" data-prompt="' + encodeURIComponent(prompt) + '" title="Copy prompt">📋</span>' +
-        '<a href="' + img.url + '" download="' + img.name + '">Download</a>' +
-        '<span class="add-to-gallery" data-url="' + img.url + '" data-name="' + img.name + '" data-cost="' + (img.cost||0) + '" data-model="' + (img.model||'') + '">Save</span>' +
-      '</div>' +
-    '</div>'
-  );
-}
-
-// ── Generate ──
-$('genBtn').addEventListener('click', async () => {
-  const prompt = $('prompt').value.trim();
-  if (!prompt) { showToast('Enter a scene description', 'err'); return; }
-  if (state.generating) return;
-  state.lastPrompt = prompt;
-
-  const limit = parseFloat($('costLimit').value) || 5;
-  if (limit < 0 || isNaN(limit)) { showToast('Invalid cost limit', 'err'); return; }
-  const costToday = await getCostToday();
-  const batch = $('batchToggle').checked;
-  const count = state.prodImage ? 1 : (batch ? 4 : 1);
-  const est = state.prodImage ? 0.09 : (({ fast: 0.02, balanced: 0.045, quality: 0.09, ultra: 0.24 })[state.tier] || 0.045) * count;
-  if (costToday + est > limit) {
-    showToast('Would exceed $' + limit.toFixed(2) + ' cost limit', 'err');
-    return;
-  }
-
-  state.generating = true;
-  $('genBtn').disabled = true;
-  $('genBtn').classList.add('generating');
-  $('outputMeta').textContent = '';
-
-  // Show skeleton placeholders
-  const grid = $('outputGrid');
-  grid.innerHTML = '';
-  grid.style.display = 'grid';
-  grid.className = 'output-grid' + (count === 1 ? ' single' : '');
-  $('emptyState').style.display = 'none';
-  for (let i = 0; i < count; i++) {
-    const sk = document.createElement('div');
-    sk.className = 'skeleton-cell ratio-' + (state.aspect || '1:1').replace(':', '-');
-    grid.appendChild(sk);
-  }
-
-  try {
-    let data;
-    if (state.prodImage) {
-      const fd = new FormData();
-      fd.append('prompt', prompt);
-      fd.append('product', state.prodImage);
-      fd.append('aspect_ratio', state.aspect);
-      fd.append('tier', state.tier);
-      const resp = await fetch('/api/composite', updateFetchOptions({ method: 'POST', body: fd }));
-      data = await resp.json();
-    } else {
-      const body = {
-        prompt, mode: 'direct', tier: state.tier,
-        aspect_ratio: state.aspect, variations: count
-      };
-      const resp = await fetch('/api/generate', updateFetchOptions({
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      }));
-      data = await resp.json();
-    }
-
-    if (data.error) {
-      showToast(data.error, 'err');
-      return;
-    }
-
-    let streamed = false;
-    if (data.job_id && data.status === 'running') {
-      showToast('Batch started — this takes ~2 minutes', 'ok');
-      const result = await pollJob(data.job_id, count);
-      if (result.error) { showToast(result.error, 'err'); return; }
-      data = result;
-      streamed = true;
-    }
-
-    if (data.images && data.images.length) {
-      if (!streamed) {
-        loadIntoOutput(data.images);
-        addToGallery(data.images);
-      } else if (data.partial) {
-        const grid3 = $('outputGrid');
-        const retry = document.createElement('div');
-        retry.className = 'output-cell';
-        retry.style.display = 'flex'; retry.style.alignItems = 'center'; retry.style.justifyContent = 'center';
-        retry.style.flexDirection = 'column'; retry.style.gap = '8px'; retry.style.color = 'var(--text-dim)';
-        retry.innerHTML = '<div style="font-size:0.85rem;font-weight:600;">' + data.got + '/' + data.expected + ' generated</div><button id="retryBtn" style="padding:6px 14px;border-radius:var(--radius-xs);border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:var(--font);font-size:0.78rem;cursor:pointer;">Retry missing</button>';
-        grid3.appendChild(retry);
-        $('retryBtn').addEventListener('click', () => {
-          $('genBtn').click();
-        });
-        showToast(data.message, 'ok');
-        $('downloadAllBtn').style.display = 'inline-block';
-      } else {
-        showToast(data.message || 'Done!', 'ok');
-        $('downloadAllBtn').style.display = 'inline-block';
-      }
-      refreshCost();
-    } else {
-      showToast('No images returned', 'err');
-    }
-  } catch (e) {
-    showToast('Network error: ' + e.message, 'err');
-  } finally {
-    state.generating = false;
-    $('genBtn').disabled = false;
-    $('genBtn').classList.remove('generating');
-  }
-});
-
-async function pollJob(jobId, expectedCount) {
-  const maxWait = 300;
-  const interval = 4;
-  const start = Date.now();
-  let dots = 0;
-  let streamedCount = 0;
-
-  while (true) {
-    const elapsed = (Date.now() - start) / 1000;
-    if (elapsed > maxWait) {
-      return { error: 'Timed out waiting for batch generation' };
-    }
-    dots = (dots + 1) % 4;
-    $('genLabel').textContent = 'Generating' + '.'.repeat(dots) + ' (' + Math.round(elapsed) + 's)';
-
-    await new Promise(r => setTimeout(r, interval * 1000));
-    const r = await fetch('/api/jobs/' + jobId);
-    const d = await r.json();
-
-    // Stream partial results as they arrive
-    if (d.partial && d.partial.images && d.partial.images.length > streamedCount) {
-      const newImages = d.partial.images.slice(streamedCount);
-      streamedCount = d.partial.images.length;
-      // Remove skeleton placeholders, then append real images
-      const grid2 = $('outputGrid');
-      const skeletons = grid2.querySelectorAll('.skeleton-cell');
-      skeletons.forEach((sk, idx) => {
-        if (idx < streamedCount) sk.remove();
-      });
-      appendToOutput(newImages);
-      addToGallery(newImages);
-      $('genLabel').textContent = 'Generating ' + streamedCount + '/' + expectedCount + '...';
-    }
-
-    if (d.status === 'done') {
-      $('genLabel').textContent = state.prodImage ? 'Generate Composite' : (expectedCount > 1 ? 'Generate 4 Images' : 'Generate Image');
-      $('outputGrid').querySelectorAll('.skeleton-cell').forEach(sk => sk.remove());
-      const got = d.images ? d.images.length : 0;
-      if (got < expectedCount) {
-        return { images: d.images || [], partial: true, expected: expectedCount, got, message: d.message || 'Partial: ' + got + '/' + expectedCount, session_id: d.session_id };
-      }
-      return { images: d.images || [], message: d.message || 'Done!', session_id: d.session_id };
-    }
-    if (d.status === 'error') {
-      $('genLabel').textContent = state.prodImage ? 'Generate Composite' : (expectedCount > 1 ? 'Generate 4 Images' : 'Generate Image');
-      return { error: d.error || 'Generation failed' };
-    }
-  }
-}
-
-$('clearGallery').addEventListener('click', () => {
-  state.gallery = [];
-  renderGallery();
-});
-
-async function refreshCost() {
-  try {
-    const r = await fetch('/api/costs', updateFetchOptions());
-    const d = await r.json();
-    $('costToday').textContent = '$' + (d.today?.toFixed(2) || '0.00');
-  } catch (e) { console.log('cost fetch failed', e); }
-}
-refreshCost();
-
-function showToast(msg, type) {
-  const t = $('toast');
-  t.textContent = msg;
-  t.className = 'toast ' + type;
-  requestAnimationFrame(() => t.classList.add('show'));
-  setTimeout(() => t.classList.remove('show'), 3000);
-}
-
-// ── Lightbox ──
-const lightbox = {
-  overlay: null, img: null, meta: null, list: [], idx: 0,
-  init() {
-    this.overlay = document.createElement('div');
-    this.overlay.className = 'lightbox-overlay';
-    this.overlay.innerHTML = (
-      '<div class="lightbox-inner">' +
-        '<button class="lightbox-close">×</button>' +
-        '<img class="lightbox-img" src="" alt="">' +
-        '<div class="lightbox-meta"></div>' +
-        '<button class="lightbox-nav prev">‹</button>' +
-        '<button class="lightbox-nav next">›</button>' +
-      '</div>'
-    );
-    document.body.appendChild(this.overlay);
-    this.img = this.overlay.querySelector('.lightbox-img');
-    this.meta = this.overlay.querySelector('.lightbox-meta');
-    this.overlay.querySelector('.lightbox-close').addEventListener('click', () => this.close());
-    this.overlay.querySelector('.lightbox-nav.prev').addEventListener('click', (e) => { e.stopPropagation(); this.prev(); });
-    this.overlay.querySelector('.lightbox-nav.next').addEventListener('click', (e) => { e.stopPropagation(); this.next(); });
-    this.overlay.addEventListener('click', (e) => {
-      if (e.target === this.overlay) this.close();
-      const copyBtn = e.target.closest('.copy-lightbox');
-      if (copyBtn) {
-        const prompt = decodeURIComponent(copyBtn.dataset.prompt || '');
-        if (prompt) {
-          navigator.clipboard.writeText(prompt).then(() => showToast('Prompt copied', 'ok')).catch(() => showToast('Copy failed', 'err'));
-        }
-      }
-    });
-    document.addEventListener('keydown', (e) => {
-      if (!this.overlay.classList.contains('active')) return;
-      if (e.key === 'Escape') this.close();
-      if (e.key === 'ArrowLeft') this.prev();
-      if (e.key === 'ArrowRight') this.next();
-    });
-  },
-  open(imgList, startIdx) {
-    this.list = imgList;
-    this.idx = startIdx || 0;
-    this.render();
-    this.overlay.classList.add('active');
-    document.body.style.overflow = 'hidden';
-  },
-  close() {
-    this.overlay.classList.remove('active');
-    document.body.style.overflow = '';
-  },
-  render() {
-    const img = this.list[this.idx];
-    if (!img) return;
-    this.img.src = img.url;
-    const ratio = img.ratio || '';
-    const cost = img.cost ? '$' + img.cost.toFixed(2) : '';
-    const model = img.model ? img.model.replace('gemini-3.1-flash-image-preview', 'Flash').replace('gemini-3-pro-image-preview', 'Pro') : '';
-    const prompt = img.prompt || state.lastPrompt || '';
-    this.meta.innerHTML = (
-      (ratio ? '<span class="pill ratio">' + ratio + '</span>' : '') +
-      (cost ? '<span class="pill cost">' + cost + '</span>' : '') +
-      (model ? '<span class="pill model">' + model + '</span>' : '') +
-      (prompt ? '<span class="copy-lightbox" data-prompt="' + encodeURIComponent(prompt) + '" style="cursor:pointer;margin-left:6px;padding:4px 10px;border-radius:var(--radius-xs);background:rgba(255,255,255,0.08);color:#fff;font-size:0.72rem;"">📋 Copy prompt</span>' : '') +
-      '<a href="' + img.url + '" download="' + img.name + '" style="margin-left:8px;padding:4px 10px;border-radius:var(--radius-xs);background:rgba(255,255,255,0.1);color:#fff;font-size:0.72rem;text-decoration:none;">Download</a>'
-    );
-  },
-  prev() { if (this.idx > 0) { this.idx--; this.render(); } },
-  next() { if (this.idx < this.list.length - 1) { this.idx++; this.render(); } }
-};
-lightbox.init();
-
-// Wire lightbox clicks on output grid + gallery
-function wireLightbox(container, getImgList) {
-  container.addEventListener('click', (e) => {
-    const img = e.target.closest('img');
-    if (!img) return;
-    const list = getImgList();
-    const idx = list.findIndex(i => i.url === img.src);
-    if (idx !== -1) lightbox.open(list, idx);
-  });
-}
-wireLightbox($('outputGrid'), () => state.outputImages);
-wireLightbox($('gallery'), () => state.gallery);
-
-// ── Download all from output stage ──
-$('downloadAllBtn').addEventListener('click', async () => {
-  if (!state.outputImages.length) { showToast('No images to download', 'err'); return; }
-  const urls = state.outputImages.map(img => img.url);
-  try {
-    const r = await fetch('/api/export-zip', updateFetchOptions({
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({urls})
-    }));
-    if (!r.ok) throw new Error('ZIP failed');
-    const blob = await r.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'creative-studio-output.zip';
-    a.click();
-    showToast('ZIP downloaded', 'ok');
-  } catch (e) { showToast('Export failed: ' + e.message, 'err'); }
-});
-
-// ── Keyboard shortcuts ──
-$('prompt').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault();
-    $('genBtn').click();
-  }
-});
-
-// ── Prompt history from server sessions ──
-async function loadPromptHistory() {
-  try {
-    const r = await fetch('/api/sessions');
-    const d = await r.json();
-    const prompts = [];
-    const seen = new Set();
-    (d.sessions || []).forEach(s => {
-      (s.entries || []).forEach(e => {
-        const p = e.prompt || '';
-        if (p && !seen.has(p)) { seen.add(p); prompts.push({ text: p, date: s.created_at || '' }); }
-      });
-    });
-    const container = $('promptHistory');
-    if (prompts.length) {
-      $('promptHistoryPanel').style.display = 'block';
-      container.innerHTML = prompts.slice(0, 10).map(p =>
-        '<div class="prompt-history-item" data-prompt="' + encodeURIComponent(p.text) + '">' +
-          '<span class="prompt-text">' + p.text + '</span>' +
-          '<span class="prompt-meta">' + (p.date ? p.date.split('T')[0] : '') + '</span>' +
-        '</div>'
-      ).join('');
-      container.querySelectorAll('.prompt-history-item').forEach(el => {
-        el.addEventListener('click', () => {
-          $('prompt').value = decodeURIComponent(el.dataset.prompt);
-          $('prompt').focus();
-        });
-      });
-    } else {
-      $('promptHistoryPanel').style.display = 'none';
-    }
-  } catch (e) { console.log('prompt history load failed', e); }
-}
-loadPromptHistory();
-</script>
-</body>
-</html>
-"""
-
+# ── Frontend routes ────────────────────────────────────────────────────
 
 
 @app.route("/")
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    """Marketing landing page. No auth, no editor. Shippable public surface."""
+    return render_template(LANDING_TEMPLATE)
+
+
+@app.route("/app")
+def app_editor():
+    """The editor. BYOK required for generation."""
+    return render_template(APP_TEMPLATE)
 
 
 # ── API Routes ──────────────────────────────────────────────────────────
@@ -2741,6 +997,11 @@ def api_generate():
     prompt = data.get("prompt", "").strip()
     if not prompt:
         return jsonify({"error": "Prompt required"}), 400
+
+    # ── BYOK gate (applies to both sync and async paths) ──
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
 
     mode = data.get("mode", "direct")
     tier = data.get("tier", "balanced")
@@ -2767,9 +1028,6 @@ def api_generate():
     # Async: if variations > 1, run in background thread
     if variations > 1:
         job_id = _job_id()
-        api_key = _get_api_key()
-        if not api_key:
-            return jsonify({"error": "No API key. Add your Gemini key in the sidebar panel or set GEMINI_API_KEY on the server."}), 400
 
         def _do_generate():
             images = []
@@ -2808,10 +1066,6 @@ def api_generate():
         return jsonify({"job_id": job_id, "status": "running", "message": "Generation started"})
 
     # Sync: single image (fast path)
-    api_key = _get_api_key()
-    if not api_key:
-        return jsonify({"error": "No API key. Add your Gemini key in the sidebar panel or set GEMINI_API_KEY on the server."}), 400
-
     images = run_cli_generate(prompt, mode, api_key, tier, aspect, smart, variations=1)
     for img in images:
         if "error" not in img:
@@ -2938,6 +1192,9 @@ def api_composite():
     session_id = request.form.get("session_id", new_session_id())
     if not prompt:
         return jsonify({"error": "Prompt required"}), 400
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
 
     # ── Server-side cost guardrail ──
     composite_tier = request.form.get("tier", "balanced")
@@ -2949,10 +1206,6 @@ def api_composite():
     tmp_dir.mkdir(exist_ok=True)
     product_path = tmp_dir / f"product_{int(time.time())}_{f.filename}"
     f.save(str(product_path))
-
-    api_key = _get_api_key()
-    if not api_key:
-        return jsonify({"error": "No API key. Add your Gemini key in the sidebar panel or set GEMINI_API_KEY on the server."}), 400
 
     images = run_cli_composite(prompt, str(product_path), api_key, aspect)
     for img in images:
@@ -3072,6 +1325,9 @@ def api_qc():
 @app.route("/api/figma", methods=["POST"])
 @rate_limited
 def api_figma():
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
     url = request.json.get("url")
     if not url:
         return jsonify({"error": "URL required"}), 400
@@ -3085,6 +1341,9 @@ def api_figma():
 @app.route("/api/refine", methods=["POST"])
 @rate_limited
 def api_refine():
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
     data = request.json or {}
     image_path = data.get("image_path", "")
     changes = data.get("changes", "").strip()
@@ -3125,6 +1384,9 @@ def api_refine():
 @app.route("/api/variations", methods=["POST"])
 @rate_limited
 def api_variations():
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
     data = request.json or {}
     prompt = data.get("prompt", "").strip()
     if not prompt:
@@ -3185,6 +1447,9 @@ def api_variations():
 @app.route("/api/variations/<session_key>/refine", methods=["POST"])
 @rate_limited
 def api_variations_refine(session_key):
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
     data = request.json or {}
     pick = int(data.get("pick", 1))  # 1-based variation index
     changes = data.get("changes", "").strip()
@@ -3226,6 +1491,9 @@ def api_variations_refine(session_key):
 @app.route("/api/chat", methods=["POST"])
 @rate_limited
 def api_chat():
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
     data = request.json or {}
     prompt = data.get("prompt", "").strip()
     if not prompt:
@@ -3415,14 +1683,19 @@ def api_costs():
 @app.route("/api/whoami", methods=["GET"])
 @rate_limited
 def api_whoami():
-    """Tell the frontend whether the server has a fallback key configured.
-    Lets the UI show 'BYOK active' vs 'using shared demo key' status."""
+    """Tell the frontend the BYOK/fallback status.
+
+    The frontend uses this to decide whether to show the key input as required
+    or as a convenience, and whether server fallback will work if no key is set.
+    """
     user_key = request.headers.get("X-API-Key", "").strip()
     return jsonify({
-        "server_has_fallback": bool(SERVER_API_KEY),
-        "user_supplied_key": bool(user_key),
         "byok": bool(user_key),
-        "version": "4.5.1",
+        "user_supplied_key": bool(user_key),
+        "server_has_fallback": bool(SERVER_API_KEY),
+        "fallback_enabled": bool(ALLOW_SERVER_FALLBACK and SERVER_API_KEY),
+        "byok_required": not (ALLOW_SERVER_FALLBACK and SERVER_API_KEY),
+        "version": "4.5.2",
     })
 
 

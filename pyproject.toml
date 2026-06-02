@@ -1,6 +1,6 @@
 [project]
 name = "creative-studio"
-version = "4.5.1"
+version = "4.6.0"
 description = "Iterative AI image generation workflow for Pi"
 requires-python = ">=3.10"
 dependencies = [

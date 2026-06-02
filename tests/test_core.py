@@ -190,6 +190,95 @@ class TestTierPricing:
             assert "byok" in data
             assert "version" in data
 
+
+class TestByokGate:
+    """v4.6: server fallback is opt-in via CREATIVE_ALLOW_SERVER_FALLBACK.
+    Without it, generation endpoints return 402 unless X-API-Key is supplied."""
+
+    def test_no_fallback_no_user_key_returns_402(self, monkeypatch):
+        """When CREATIVE_ALLOW_SERVER_FALLBACK is unset, /api/generate must 402."""
+        monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", False)
+        monkeypatch.setattr(cs, "SERVER_API_KEY", "")  # ensure no fallback
+        with cs.app.test_client() as c:
+            r = c.post(
+                "/api/generate",
+                json={"prompt": "test", "tier": "balanced", "aspect_ratio": "1:1"},
+            )
+            assert r.status_code == 402
+            body = r.get_json()
+            assert body["error"] == "BYOK required"
+            assert "Gemini API key" in body["message"]
+
+    def test_user_key_passes_gate(self, monkeypatch):
+        """When X-API-Key is sent, _get_api_key returns it (even without fallback)."""
+        from flask import request
+
+        monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", False)
+        monkeypatch.setattr(cs, "SERVER_API_KEY", "")
+        with cs.app.test_client() as c:
+            c.post(
+                "/api/generate",
+                json={"prompt": "test", "tier": "balanced", "aspect_ratio": "1:1"},
+                headers={"X-API-Key": "AIza-test-user-key"},
+            )
+            # Should not have hit the 402 — verify the helper would return the user key
+            # by reading the module state directly
+            with cs.app.test_request_context(headers={"X-API-Key": "AIza-test-user-key"}):
+                assert cs._get_api_key() == "AIza-test-user-key"
+
+    def test_fallback_opt_in(self, monkeypatch):
+        """When CREATIVE_ALLOW_SERVER_FALLBACK=true and server key set, helper returns server key."""
+        monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", True)
+        monkeypatch.setattr(cs, "SERVER_API_KEY", "AIza-server-fallback")
+        with cs.app.test_request_context():
+            assert cs._get_api_key() == "AIza-server-fallback"
+
+    def test_fallback_disabled_even_with_key_set(self, monkeypatch):
+        """If server key is set but CREATIVE_ALLOW_SERVER_FALLBACK is off, helper returns empty."""
+        monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", False)
+        monkeypatch.setattr(cs, "SERVER_API_KEY", "AIza-server-fallback")
+        with cs.app.test_request_context():
+            assert cs._get_api_key() == ""
+
+
+class TestPageRoutes:
+    """v4.6: marketing landing and editor are separate routes."""
+
+    def test_landing_route_serves_landing_template(self):
+        with cs.app.test_client() as c:
+            r = c.get("/")
+            assert r.status_code == 200
+            html = r.get_data(as_text=True)
+            assert "hero-section" in html
+            assert "landing-footer" in html
+            # Editor should NOT be in landing
+            assert "Generate Image" not in html
+            assert "dropzone" not in html
+
+    def test_app_route_serves_editor(self):
+        with cs.app.test_client() as c:
+            r = c.get("/app")
+            assert r.status_code == 200
+            html = r.get_data(as_text=True)
+            assert "dropzone" in html
+            assert "Generate Image" in html
+            # Landing should NOT be in editor
+            assert "hero-section" not in html
+            assert "landing-footer" not in html
+
+    def test_landing_ctas_link_to_app(self):
+        with cs.app.test_client() as c:
+            r = c.get("/")
+            html = r.get_data(as_text=True)
+            assert 'href="/app"' in html
+
+    def test_static_assets_served(self):
+        with cs.app.test_client() as c:
+            for path in ("/static/app.css", "/static/app.js"):
+                r = c.get(path)
+                assert r.status_code == 200, f"{path} returned {r.status_code}"
+                assert len(r.get_data()) > 100
+
     def test_no_literal_unicode_escapes_in_frontend(self):
         """Regression: the HTML_TEMPLATE was a raw string, so literal '\\u003e' sequences
         were being served to the browser as the 6-char string instead of '>'. This broke

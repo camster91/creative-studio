@@ -14,6 +14,8 @@ WORKDIR /app
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 COPY scripts/ ./scripts/
+COPY templates/ ./templates/
+COPY static/ ./static/
 COPY launch.sh refine.sh ./
 COPY recipes/ ./recipes/
 
