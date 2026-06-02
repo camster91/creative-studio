@@ -155,7 +155,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Deploy to Coolify (staging)
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.COOLIFY_HOST }}
           username: ${{ secrets.COOLIFY_USER }}
@@ -215,7 +215,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Deploy to Coolify (prod)
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.COOLIFY_HOST }}
           username: ${{ secrets.COOLIFY_USER }}
@@ -315,7 +315,7 @@ jobs:
         run: |
           git tag --sort=-version:refname | head -20
       - name: Rollback
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.COOLIFY_HOST }}
           username: ${{ secrets.COOLIFY_USER }}
