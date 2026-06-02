@@ -6,9 +6,11 @@ Run:  pytest tests/test_core.py -v
 """
 import os
 import sys
+import json
 import tempfile
 import importlib.util
 from pathlib import Path
+from datetime import datetime
 
 import pytest
 
@@ -80,10 +82,11 @@ class TestCostTracking:
             cs.COST_DB.parent.mkdir(parents=True, exist_ok=True)
             cs.save_costs({"total": 0.0, "by_model": {}, "by_date": {}, "session_count": 0, "image_count": 0})
 
-            cs.track_cost("gemini-3.1-flash-image-preview", 2)
+            cs.track_cost("gemini-3.1-flash-image-preview", "1K", 2)
             costs = cs.load_costs()
             assert costs["image_count"] == 2
-            assert costs["total"] == pytest.approx(0.14, abs=0.001)
+            # 2 × $0.045 (1K flash) = $0.09
+            assert costs["total"] == pytest.approx(0.09, abs=0.001)
 
 
 class TestImageUrl:
@@ -124,6 +127,68 @@ class TestAspectRatio:
         assert mod.resolve_aspect_ratio("16:9") == "16:9"
         assert mod.resolve_aspect_ratio("16:10") == "16:9"
         assert mod.resolve_aspect_ratio("garbage") == "16:9"
+
+
+class TestTierPricing:
+    def test_tier_model_mapping_complete(self):
+        for tier in ("fast", "balanced", "quality", "ultra"):
+            assert tier in cs._TIER_MODEL, f"missing tier {tier}"
+            model, res = cs._TIER_MODEL[tier]
+            assert model in cs.COSTS, f"tier {tier} -> {model} not in COSTS"
+
+    def test_cost_for_tier_distinct(self):
+        prices = {t: cs.cost_for_tier(t) for t in ("fast", "balanced", "quality", "ultra")}
+        # Each tier should have a different price (no more $0.07 / $0.07 parity bug)
+        assert prices["fast"] < prices["balanced"]
+        assert prices["balanced"] < prices["quality"]
+        assert prices["quality"] < prices["ultra"]
+        # Sanity: imagen-4.0-fast is $0.02
+        assert prices["fast"] == pytest.approx(0.02, abs=0.001)
+
+    def test_daily_limit_blocks(self):
+        """Server-side guardrail: if today's spend + est exceeds limit, returns 429 response."""
+        with cs.app.app_context():
+            with tempfile.TemporaryDirectory() as td:
+                cs.DATA_DIR = Path(td)
+                cs.SESSIONS_DIR = cs.DATA_DIR / "sessions"
+                cs.COST_DB = cs.DATA_DIR / "costs.json"
+                cs.DATA_DIR.mkdir(parents=True, exist_ok=True)
+                cs.COST_DB.parent.mkdir(parents=True, exist_ok=True)
+                cs.save_costs({"total": 0.0, "by_model": {}, "by_date": {datetime.now().strftime("%Y-%m-%d"): 4.99}, "session_count": 0, "image_count": 0})
+                import os
+                os.environ["CREATIVE_DAILY_LIMIT"] = "5"
+                # 1 fast image = $0.02, but spent_today is $4.99 → 4.99 + 0.02 = 5.01 > 5
+                result = cs.enforce_daily_limit(1, "fast")
+                assert result is not None
+                response, status = result
+                assert status == 429
+                body = json.loads(response.get_data(as_text=True))
+                assert body["limit"] == 5.0
+                assert "Daily limit" in body["error"]
+
+    def test_daily_limit_allows_under(self):
+        """If under the cap, no rejection."""
+        with cs.app.app_context():
+            with tempfile.TemporaryDirectory() as td:
+                cs.DATA_DIR = Path(td)
+                cs.COST_DB = cs.DATA_DIR / "costs.json"
+                cs.DATA_DIR.mkdir(parents=True, exist_ok=True)
+                cs.COST_DB.parent.mkdir(parents=True, exist_ok=True)
+                cs.save_costs({"total": 0.0, "by_model": {}, "by_date": {datetime.now().strftime("%Y-%m-%d"): 0.0}, "session_count": 0, "image_count": 0})
+                import os
+                os.environ["CREATIVE_DAILY_LIMIT"] = "5"
+                result = cs.enforce_daily_limit(1, "fast")
+                assert result is None  # allowed
+
+    def test_whoami_endpoint(self):
+        """The /api/whoami endpoint should report server_has_fallback accurately."""
+        with cs.app.test_client() as c:
+            r = c.get("/api/whoami")
+            assert r.status_code == 200
+            data = r.get_json()
+            assert "server_has_fallback" in data
+            assert "byok" in data
+            assert "version" in data
 
 
 if __name__ == "__main__":

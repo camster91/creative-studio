@@ -1,6 +1,6 @@
 # Creative Studio — Web App Roadmap
 
-Current status: v4.5 deployed at https://photogen.ashbi.ca
+Current status: v4.5.1 deployed at https://photogen.ashbi.ca
 
 ## ✅ Done
 - [x] Direct generation (exact prompt passthrough, no rewriting)

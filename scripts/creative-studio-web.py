@@ -76,12 +76,21 @@ def save_json(path: Path, data: dict):
 
 
 # ─── Cost tracking ───────────────────────────────────────────────────
+# Per-image cost by model and resolution (matches CLI PRICE_CARD)
 COSTS = {
-    "gemini-3.1-flash-image-preview": 0.07,
-    "gemini-3-pro-image-preview": 0.20,
-    "imagen-4.0-fast-generate-001": 0.02,
-    "imagen-4.0-generate-001": 0.04,
-    "imagen-4.0-ultra-generate-001": 0.06,
+    "gemini-3.1-flash-image-preview": {"1K": 0.045, "2K": 0.090, "4K": 0.180},
+    "gemini-3-pro-image-preview":     {"1K": 0.134, "2K": 0.240, "4K": 0.480},
+    "imagen-4.0-fast-generate-001":   {"1K": 0.02},
+    "imagen-4.0-generate-001":        {"1K": 0.04, "2K": 0.04, "4K": 0.06},
+    "imagen-4.0-ultra-generate-001":  {"1K": 0.06},
+}
+
+# Tier → (model, resolution) — matches CLI _TIER_MAP
+_TIER_MODEL = {
+    "fast":     ("imagen-4.0-fast-generate-001",   "1K"),
+    "balanced": ("gemini-3.1-flash-image-preview", "1K"),
+    "quality":  ("gemini-3.1-flash-image-preview", "2K"),
+    "ultra":    ("gemini-3-pro-image-preview",     "2K"),
 }
 
 
@@ -102,9 +111,17 @@ def save_costs(data: dict):
     save_json(COST_DB, data)
 
 
-def track_cost(model: str, count: int = 1):
+def track_cost(model: str, resolution: str = "1K", count: int = 1):
+    """Charge the user for `count` images at the given model/resolution tier."""
     costs = load_costs()
-    c = COSTS.get(model, 0.04) * count
+    # COSTS is now {model: {resolution: price}}. Default to highest known if resolution missing.
+    price_map = COSTS.get(model, {})
+    if isinstance(price_map, dict):
+        unit = price_map.get(resolution) or price_map.get("1K") or 0.04
+    else:
+        # Backward compat: older flat-dict COSTS values
+        unit = float(price_map) if price_map else 0.04
+    c = unit * count
     costs["total"] += c
     costs["by_model"][model] = costs["by_model"].get(model, 0.0) + c
     today = datetime.now().strftime("%Y-%m-%d")
@@ -112,6 +129,44 @@ def track_cost(model: str, count: int = 1):
     costs["image_count"] += count
     save_costs(costs)
     return c
+
+
+def cost_for_tier(tier: str) -> float:
+    """Estimated per-image cost for a quality tier."""
+    model, res = _TIER_MODEL.get(tier, ("gemini-3.1-flash-image-preview", "1K"))
+    price_map = COSTS.get(model, {})
+    if isinstance(price_map, dict):
+        return price_map.get(res, price_map.get("1K", 0.04))
+    return float(price_map) if price_map else 0.04
+
+
+def enforce_daily_limit(est_count: int = 1, tier: str = "balanced"):
+    """Check the CREATIVE_DAILY_LIMIT and reject the request with 429 if it would push today's spend past the cap.
+
+    Returns (None, None) if allowed, or (response, status) tuple to short-circuit.
+    """
+    try:
+        daily_limit = float(os.environ.get("CREATIVE_DAILY_LIMIT", "5"))
+    except (TypeError, ValueError):
+        daily_limit = 5.0
+    if daily_limit <= 0:
+        return None
+    unit = cost_for_tier(tier)
+    est_total = unit * max(1, est_count)
+    costs_now = load_costs()
+    today = datetime.now().strftime("%Y-%m-%d")
+    spent_today = float(costs_now.get("by_date", {}).get(today, 0.0))
+    if spent_today + est_total > daily_limit:
+        return (
+            jsonify({
+                "error": f"Daily limit ${daily_limit:.2f} reached. Spent today: ${spent_today:.2f}. Request would cost ${est_total:.2f}. Set CREATIVE_DAILY_LIMIT to a higher value or wait until tomorrow.",
+                "spent_today": round(spent_today, 4),
+                "limit": daily_limit,
+                "est_cost": round(est_total, 4),
+            }),
+            429,
+        )
+    return None
 
 
 def session_cost(session_id: str) -> float:
@@ -214,19 +269,9 @@ def build_pin_prompt(pins: List[Dict]) -> str:
 
 SCRIPT_PATH = str(Path(__file__).parent / "creative_studio.py")
 
-# Tier → (model, resolution) — must match creative_studio.py _TIER_MAP
-_TIER_MODEL = {
-    "fast": "gemini-3.1-flash-image-preview",
-    "balanced": "gemini-3.1-flash-image-preview",
-    "quality": "gemini-3-pro-image-preview",
-    "ultra": "gemini-3-pro-image-preview",
-}
-_TIER_COST = {
-    "fast": 0.07,
-    "balanced": 0.07,
-    "quality": 0.20,
-    "ultra": 0.20,
-}
+# NOTE: _TIER_MODEL is defined earlier in the file (line ~89) as a (model, resolution) tuple map.
+# Don't redefine it here — old duplicates caused a critical bug where the second definition
+# shadowed the first and broke the daily-limit guardrail.
 
 
 def run_cli_generate(
@@ -251,6 +296,9 @@ def run_cli_generate(
 
     images = []
     count = max(1, min(8, variations))
+    # Map tier → resolution so the CLI charges the correct amount
+    _tier_info = _TIER_MODEL.get(tier, ("gemini-3.1-flash-image-preview", "1K"))
+    resolution = _tier_info[1] if isinstance(_tier_info, tuple) else "1K"
     for i in range(count):
         args = [
             sys.executable,
@@ -262,6 +310,8 @@ def run_cli_generate(
             tier,
             "--aspect-ratio",
             aspect,
+            "--resolution",
+            resolution,
         ]
         if smart:
             args.append("--smart")
@@ -290,12 +340,8 @@ def run_cli_generate(
         recent = [f for f in files if (now - f.stat().st_mtime) < 180]
         if recent:
             f = recent[0]
-            model_used = (
-                "gemini-3.1-flash-image-preview"
-                if tier in ("fast", "balanced")
-                else "gemini-3-pro-image-preview"
-            )
-            cost = track_cost(model_used)
+            model_used, resolution = _TIER_MODEL.get(tier, ("gemini-3-pro-image-preview", "2K"))
+            cost = track_cost(model_used, resolution)
             images.append(
                 {
                     "path": str(f),
@@ -547,6 +593,8 @@ def run_cli_variations(
             + " The shelf surface is perfectly flat and level. Products sit firmly with flat bases touching the shelf. No tilting, no floating, no falling."
         )
 
+        _tier_info = _TIER_MODEL.get(tier, ("gemini-3.1-flash-image-preview", "1K"))
+        _resolution = _tier_info[1] if isinstance(_tier_info, tuple) else "1K"
         args = [
             sys.executable,
             SCRIPT_PATH,
@@ -557,6 +605,8 @@ def run_cli_variations(
             tier,
             "--aspect-ratio",
             aspect,
+            "--resolution",
+            _resolution,
             "--filename",
             str(vpath),
         ]
@@ -572,8 +622,8 @@ def run_cli_variations(
                 args, capture_output=True, text=True, timeout=300, env=env, check=True
             )
             if vpath.exists():
-                model_used = _TIER_MODEL.get(tier, "gemini-3-pro-image-preview")
-                cost = track_cost(model_used)
+                model_used, resolution = _TIER_MODEL.get(tier, ("gemini-3-pro-image-preview", "2K"))
+                cost = track_cost(model_used, resolution)
                 images.append(
                     {
                         "path": str(vpath),
@@ -591,8 +641,8 @@ def run_cli_variations(
     # Save manifest so refine can find the session
     manifest = {
         "count": len(images),
-        "model": _TIER_MODEL.get(tier, "gemini-3-pro-image-preview"),
-        "resolution": "2K",
+        "model": _TIER_MODEL.get(tier, ("gemini-3-pro-image-preview", "2K"))[0],
+        "resolution": _TIER_MODEL.get(tier, ("gemini-3-pro-image-preview", "2K"))[1],
         "original_prompt": prompt,
         "tier": tier,
         "aspect_ratio": aspect,
@@ -650,6 +700,8 @@ def run_cli_refine_from_variation(
     fname = f"r{pick_index:02d}-{int(time.time())}.png"
     out_path = out_dir / fname
 
+    _tier_info = _TIER_MODEL.get(tier, ("gemini-3.1-flash-image-preview", "1K"))
+    _resolution = _tier_info[1] if isinstance(_tier_info, tuple) else "1K"
     args = [
         sys.executable,
         SCRIPT_PATH,
@@ -662,6 +714,8 @@ def run_cli_refine_from_variation(
         tier,
         "--aspect-ratio",
         manifest.get("aspect_ratio", "16:9"),
+        "--resolution",
+        _resolution,
         "--filename",
         str(out_path),
     ]
@@ -675,8 +729,8 @@ def run_cli_refine_from_variation(
             args, capture_output=True, text=True, timeout=300, env=env, check=True
         )
         if out_path.exists():
-            model_used = _TIER_MODEL.get(tier, "gemini-3-pro-image-preview")
-            cost = track_cost(model_used)
+            model_used, resolution = _TIER_MODEL.get(tier, ("gemini-3-pro-image-preview", "2K"))
+            cost = track_cost(model_used, resolution)
             return [
                 {
                     "path": str(out_path),
@@ -730,6 +784,8 @@ def run_cli_chat_turn(
     out_path = out_dir / f"{session_key}" / fname
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    _tier_info = _TIER_MODEL.get(tier, ("gemini-3.1-flash-image-preview", "1K"))
+    _resolution = _tier_info[1] if isinstance(_tier_info, tuple) else "1K"
     args = [
         sys.executable,
         SCRIPT_PATH,
@@ -740,6 +796,8 @@ def run_cli_chat_turn(
         tier,
         "--aspect-ratio",
         aspect,
+        "--resolution",
+        _resolution,
         "--filename",
         str(out_path),
     ]
@@ -757,8 +815,8 @@ def run_cli_chat_turn(
             args, capture_output=True, text=True, timeout=300, env=env, check=True
         )
         if out_path.exists():
-            model_used = _TIER_MODEL.get(tier, "gemini-3-pro-image-preview")
-            cost = track_cost(model_used)
+            model_used, resolution = _TIER_MODEL.get(tier, ("gemini-3-pro-image-preview", "2K"))
+            cost = track_cost(model_used, resolution)
             images.append(
                 {
                     "path": str(out_path),
@@ -1189,11 +1247,21 @@ body {
 /* ── Empty state ── */
 .empty-state {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 14px; color: var(--text-dim); text-align: center; padding: 40px;
+  gap: 18px; color: var(--text-dim); text-align: center; padding: 40px;
 }
 .empty-state .icon { font-size: 2.5rem; opacity: 0.3; }
-.empty-state h3 { font-size: 1rem; font-weight: 600; color: var(--text-secondary); }
-.empty-state p { font-size: 0.82rem; max-width: 300px; }
+.empty-state h3 { font-size: 1.1rem; font-weight: 600; color: var(--text-secondary); }
+.empty-state p { font-size: 0.88rem; max-width: 420px; line-height: 1.5; }
+.empty-state p strong { color: var(--text); }
+.empty-tips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; max-width: 600px; margin-top: 8px; }
+.empty-tip {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 16px 12px; display: flex; flex-direction: column; gap: 6px; align-items: center;
+}
+.empty-tip .tip-icon { font-size: 1.4rem; }
+.empty-tip .tip-title { font-size: 0.82rem; font-weight: 600; color: var(--text); }
+.empty-tip .tip-desc { font-size: 0.74rem; color: var(--text-dim); line-height: 1.4; }
+@media (max-width: 720px) { .empty-tips { grid-template-columns: 1fr; max-width: 320px; } }
 
 /* ── Gallery ── */
 .gallery-panel {
@@ -1419,8 +1487,9 @@ body {
 .pricing-inner { max-width: 900px; margin: 0 auto; text-align: center; }
 .pricing-inner h2 { font-size: 1.6rem; font-weight: 700; margin-bottom: 8px; }
 .pricing-sub { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 40px; }
-.tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: start; }
-@media (max-width: 720px) { .tiers { grid-template-columns: 1fr; max-width: 380px; margin: 0 auto; } }
+.tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 980px) { .tiers { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 540px) { .tiers { grid-template-columns: 1fr; max-width: 380px; margin: 0 auto; } }
 .tier {
   background: var(--bg-elevated); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 28px; text-align: left;
@@ -1536,6 +1605,7 @@ body {
 }
 .apikey-status.ok { color: var(--success); display: block; }
 .apikey-status.err { color: var(--danger); display: block; }
+.apikey-status.warn { color: var(--warning, #fbbf24); display: block; }
 
 /* ── Prompt History ── */
 .prompt-history {
@@ -1661,9 +1731,10 @@ body {
     <div class="panel">
       <div class="panel-header"><span class="num">4</span> Quality</div>
       <div class="chip-row" id="qualityRow">
-        <div class="quality-chip active" data-tier="fast" data-cost="0.07">Fast &middot; $0.07</div>
-        <div class="quality-chip" data-tier="balanced" data-cost="0.07">Balanced &middot; $0.07</div>
-        <div class="quality-chip" data-tier="quality" data-cost="0.20">Quality &middot; $0.20</div>
+        <div class="quality-chip active" data-tier="fast" data-cost="0.02">Fast &middot; $0.02</div>
+        <div class="quality-chip" data-tier="balanced" data-cost="0.045">Balanced &middot; $0.05</div>
+        <div class="quality-chip" data-tier="quality" data-cost="0.09">Quality &middot; $0.09</div>
+        <div class="quality-chip" data-tier="ultra" data-cost="0.24">Ultra &middot; $0.24</div>
       </div>
       <label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;color:var(--text-dim);cursor:pointer;margin-top:4px;">
         <input type="checkbox" id="batchToggle" style="accent-color:var(--accent);">
@@ -1696,9 +1767,26 @@ body {
       </div>
       <div class="stage-body" id="stageBody">
         <div class="empty-state" id="emptyState">
-          <div class="icon">&#127912;</div>
-          <h3>No images yet</h3>
-          <p>Configure your shot on the left and hit Generate to create product photography</p>
+          <div class="icon">🎨</div>
+          <h3>Ready when you are</h3>
+          <p>Describe a scene on the left, pick an aspect ratio, and hit <strong>Generate</strong>. Or drop a product photo first to use <strong>Product Compositing</strong> — your real product placed into an AI scene.</p>
+          <div class="empty-tips">
+            <div class="empty-tip">
+              <div class="tip-icon">📸</div>
+              <div class="tip-title">Product Compositing</div>
+              <div class="tip-desc">Drop a PNG with a transparent background, then describe the scene. Your exact packaging gets composited in.</div>
+            </div>
+            <div class="empty-tip">
+              <div class="tip-icon">⚡</div>
+              <div class="tip-title">Batch 4-Up</div>
+              <div class="tip-desc">Toggle "Generate 4 variations" for a Midjourney-style grid. ~2 min for 4 images.</div>
+            </div>
+            <div class="empty-tip">
+              <div class="tip-icon">🎯</div>
+              <div class="tip-title">Platform Presets</div>
+              <div class="tip-desc">Click Amazon, Instagram, Email, or Pinterest to auto-fill the prompt AND aspect ratio.</div>
+            </div>
+          </div>
         </div>
         <div class="output-grid" id="outputGrid" style="display:none;"></div>
       </div>
@@ -1734,11 +1822,11 @@ body {
       <p>Upload your product. Describe the scene. Get studio-grade shots in seconds. Bring your own Gemini API key. Pay Google directly. No credit card, no subscription, no retouching.</p>
       <div class="hero-cta">
         <button class="hero-btn" onclick="document.getElementById('editor').scrollIntoView({behavior:'smooth'})">Try free →</button>
-        <span class="hero-note">$0.07/image when you bring your own API key.</span>
+        <span class="hero-note">$0.02–$0.24/image when you bring your own API key. Pay Google directly.</span>
       </div>
       <div class="hero-stats">
         <div class="stat"><span class="stat-num">30s</span><span class="stat-lbl">per shot</span></div>
-        <div class="stat"><span class="stat-num">$0.07</span><span class="stat-lbl">starting cost</span></div>
+        <div class="stat"><span class="stat-num">$0.02</span><span class="stat-lbl">starting cost</span></div>
         <div class="stat"><span class="stat-num">6</span><span class="stat-lbl">aspect ratios</span></div>
         <div class="stat"><span class="stat-num">4</span><span class="stat-lbl">platform presets</span></div>
       </div>
@@ -1779,7 +1867,7 @@ body {
     <div class="feature-card">
       <div class="feature-icon">💰</div>
       <h3>Pay-Per-Image</h3>
-      <p>No subscription. No minimums. Fast tier at $0.07, Quality at $0.20. Cost guardrail keeps your team on budget.</p>
+      <p>No subscription. No minimums. Fast tier at $0.02, Quality at $0.09, Ultra at $0.24. Cost guardrail keeps your team on budget.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon">🔒</div>
@@ -1825,36 +1913,47 @@ body {
       <div class="tiers">
         <div class="tier">
           <div class="tier-label">Fast</div>
-          <div class="tier-price">$0.07</div>
+          <div class="tier-price">$0.02</div>
           <div class="tier-unit">per image</div>
           <ul class="tier-features">
             <li>Draft quality — great for mocks &amp; variants</li>
-            <li>1K resolution</li>
-            <li>~30 seconds</li>
+            <li>1K resolution (imagen-4.0)</li>
+            <li>~15 seconds</li>
             <li>All 6 aspect ratios</li>
           </ul>
         </div>
         <div class="tier tier-popular">
           <div class="tier-badge">Most popular</div>
           <div class="tier-label">Balanced</div>
-          <div class="tier-price">$0.07</div>
+          <div class="tier-price">$0.05</div>
           <div class="tier-unit">per image</div>
           <ul class="tier-features">
-            <li>2K output with better lighting</li>
-            <li>Same cost as Fast</li>
+            <li>1K output with rich detail</li>
+            <li>Gemini Flash — fast + cheap</li>
             <li>~30 seconds</li>
             <li>Recommended for most shots</li>
           </ul>
         </div>
         <div class="tier">
           <div class="tier-label">Quality</div>
-          <div class="tier-price">$0.20</div>
+          <div class="tier-price">$0.09</div>
           <div class="tier-unit">per image</div>
           <ul class="tier-features">
+            <li>2K resolution (Gemini Flash upscaled)</li>
+            <li>Better lighting &amp; depth</li>
+            <li>~30 seconds</li>
+            <li>Best for storefronts &amp; marketing</li>
+          </ul>
+        </div>
+        <div class="tier">
+          <div class="tier-label">Ultra</div>
+          <div class="tier-price">$0.24</div>
+          <div class="tier-unit">per image</div>
+          <ul class="tier-features">
+            <li>2K with Gemini Pro</li>
             <li>Pro-grade detail &amp; depth</li>
-            <li>2K resolution</li>
-            <li>Best for hero shots</li>
-            <li>Product compositing</li>
+            <li>~45 seconds</li>
+            <li>Product compositing &amp; hero shots</li>
           </ul>
         </div>
       </div>
@@ -1876,7 +1975,7 @@ body {
         </details>
         <details class="faq-item">
           <summary>Do you store my API key or credit card?</summary>
-          <p>No. Your API key lives in your browser's localStorage — we never see it on our server unless you pass it in the header. No credit card required. You pay Google directly for generation.</p>
+          <p>Your API key lives in your browser's localStorage. If you don't paste one, the server uses a shared demo key (you'll see "Bring your own key for privacy" in that case). No credit card required. You pay Google directly for generation.</p>
         </details>
         <details class="faq-item">
           <summary>What happens to my product photos?</summary>
@@ -1922,11 +2021,11 @@ body {
 <div class="toast" id="toast"></div>
 
 <script>
-const $ = id = document.getElementById(id);
-let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [], selected: new Set(), lastClicked: null, outputImages: [], lastPrompt: '' };
+const $ = id => document.getElementById(id);
+let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [], selected: new Set(), lastClicked: null, outputImages: [], lastPrompt: '', apiKey: '' };
 
 // ── API Key (BYOK) ──
-const API_KEY_STORAGE = 'cs_api_key';
+const API_KEY_STORAGE='cs_api_key';
 function loadApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
 function saveApiKey(key) { localStorage.setItem(API_KEY_STORAGE, key); }
 function getApiKey() { return loadApiKey(); }
@@ -1976,13 +2075,28 @@ if (savedKey) {
   $('apikeyInput').className = 'valid';
   $('apikeyStatus').textContent = 'Key loaded ✓';
   $('apikeyStatus').className = 'apikey-status ok';
+} else {
+  // Probe server: is there a fallback key?
+  fetch('/api/whoami', updateFetchOptions())
+    .then(r => r.json())
+    .then(info => {
+      if (info.server_has_fallback && !info.byok) {
+        $('apikeyStatus').textContent = 'Using shared demo key — paste your own for privacy';
+        $('apikeyStatus').className = 'apikey-status warn';
+        $('apikeyInput').placeholder = 'Paste your Gemini API key (recommended)...';
+      } else {
+        $('apikeyStatus').textContent = 'Add a Gemini API key to start';
+        $('apikeyStatus').className = 'apikey-status';
+      }
+    })
+    .catch(() => {});
 }
 
 const PRESETS = {
-  amazon:    { prompt: 'Clean pure white background, soft shadow underneath, studio lighting, product centered, ecommerce photography, high detail', aspect: '1:1' },
-  instagram: { prompt: 'Lifestyle flatlay on textured surface, natural soft window light from left, shallow depth of field, lifestyle product photography', aspect: '1:1' },
-  email:     { prompt: 'Product on clean gradient background, dramatic side lighting, hero shot, wide composition', aspect: '16:9' },
-  pinterest: { prompt: 'Product in styled scene with complementary props, warm golden tones, overhead 45 degree angle, editorial style', aspect: '4:5' },
+  amazon:    { prompt: 'Clean pure white background, soft shadow underneath, studio lighting, product centered, ecommerce photography, high detail, ecommerce listing photo', aspect: '1:1' },
+  instagram: { prompt: 'Lifestyle flatlay on textured surface, natural soft window light from left, shallow depth of field, instagram feed aesthetic, warm tones, lifestyle product photography', aspect: '4:5' },
+  email:     { prompt: 'Product on clean gradient background, dramatic side lighting, hero shot, wide composition with negative space for headline text overlay', aspect: '16:9' },
+  pinterest: { prompt: 'Product in styled scene with complementary props, warm golden tones, overhead 45 degree angle, editorial style, pinterest pin composition', aspect: '2:3' },
 };
 
 // ── Chip selectors ──
@@ -2066,7 +2180,10 @@ function updateGenLabel() {
   const count = state.prodImage ? 1 : (batch ? 4 : 1);
   const label = state.prodImage ? 'Generate Composite' : (batch ? 'Generate 4 Images' : 'Generate Image');
   $('genLabel').textContent = label;
-  const cost = state.prodImage ? 0.20 : (0.07 * count);
+  // Per-tier pricing (must match data-cost on quality-chip + server _TIER_MODEL)
+  const TIER_COST = { fast: 0.02, balanced: 0.045, quality: 0.09, ultra: 0.24 };
+  const unit = TIER_COST[state.tier] || 0.045;
+  const cost = state.prodImage ? TIER_COST.quality : (unit * count);
   const time = batch && !state.prodImage ? '~2 min' : '~30s';
   $('genMeta').textContent = '$' + cost.toFixed(2) + ' · ' + time;
 }
@@ -2293,7 +2410,7 @@ $('genBtn').addEventListener('click', async () =\u003e {
   const costToday = await getCostToday();
   const batch = $('batchToggle').checked;
   const count = state.prodImage ? 1 : (batch ? 4 : 1);
-  const est = state.prodImage ? 0.20 : (0.07 * count);
+  const est = state.prodImage ? 0.09 : (({ fast: 0.02, balanced: 0.045, quality: 0.09, ultra: 0.24 })[state.tier] || 0.045) * count;
   if (costToday + est > limit) {
     showToast('Would exceed $' + limit.toFixed(2) + ' cost limit', 'err');
     return;
@@ -2633,6 +2750,11 @@ def api_generate():
     session_id = data.get("session_id", new_session_id())
     figma_url = data.get("figma_url")
 
+    # ── Server-side cost guardrail ──
+    guard = enforce_daily_limit(variations, tier)
+    if guard is not None:
+        return guard
+
     # Fetch figma context if requested
     figma_ctx = None
     if figma_url:
@@ -2816,6 +2938,12 @@ def api_composite():
     session_id = request.form.get("session_id", new_session_id())
     if not prompt:
         return jsonify({"error": "Prompt required"}), 400
+
+    # ── Server-side cost guardrail ──
+    composite_tier = request.form.get("tier", "balanced")
+    guard = enforce_daily_limit(1, composite_tier)
+    if guard is not None:
+        return guard
 
     tmp_dir = DATA_DIR / "uploads"
     tmp_dir.mkdir(exist_ok=True)
@@ -3007,6 +3135,11 @@ def api_variations():
     tier = data.get("tier", "balanced")
     aspect = data.get("aspect_ratio", "1:1")
     session_id = data.get("session_id", new_session_id())
+
+    # ── Server-side cost guardrail ──
+    guard = enforce_daily_limit(count, tier)
+    if guard is not None:
+        return guard
 
     # Handle optional reference image upload
     input_image = None
@@ -3279,6 +3412,20 @@ def api_costs():
     return jsonify(costs)
 
 
+@app.route("/api/whoami", methods=["GET"])
+@rate_limited
+def api_whoami():
+    """Tell the frontend whether the server has a fallback key configured.
+    Lets the UI show 'BYOK active' vs 'using shared demo key' status."""
+    user_key = request.headers.get("X-API-Key", "").strip()
+    return jsonify({
+        "server_has_fallback": bool(SERVER_API_KEY),
+        "user_supplied_key": bool(user_key),
+        "byok": bool(user_key),
+        "version": "4.5.1",
+    })
+
+
 @app.route("/status")
 def status_page():
     """Live status page showing container health, active jobs, cost today."""
@@ -3447,8 +3594,9 @@ def docs_page():
         '<div class="card-title">Cost Table</div>'
         '<table>'
         '<tr><th>Model</th><th>Price / image</th></tr>'
-        '<tr><td>gemini-3.1-flash-image-preview</td><td>$0.07</td></tr>'
-        '<tr><td>gemini-3-pro-image-preview</td><td>$0.20</td></tr>'
+        '<tr><td>gemini-3.1-flash-image-preview (1K)</td><td>$0.045</td></tr>'
+        '<tr><td>gemini-3.1-flash-image-preview (2K)</td><td>$0.090</td></tr>'
+        '<tr><td>gemini-3-pro-image-preview (2K)</td><td>$0.240</td></tr>'
         '<tr><td>imagen-4.0-fast-generate-001</td><td>$0.02</td></tr>'
         '<tr><td>imagen-4.0-generate-001</td><td>$0.04</td></tr>'
         '<tr><td>imagen-4.0-ultra-generate-001</td><td>$0.06</td></tr>'

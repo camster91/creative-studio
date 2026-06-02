@@ -7,12 +7,14 @@
 
 | Product | Description | Audience |
 |---------|-------------|----------|
-| **CLI Skill** | Command-line tool for Pi coding agent and power users | Developers, AI researchers |
-| **Web App** *(concept)* | Visual platform for marketing teams to generate product photography at scale | CPG brands, DTC marketers |
+| **CLI Skill** | Command-line tool for power users | Developers, AI researchers |
+| **Web App** | Visual platform for marketing teams to generate product photography at scale | CPG brands, DTC marketers |
+
+**Live web app:** https://photogen.ashbi.ca (v4.5.1)
 
 ---
 
-## CLI Skill (Current — v4.5)
+## CLI Skill (v4.5)
 
 ```bash
 cd cli/
@@ -43,36 +45,40 @@ env GEMINI_API_KEY="..." FIGMA_ACCESS_TOKEN="..." bash launch.sh variations \
 
 ---
 
-## Web App (Concept / Roadmap)
+## Web App (Deployed at https://photogen.ashbi.ca)
 
-### Vision
-A visual creative operations platform where CPG marketing teams can:
-- Upload product photos → get campaign-ready images in minutes
-- Manage projects by brand/campaign
-- Batch-process 50+ SKUs against scene templates
-- Export in format presets (Amazon, Shopify, Meta, etc.)
+### Current (v4.5.1) — Shipped to photogen.ashbi.ca
+
+- Direct generation (text-to-image, BYOK via Gemini API)
+- Product compositing (upload your packaging, AI builds the scene around it)
+- 4 quality tiers (Fast $0.02 / Balanced $0.05 / Quality $0.09 / Ultra $0.24)
+- 6 aspect ratios (1:1, 4:3, 16:9, 9:16, 2:3, 4:5)
+- 4 platform presets (Amazon / Instagram / Email / Pinterest) — auto-set prompt + aspect
+- Batch 4-up (parallel generation with streaming partial results)
+- Server-side daily cost guardrail (`CREATIVE_DAILY_LIMIT`, default $5/day)
+- Live session gallery with multi-select + ZIP export
+- Pin annotations, refine, variations, Figma context, chat mode
+- Cost tracking (per-image, per-day, per-session)
+- Lightbox, skeleton loaders, prompt history, copy-prompt, Ctrl+Enter
+- `/api/whoami` endpoint to surface BYOK vs shared-key status
 
 ### Architecture
 
 ```
-web/
-├── app.py                 # Flask server
-├── models.py              # Project, Asset, Template, SKU tables
+web/                       # Flask app (currently bundled in scripts/creative-studio-web.py)
+├── app.py                 # Flask server (3571 lines, monolithic — see Phase 3)
 ├── services/
-│   ├── generator.py       # Wraps creative_studio.py
-│   ├── batch.py           # Batch processing queue
-│   ├── qc.py              # Auto quality check (blur, brand safety)
-│   └── export.py          # ZIP presets for Amazon/Shopify/Meta
+│   ├── generator.py       # Wraps creative_studio.py (run_cli_generate, run_cli_composite, etc.)
+│   ├── session.py         # Session persistence (JSON in ~/.creative-studio-data/sessions)
+│   ├── costs.py           # Cost tracking + daily limit enforcement
+│   └── quality.py         # Vision-based QC scoring
 ├── templates/
-│   ├── index.html         # Upload + brief
-│   ├── compare.html       # Side-by-side v1-v4 grid
-│   ├── refine.html        # Pick + changes
-│   ├── project.html       # Saved campaigns
-│   └── export.html        # Format presets
-├── static/           
-│   ├── app.js             # Frontend logic
-│   └── style.css          # Tailwind / custom
-└── alembic/               # DB migrations
+│   ├── editor.html        # Main editor (currently inline in creative-studio-web.py)
+│   ├── status.html        # /status page
+│   └── history.html       # /history page
+└── static/
+    ├── app.js             # Frontend logic (currently inline)
+    └── style.css          # Dark theme + accent
 ```
 
 ### UX Flow
@@ -123,30 +129,37 @@ web/
 
 ## Development Roadmap
 
-### Phase 1: CLI Skill (v4.x) — Now
+### Phase 1: CLI Skill (v4.x) — Shipped
 - [x] Prompt enhancement engine
-- [x] Quality tiers
+- [x] Quality tiers (fast / balanced / quality / ultra)
 - [x] Pick-and-refine workflow
 - [x] Figma integration
 - [x] Vision pre-analysis
-- [ ] True aspect ratio control (PIL post-crop)
-- [ ] Batch mode (CSV input)
+- [x] Aspect ratio control
+- [x] Image-to-image and text-to-image modes
+
+### Phase 2: Web App MVP — Shipped (v4.5.1)
+- [x] Flask backend with all CLI features surfaced in the UI
+- [x] Upload → generate → compare flow
+- [x] Session persistence
+- [x] Export ZIP (multi-image)
+- [x] Server-side cost guardrail
+- [x] Platform presets
+- [x] Batch 4-up
+- [x] Product compositing
+- [x] Quality tiers with real per-image pricing
+- [x] BYOK + shared-key modes
+
+### Phase 3: Scale — Next
+- [ ] Split creative-studio-web.py monolith into Flask blueprints
+- [ ] Move from in-process jobs to Celery + Redis for batch processing
+- [ ] Multi-brand workspaces (project → assets → export bundle)
+- [ ] Asset library (reuse product PNGs across sessions)
+- [ ] Review/comment system (collaborative)
+- [ ] Shopify/Amazon CMS direct export
+- [ ] Team accounts + spend attribution per workspace
 - [ ] Inpainting / mask-based edits
-- [ ] Auto-QC (blur detection, brand safety)
-
-### Phase 2: Web App MVP — Next
-- [ ] Flask + SQLite scaffold
-- [ ] Upload → generate → compare flow
-- [ ] Project persistence
-- [ ] Export ZIP with format presets
-- [ ] Basic auth
-
-### Phase 3: Scale — Later
-- [ ] Celery batch processing
-- [ ] Multi-brand workspaces
-- [ ] Asset library (reuse product PNGs)
-- [ ] Review/comment system
-- [ ] Shopify/Amazon CMS export
+- [ ] Onboarding wizard for new users
 
 ---
 
@@ -157,14 +170,18 @@ web/
 git clone https://github.com/camster91/creative-studio.git
 cd creative-studio/cli
 pip install -r requirements.txt  # or: uv sync
-bash launch.sh --help
-```
+---
 
-### Web App (coming)
+## Web App (Live)
+
+**Live URL:** https://photogen.ashbi.ca
+
 ```bash
-cd creative-studio/web
-pip install -r requirements.txt
-flask run
+# Already deployed on Coolify (187.77.26.99)
+# To redeploy: see .github/workflows/deploy.yml
+# To run locally:
+export GEMINI_API_KEY="..."
+bash launch.sh  # or: python -m scripts.creative-studio-web
 ```
 
 ---
