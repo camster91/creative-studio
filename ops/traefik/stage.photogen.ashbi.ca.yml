@@ -1,0 +1,21 @@
+# Traefik dynamic config for stage.photogen.ashbi.ca
+# Same shape as the prod file, points at the stage container by name.
+# Stage container is named "photogen-stage" (see RUNBOOK.md and deploy workflow).
+# NOT yet applied to the server — created when Phase 1f sets up staging.
+
+http:
+  routers:
+    photogen-stage-router:
+      rule: "Host(`stage.photogen.ashbi.ca`)"
+      service: photogen-stage-service
+      entryPoints:
+        - http
+        - https
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    photogen-stage-service:
+      loadBalancer:
+        servers:
+          - url: "http://photogen-stage:5173"
