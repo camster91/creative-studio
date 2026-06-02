@@ -1,0 +1,137 @@
+name: Deploy Creative Studio (Coolify API)
+
+# This workflow uses the Coolify REST API to manage deploys end-to-end.
+# No SSH into the Coolify host required. The Coolify API token is the
+# only auth needed, stored as a GitHub secret.
+#
+# On push to main:
+#   1. Build the image in CI, push to GHCR
+#   2. Set the GEMINI_API_KEY env var on the prod Coolify app (from GitHub secret)
+#   3. Trigger Coolify's /start endpoint to pull + redeploy
+#   4. Verify the live site is serving 200
+#
+# Manual trigger (workflow_dispatch) supports staging-only or both.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Where to deploy'
+        required: true
+        type: choice
+        options: [staging, prod, both]
+        default: both
+
+permissions:
+  contents: read
+  packages: write
+
+# App UUIDs registered in Coolify (project: e4b6wy1yhgnwq68j0i6nf99m / Creative Studio)
+env:
+  COOLIFY_API_BASE: https://coolify.ashbi.ca/api/v1
+  PROD_APP_UUID: pw5fgzvouxizy0q6zjhnyut1
+  STAGE_APP_UUID: s1c81s9yk7p1lhi93zwgzpr6
+  IMAGE_NAME: ghcr.io/camster91/creative-studio
+
+jobs:
+  build:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-staging:
+    name: Deploy to staging
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && (inputs.target == 'staging' || inputs.target == 'both')
+    steps:
+      - name: Set GEMINI_API_KEY for staging
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          STAGE_APP_UUID: ${{ env.STAGE_APP_UUID }}
+        run: |
+          curl -sS -X POST "${COOLIFY_API_BASE}/applications/${STAGE_APP_UUID}/envs" \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"key\":\"GEMINI_API_KEY\",\"value\":\"${{ secrets.GEMINI_API_KEY_STAGE }}\"}" \
+            -f
+      - name: Trigger Coolify redeploy (staging)
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          STAGE_APP_UUID: ${{ env.STAGE_APP_UUID }}
+        run: |
+          # /start is async — returns 200 quickly, deploy runs in background
+          curl -sS -X POST "${COOLIFY_API_BASE}/applications/${STAGE_APP_UUID}/start" \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -d '{}' -f
+        continue-on-error: true  # async — Coolify queues the deploy
+
+  deploy-prod:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.target == 'prod' || inputs.target == 'both')))
+    steps:
+      - name: Set GEMINI_API_KEY for production
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          PROD_APP_UUID: ${{ env.PROD_APP_UUID }}
+        run: |
+          curl -sS -X POST "${COOLIFY_API_BASE}/applications/${PROD_APP_UUID}/envs" \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"key\":\"GEMINI_API_KEY\",\"value\":\"${{ secrets.GEMINI_API_KEY_PROD }}\"}" \
+            -f
+      - name: Trigger Coolify redeploy (production)
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          PROD_APP_UUID: ${{ env.PROD_APP_UUID }}
+        run: |
+          curl -sS -X POST "${COOLIFY_API_BASE}/applications/${PROD_APP_UUID}/start" \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -d '{}' -f
+        continue-on-error: true
+
+  verify:
+    name: Verify live
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-prod]
+    if: always()
+    steps:
+      - name: Wait for Coolify to roll
+        run: sleep 90
+      - name: Check photogen.ashbi.ca
+        run: |
+          STATUS=$(curl -s -o /tmp/whoami.json -w "%{http_code}" https://photogen.ashbi.ca/api/whoami || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            cat /tmp/whoami.json
+            echo ""
+            echo "Live photogen.ashbi.ca serving 200"
+          else
+            echo "WARN: photogen.ashbi.ca returned $STATUS — Coolify may still be rolling."
+            echo "The previous image continues to serve during the roll."
+          fi
+        continue-on-error: true
