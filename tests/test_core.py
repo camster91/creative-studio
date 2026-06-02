@@ -190,6 +190,22 @@ class TestTierPricing:
             assert "byok" in data
             assert "version" in data
 
+    def test_no_literal_unicode_escapes_in_frontend(self):
+        """Regression: the HTML_TEMPLATE was a raw string, so literal '\\u003e' sequences
+        were being served to the browser as the 6-char string instead of '>'. This broke
+        every JS arrow function. Guard against the file getting raw-string arrow escapes again."""
+        from pathlib import Path
+        web_path = Path(cs.__file__).parent / "creative-studio-web.py"
+        src = web_path.read_text()
+        # The fix: all 16 literal '\u003e' should be gone. Any new occurrence is a regression.
+        # (excludes: comments, docstrings, or explicit documentation about the bug.)
+        bad_count = src.count("\\u003e")
+        assert bad_count == 0, (
+            f"Found {bad_count} literal '\\u003e' sequences in {web_path}. "
+            "These are emitted as 6-char strings in the served HTML and break JS arrow functions. "
+            "Use the literal '>' character in the script section."
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

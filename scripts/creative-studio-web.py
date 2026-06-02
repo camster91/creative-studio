@@ -2101,10 +2101,10 @@ const PRESETS = {
 
 // ── Chip selectors ──
 function initChips(rowId, key, cls) {
-  $(rowId).addEventListener('click', e =\u003e {
+  $(rowId).addEventListener('click', e => {
     const chip = e.target.closest('.' + cls);
     if (!chip) return;
-    document.querySelectorAll('#' + rowId + ' .' + cls).forEach(c =\u003e c.classList.remove('active'));
+    document.querySelectorAll('#' + rowId + ' .' + cls).forEach(c => c.classList.remove('active'));
     chip.classList.add('active');
     state[key] = chip.dataset.tier || chip.dataset.ratio || chip.dataset.preset;
   });
@@ -2112,16 +2112,16 @@ function initChips(rowId, key, cls) {
 initChips('qualityRow', 'tier', 'quality-chip');
 
 // Aspect chips (separate to avoid initChips eating preset clicks)
-$('aspectRow').addEventListener('click', e =\u003e {
+$('aspectRow').addEventListener('click', e => {
   const chip = e.target.closest('.aspect-chip');
   if (!chip) return;
-  document.querySelectorAll('#aspectRow .aspect-chip').forEach(c =\u003e c.classList.remove('active'));
+  document.querySelectorAll('#aspectRow .aspect-chip').forEach(c => c.classList.remove('active'));
   chip.classList.add('active');
   state.aspect = chip.dataset.ratio;
 });
 
 // ── Presets ──
-$('presetRow').addEventListener('click', e =\u003e {
+$('presetRow').addEventListener('click', e => {
   const chip = e.target.closest('.preset-chip');
   if (!chip) return;
   const key = chip.dataset.preset;
@@ -2129,22 +2129,22 @@ $('presetRow').addEventListener('click', e =\u003e {
   if (!p) return;
   $('prompt').value = p.prompt;
   state.aspect = p.aspect;
-  document.querySelectorAll('.aspect-chip').forEach(c =\u003e {
+  document.querySelectorAll('.aspect-chip').forEach(c => {
     c.classList.toggle('active', c.dataset.ratio === p.aspect);
   });
-  document.querySelectorAll('.preset-chip').forEach(c =\u003e c.classList.remove('active'));
+  document.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('active'));
   chip.classList.add('active');
 });
 
 // ── Dropzone with mouse glow ──
 const dz = $('dropzone'), fi = $('fileInput');
-dz.addEventListener('mousemove', e =\u003e {
+dz.addEventListener('mousemove', e => {
   const rect = dz.getBoundingClientRect();
   dz.style.setProperty('--mx', ((e.clientX - rect.left) / rect.width * 100) + '%');
   dz.style.setProperty('--my', ((e.clientY - rect.top) / rect.height * 100) + '%');
 });
 
-const onFile = file =\u003e {
+const onFile = file => {
   if (!file || !file.type.startsWith('image/')) return;
   state.prodImage = file;
   $('fileName').textContent = file.name;
@@ -2156,15 +2156,15 @@ const onFile = file =\u003e {
   dz.querySelector('.icon').textContent = '🔄';
   updateGenLabel();
 };
-fi.addEventListener('change', e =\u003e onFile(e.target.files[0]));
-dz.addEventListener('dragover', e =\u003e { e.preventDefault(); dz.classList.add('dragover'); });
-dz.addEventListener('dragleave', () =\u003e dz.classList.remove('dragover'));
-dz.addEventListener('drop', e =\u003e {
+fi.addEventListener('change', e => onFile(e.target.files[0]));
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+dz.addEventListener('drop', e => {
   e.preventDefault(); dz.classList.remove('dragover');
   onFile(e.dataTransfer.files[0]);
 });
 
-$('removeBtn').addEventListener('click', () =\u003e {
+$('removeBtn').addEventListener('click', () => {
   state.prodImage = null;
   $('fileName').textContent = '';
   $('previewWrap').style.display = 'none';
@@ -2399,7 +2399,7 @@ function buildCellHTML(img) {
 }
 
 // ── Generate ──
-$('genBtn').addEventListener('click', async () =\u003e {
+$('genBtn').addEventListener('click', async () => {
   const prompt = $('prompt').value.trim();
   if (!prompt) { showToast('Enter a scene description', 'err'); return; }
   if (state.generating) return;
@@ -2553,7 +2553,7 @@ async function pollJob(jobId, expectedCount) {
   }
 }
 
-$('clearGallery').addEventListener('click', () =\u003e {
+$('clearGallery').addEventListener('click', () => {
   state.gallery = [];
   renderGallery();
 });
