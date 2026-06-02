@@ -1438,35 +1438,42 @@ body {
 .stat-num { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
 .stat-lbl { font-size: 0.78rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
 
-/* Trust bar */
-.trust-bar { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 28px 24px; }
-.trust-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; justify-content: center; gap: 28px; flex-wrap: wrap; }
-.trust-label { font-size: 0.78rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
-.trust-logos { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
-.trust-logo {
-  padding: 8px 18px; border-radius: var(--radius-xs);
-  border: 1px solid var(--border); background: var(--bg-elevated);
-  font-size: 0.82rem; font-weight: 500; color: var(--text-secondary);
+/* Sample outputs showcase */
+.showcase-section { padding: 64px 24px; border-top: 1px solid var(--border); background: var(--bg); }
+.showcase-inner { max-width: 1100px; margin: 0 auto; }
+.showcase-head { text-align: center; margin-bottom: 36px; }
+.showcase-head h2 { font-size: 1.6rem; font-weight: 700; margin-bottom: 8px; }
+.showcase-head p { color: var(--text-secondary); font-size: 0.95rem; }
+.showcase-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
+  margin-bottom: 24px;
 }
-
-/* Features grid */
-.features-grid {
-  max-width: 1100px; margin: 0 auto;
-  padding: 64px 24px;
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
-}
-@media (max-width: 960px) { .features-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 600px) { .features-grid { grid-template-columns: 1fr; } }
-.feature-card {
+@media (max-width: 980px) { .showcase-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 540px) { .showcase-grid { grid-template-columns: 1fr; } }
+.showcase-card {
+  display: flex; flex-direction: column; gap: 10px;
   background: var(--bg-elevated); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 28px;
-  display: flex; flex-direction: column; gap: 12px;
-  transition: border-color 0.2s;
+  border-radius: var(--radius); overflow: hidden;
+  text-decoration: none; color: inherit;
+  transition: border-color 0.2s, transform 0.2s;
 }
-.feature-card:hover { border-color: var(--border-strong); }
-.feature-icon { font-size: 1.6rem; margin-bottom: 4px; }
-.feature-card h3 { font-size: 0.95rem; font-weight: 600; }
-.feature-card p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; }
+.showcase-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.showcase-img {
+  width: 100%; background: #0d0d12; display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.showcase-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.showcase-img.ratio-1-1 { aspect-ratio: 1 / 1; }
+.showcase-img.ratio-4-5 { aspect-ratio: 4 / 5; }
+.showcase-img.ratio-9-16 { aspect-ratio: 9 / 16; }
+.showcase-img.ratio-16-9 { aspect-ratio: 16 / 9; }
+.showcase-meta {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 12px 12px;
+}
+.showcase-label { font-size: 0.82rem; font-weight: 600; color: var(--text); }
+.showcase-tags { font-size: 0.72rem; color: var(--text-dim); }
+.showcase-foot { text-align: center; color: var(--text-dim); font-size: 0.82rem; margin-top: 16px; }
 
 /* How it works */
 .how-section { padding: 64px 24px; border-top: 1px solid var(--border); }
@@ -1815,14 +1822,14 @@ body {
 <!-- ═══════ LANDING / COMMERCIAL CONTENT ═══════ -->
 <section class="landing" id="landing">
 
-  <!-- Hero pitch (shown when not logged in) -->
+  <!-- Hero pitch -->
   <div class="hero-section" id="heroSection">
     <div class="hero-inner">
-      <h1>AI product photography for <span>DTC brands</span> that ship</h1>
-      <p>Upload your product. Describe the scene. Get studio-grade shots in seconds. Bring your own Gemini API key. Pay Google directly. No credit card, no subscription, no retouching.</p>
+      <h1>Studio-grade product photos for <span>CPG &amp; DTC operators</span></h1>
+      <p>Drop your packaging, describe the scene, get a campaign-ready image in 30 seconds. Your exact product. Every platform's aspect ratio. Costs less than a coffee.</p>
       <div class="hero-cta">
         <button class="hero-btn" onclick="document.getElementById('editor').scrollIntoView({behavior:'smooth'})">Try free →</button>
-        <span class="hero-note">$0.02–$0.24/image when you bring your own API key. Pay Google directly.</span>
+        <span class="hero-note">$0.02–$0.24/image. Bring your own Gemini API key or use the shared demo key.</span>
       </div>
       <div class="hero-stats">
         <div class="stat"><span class="stat-num">30s</span><span class="stat-lbl">per shot</span></div>
@@ -1833,51 +1840,44 @@ body {
     </div>
   </div>
 
-  <!-- Trusted by (logos) -->
-  <div class="trust-bar">
-    <div class="trust-inner">
-      <span class="trust-label">Built for teams that need volume, speed, and consistency:</span>
-      <div class="trust-logos">
-        <div class="trust-logo">CPG Brand</div>
-        <div class="trust-logo">Shopify Store</div>
-        <div class="trust-logo">Design Agency</div>
-        <div class="trust-logo">Amazon Seller</div>
-        <div class="trust-logo">Pinterest Shop</div>
+  <!-- Sample outputs gallery — real generations, not stock photos -->
+  <div class="showcase-section" id="showcase">
+    <div class="showcase-inner">
+      <div class="showcase-head">
+        <h2>Real outputs. Generated in the last hour.</h2>
+        <p>No stock photos. No mockups. These came out of the editor above.</p>
       </div>
-    </div>
-  </div>
-
-  <!-- Features Grid -->
-  <div class="features-grid">
-    <div class="feature-card">
-      <div class="feature-icon">📸</div>
-      <h3>Product Compositing</h3>
-      <p>Upload your real product photo. The AI places it into any scene you describe — white background, lifestyle flatlay, or hero banner.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🎨</div>
-      <h3>Platform Presets</h3>
-      <p>One click sets the optimal prompt + aspect ratio for Amazon, Instagram, Pinterest, or email banners.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">⚡</div>
-      <h3>Batch 4-Up</h3>
-      <p>Generate 4 variations at once. Async polling means you can leave the tab and come back when your grid is ready.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">💰</div>
-      <h3>Pay-Per-Image</h3>
-      <p>No subscription. No minimums. Fast tier at $0.02, Quality at $0.09, Ultra at $0.24. Cost guardrail keeps your team on budget.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🔒</div>
-      <h3>Private Generation</h3>
-      <p>Everything runs on your own Coolify instance. Your products, prompts, and outputs never touch a third-party AI gallery.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">📱</div>
-      <h3>6 Aspect Ratios</h3>
-      <p>1:1 for feeds, 16:9 for banners, 9:16 for Stories, 4:5 for Pinterest, 4:3 for catalog, 2:3 for editorial.</p>
+      <div class="showcase-grid">
+        <a class="showcase-card" href="/image/2026-06-02/web/20260602-073157-web-79d77.png" target="_blank" rel="noopener">
+          <div class="showcase-img ratio-4-5"><img src="/image/2026-06-02/web/20260602-073157-web-79d77.png" alt="Artisan coffee bag on wooden shelf" loading="lazy"></div>
+          <div class="showcase-meta">
+            <span class="showcase-label">Instagram Feed</span>
+            <span class="showcase-tags">4:5 · $0.05 · Balanced</span>
+          </div>
+        </a>
+        <a class="showcase-card" href="/image/2026-06-02/web/20260602-073120-web-b3d96.png" target="_blank" rel="noopener">
+          <div class="showcase-img ratio-16-9"><img src="/image/2026-06-02/web/20260602-073120-web-b3d96.png" alt="Protein tub on gym counter, wide composition" loading="lazy"></div>
+          <div class="showcase-meta">
+            <span class="showcase-label">Email Banner</span>
+            <span class="showcase-tags">16:9 · $0.05 · Balanced</span>
+          </div>
+        </a>
+        <a class="showcase-card" href="/image/2026-06-02/web/20260602-073046-web-01b3f.png" target="_blank" rel="noopener">
+          <div class="showcase-img ratio-9-16"><img src="/image/2026-06-02/web/20260602-073046-web-01b3f.png" alt="Sneaker on concrete, vertical editorial" loading="lazy"></div>
+          <div class="showcase-meta">
+            <span class="showcase-label">Pinterest Pin</span>
+            <span class="showcase-tags">9:16 · $0.05 · Balanced</span>
+          </div>
+        </a>
+        <a class="showcase-card" href="/image/2026-06-02/web/20260602-072856-web-68448.png" target="_blank" rel="noopener">
+          <div class="showcase-img ratio-1-1"><img src="/image/2026-06-02/web/20260602-072856-web-68448.png" alt="Skincare bottle on wet stone" loading="lazy"></div>
+          <div class="showcase-meta">
+            <span class="showcase-label">Amazon PDP / Square Feed</span>
+            <span class="showcase-tags">1:1 · $0.05 · Balanced</span>
+          </div>
+        </a>
+      </div>
+      <p class="showcase-foot">Click any image to open the full PNG. Generate your own above — bring a product photo, get a campaign shot in under a minute.</p>
     </div>
   </div>
 
@@ -1888,18 +1888,18 @@ body {
       <div class="steps-row">
         <div class="step">
           <div class="step-num">01</div>
-          <h4>Upload product</h4>
-          <p>Drag your product photo into the dropzone. PNG, JPG, or WEBP. The AI keeps your exact packaging.</p>
+          <h4>Drop your product photo</h4>
+          <p>PNG with a transparent background works best. The AI keeps your exact packaging — flavor name, label text, color, all of it. No hallucinated SKUs.</p>
         </div>
         <div class="step">
           <div class="step-num">02</div>
-          <h4>Describe the scene</h4>
-          <p>Type what you want — or click a preset. "Clean white background, soft shadow, studio lighting."</p>
+          <h4>Pick a preset or type a scene</h4>
+          <p>Amazon white, Instagram, Pinterest, Email banner — each preset auto-fills the prompt and locks the right aspect ratio. Or type your own.</p>
         </div>
         <div class="step">
           <div class="step-num">03</div>
-          <h4>Download &amp; ship</h4>
-          <p>Single image in ~30s. Batch 4-up in ~2 min. Download PNGs and drop them straight into your storefront.</p>
+          <h4>Ship the PNG to your storefront</h4>
+          <p>One image in ~30 seconds. Batch 4-up in ~2 minutes. Download as PNG, drag into Shopify, Klaviyo, Amazon, Pinterest — wherever your buyers are.</p>
         </div>
       </div>
     </div>
@@ -1966,24 +1966,24 @@ body {
       <h2>FAQ</h2>
       <div class="faq-list">
         <details class="faq-item">
-          <summary>What makes this different from Midjourney or DALL-E?</summary>
-          <p>Creative Studio is built for product photography workflows. It composites your real product into AI-generated scenes, maintains packaging accuracy, and outputs in exact platform aspect ratios. No prompt engineering required — presets handle the setup.</p>
+          <summary>How is this different from Midjourney or DALL-E?</summary>
+          <p>Midjourney hallucinates fake product flavors, label text, and packaging details. Creative Studio keeps your real product intact via Product Compositing — drop a PNG of your actual packaging, the AI builds the scene around it without changing what's on the bottle. Plus every output is locked to a real platform aspect ratio (1:1, 4:5, 9:16, 16:9) so you don't have to crop a square for Amazon and a 4:5 for IG manually.</p>
         </details>
         <details class="faq-item">
-          <summary>Who is this for?</summary>
-          <p>DTC founders, CPG brands with monthly content calendars, Shopify operators, Amazon sellers needing white-background shots, and design agencies that need volume fast. Anyone who needs photos but doesn't have $500/day for a studio.</p>
+          <summary>Can I use this for a real product launch?</summary>
+          <p>Yes. The Quality ($0.09) and Ultra ($0.24) tiers are 2K and good enough for storefronts, paid social, and email. Most teams use Fast for internal mocks and Quality/Ultra for the final ship. CPG operators typically budget $5-10 per launch for the hero set.</p>
         </details>
         <details class="faq-item">
-          <summary>Do you store my API key or credit card?</summary>
-          <p>Your API key lives in your browser's localStorage. If you don't paste one, the server uses a shared demo key (you'll see "Bring your own key for privacy" in that case). No credit card required. You pay Google directly for generation.</p>
+          <summary>Do you train on my products or prompts?</summary>
+          <p>No. Everything runs on your own Coolify instance. Your product photos, prompts, and outputs never touch a third-party AI gallery or training dataset. Google only sees the request to generate the image, not your inputs as training data.</p>
         </details>
         <details class="faq-item">
-          <summary>What happens to my product photos?</summary>
-          <p>They stay on your own server. We don't train on them, sell them, or use them for model improvement. You control the instance, the outputs, and the data.</p>
+          <summary>What about my API key — is it safe?</summary>
+          <p>Your key lives in your browser's localStorage by default. If you don't paste one, the server uses a shared demo key. Either way, no credit card or signup needed — you pay Google directly per image.</p>
         </details>
         <details class="faq-item">
-          <summary>Do you store credit card info?</summary>
-          <p>No credit card required. You bring your own Gemini API key and pay Google directly. We only track per-image cost to help you budget.</p>
+          <summary>Can I run this on my own infrastructure?</summary>
+          <p>It's already a single Docker container — clone the repo, point it at your Gemini key, deploy anywhere. Most teams put it on their existing Coolify / Dokku / Fly.io instance alongside the rest of their stack.</p>
         </details>
       </div>
     </div>
@@ -1992,9 +1992,9 @@ body {
   <!-- CTA Banner -->
   <div class="cta-banner">
     <div class="cta-inner">
-      <h2>Ready to replace your product photographer?</h2>
-      <p>Start generating in the editor above. Paste your Gemini key and go.</p>
-      <button class="hero-btn" onclick="document.getElementById('editor').scrollIntoView({behavior:'smooth'})">Open Studio →</button>
+      <h2>Stop paying $500/day for studio time</h2>
+      <p>Paste your Gemini API key in the sidebar, drop a product photo, ship a campaign shot before your coffee gets cold.</p>
+      <button class="hero-btn" onclick="document.getElementById('editor').scrollIntoView({behavior:'smooth'})">Open the editor →</button>
     </div>
   </div>
 
