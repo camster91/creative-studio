@@ -205,6 +205,8 @@ body > * { position: relative; z-index: 1; }
   overflow-y: auto;
   padding-right: 4px;
   padding-bottom: 12px;
+  mask-image: linear-gradient(to bottom, transparent 0, black 16px, black calc(100% - 56px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 16px, black calc(100% - 56px), transparent 100%);
 }
 .sidebar > .gen-btn-wrap {
   margin-top: auto;
