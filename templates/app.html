@@ -2,11 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0c">
 <title>Creative Studio — AI Product Photography</title>
-<link rel="stylesheet" href="/static/app.css"><script src="/static/app.js" defer></script></style>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
 </head>
 <body>
+
 <header class="header">
   <div class="header-inner">
     <a href="/" class="header-brand">
@@ -23,38 +26,54 @@
     <div class="credits-pill">
       <span>Today: <span class="amt" id="costToday">$0.00</span></span>
       <span class="sep">|</span>
-      <span>Limit: $<input type="number" id="costLimit" value="5.00" step="0.50" min="0" style="width:44px;background:transparent;color:var(--text);border:none;border-bottom:1px solid var(--border);text-align:center;font-size:0.78rem;font-family:var(--font);padding:2px;"></span>
+      <span>Limit: $<input type="number" id="costLimit" value="5.00" step="0.50" min="0"></span>
     </div>
+    <button class="menu-toggle" id="menuToggle" aria-label="Open menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
   </div>
 </header>
 
+<nav class="mobile-menu" id="mobileMenu">
+  <a href="/app" class="active">Studio</a>
+  <a href="/status">Status</a>
+  <a href="/docs">API Docs</a>
+  <a href="/history">History</a>
+  <a href="/">Home</a>
+</nav>
+
 <main class="main" id="editor">
 
-  <!-- Sidebar Controls -->
   <aside class="sidebar">
 
-    <!-- 0. API Key (BYOK) -->
-    <div class="apikey-panel" id="apikeyPanel">
-      <div class="panel-header"><span class="icon">🔑</span> API Key</div>
+    <!-- 0. API Key (BYOK) — collapsed by default on mobile -->
+    <div class="apikey-panel collapsible" id="apikeyPanel">
+      <div class="panel-header" data-toggle>
+        <span class="left"><span class="icon">🔑</span> API Key</span>
+        <span class="chevron">▾</span>
+      </div>
       <div class="apikey-input-wrap">
         <input type="password" id="apikeyInput" placeholder="Paste your Gemini API key..." autocomplete="off">
         <button class="apikey-btn" id="apikeyBtn">Save</button>
       </div>
       <div class="apikey-status" id="apikeyStatus"></div>
       <div class="apikey-hint">
-        Bring your own key from <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>.
-        We don't store or train on your key. Cost is paid directly to Google.
+        Bring your own key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
+        We don't store or train on your key.
       </div>
     </div>
 
-    <!-- 1. Product -->
-    <div class="panel">
-      <div class="panel-header"><span class="num">1</span> Your Product</div>
+    <!-- 1. Product — OPEN by default on mobile (most important) -->
+    <div class="panel collapsible open" id="panel-product">
+      <div class="panel-header" data-toggle>
+        <span class="left"><span class="num">1</span> Your Product</span>
+        <span class="chevron">▾</span>
+      </div>
       <div class="dropzone" id="dropzone">
         <input type="file" id="fileInput" accept="image/*">
-        <div class="icon">&#128248;</div>
+        <div class="icon">📸</div>
         <div class="label">Drop product photo here</div>
-        <div class="hint">PNG, JPG, WEBP</div>
+        <div class="hint">PNG, JPG, WEBP — transparent PNG works best</div>
         <div class="file-name" id="fileName"></div>
         <div class="remove" id="removeBtn">Remove</div>
       </div>
@@ -63,30 +82,31 @@
       </div>
     </div>
 
-    <!-- 2. Scene -->
-    <div class="panel">
-      <div class="panel-header"><span class="num">2</span> Scene</div>
+    <!-- 2. Scene — OPEN by default on mobile -->
+    <div class="panel collapsible open" id="panel-scene">
+      <div class="panel-header" data-toggle>
+        <span class="left"><span class="num">2</span> Describe the Scene</span>
+        <span class="chevron">▾</span>
+      </div>
       <div class="prompt-box">
         <textarea id="prompt" placeholder="e.g. Premium protein tub on a clean oak shelf in a boutique fitness store, warm overhead lighting, shallow depth of field, product photography style"></textarea>
         <div class="preset-row" id="presetRow">
-          <div class="preset-chip" data-preset="amazon">Amazon white</div>
+          <div class="preset-chip" data-preset="amazon">Amazon</div>
           <div class="preset-chip" data-preset="instagram">Instagram</div>
           <div class="preset-chip" data-preset="email">Email banner</div>
           <div class="preset-chip" data-preset="pinterest">Pinterest</div>
         </div>
-        <div class="hint">Be specific about setting, lighting, and mood.</div>
+        <div class="hint">Or type your own — be specific about setting, lighting, and mood.</div>
       </div>
     </div>
 
-    <!-- Prompt History -->
-    <div class="panel" id="promptHistoryPanel" style="display:none;">
-      <div class="panel-header"><span class="num" style="background:var(--accent);color:#fff;">↺</span> Prompt History</div>
-      <div class="prompt-history" id="promptHistory"></div>
-    </div>
-
-    <!-- 3. Aspect Ratio -->
-    <div class="panel">
-      <div class="panel-header"><span class="num">3</span> Aspect Ratio</div>
+    <!-- 3. Settings (aspect + quality) — collapsed on mobile -->
+    <div class="panel collapsible" id="panel-settings">
+      <div class="panel-header" data-toggle>
+        <span class="left"><span class="num">3</span> Output Settings</span>
+        <span class="chevron">▾</span>
+      </div>
+      <div class="panel-header" style="text-transform:none; letter-spacing:0; font-size:0.78rem; font-weight:600; color:var(--text-secondary); padding-top:6px;">Aspect ratio</div>
       <div class="chip-row" id="aspectRow">
         <div class="aspect-chip active" data-ratio="1:1">1:1</div>
         <div class="aspect-chip" data-ratio="4:3">4:3</div>
@@ -95,24 +115,28 @@
         <div class="aspect-chip" data-ratio="2:3">2:3</div>
         <div class="aspect-chip" data-ratio="4:5">4:5</div>
       </div>
-    </div>
-
-    <!-- 4. Quality -->
-    <div class="panel">
-      <div class="panel-header"><span class="num">4</span> Quality</div>
+      <div class="panel-header" style="text-transform:none; letter-spacing:0; font-size:0.78rem; font-weight:600; color:var(--text-secondary); padding-top:10px;">Quality</div>
       <div class="chip-row" id="qualityRow">
-        <div class="quality-chip active" data-tier="fast" data-cost="0.02">Fast &middot; $0.02</div>
-        <div class="quality-chip" data-tier="balanced" data-cost="0.045">Balanced &middot; $0.05</div>
-        <div class="quality-chip" data-tier="quality" data-cost="0.09">Quality &middot; $0.09</div>
-        <div class="quality-chip" data-tier="ultra" data-cost="0.24">Ultra &middot; $0.24</div>
+        <div class="quality-chip active" data-tier="fast" data-cost="0.02">Fast · $0.02</div>
+        <div class="quality-chip" data-tier="balanced" data-cost="0.045">Balanced · $0.05</div>
+        <div class="quality-chip" data-tier="quality" data-cost="0.09">Quality · $0.09</div>
+        <div class="quality-chip" data-tier="ultra" data-cost="0.24">Ultra · $0.24</div>
       </div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;color:var(--text-dim);cursor:pointer;margin-top:4px;">
-        <input type="checkbox" id="batchToggle" style="accent-color:var(--accent);">
-        Generate 4 variations (slower)
+      <label class="checkbox-row">
+        <input type="checkbox" id="batchToggle">
+        Generate 4 variations (~2 min)
       </label>
     </div>
 
-    <!-- Generate -->
+    <!-- 4. Prompt History — collapsed on mobile -->
+    <div class="panel collapsible" id="promptHistoryPanel" style="display:none;">
+      <div class="panel-header" data-toggle>
+        <span class="left"><span class="num" style="background:var(--accent-soft);color:var(--accent);">↺</span> Recent Prompts</span>
+        <span class="chevron">▾</span>
+      </div>
+      <div class="prompt-history" id="promptHistory"></div>
+    </div>
+
     <div class="gen-btn-wrap">
       <button class="gen-btn" id="genBtn">
         <div class="spinner"></div>
@@ -123,15 +147,13 @@
 
   </aside>
 
-  <!-- Canvas -->
   <section class="canvas">
 
-    <!-- Output Stage -->
     <div class="output-stage">
       <div class="stage-header">
         <span class="stage-title">Output</span>
         <div style="display:flex;align-items:center;gap:10px;">
-          <button id="downloadAllBtn" style="display:none;padding:4px 10px;border-radius:var(--radius-xs);border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);font-family:var(--font);font-size:0.72rem;cursor:pointer;">Download all</button>
+          <button id="downloadAllBtn" style="display:none;padding:4px 12px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);font-family:var(--font);font-size:0.75rem;cursor:pointer;">Download all</button>
           <span class="stage-title" id="outputMeta" style="font-weight:500;"></span>
         </div>
       </div>
@@ -139,22 +161,22 @@
         <div class="empty-state" id="emptyState">
           <div class="icon">🎨</div>
           <h3>Ready when you are</h3>
-          <p>Describe a scene on the left, pick an aspect ratio, and hit <strong>Generate</strong>. Or drop a product photo first to use <strong>Product Compositing</strong> — your real product placed into an AI scene.</p>
+          <p>Drop a product photo, describe the scene, and tap <strong>Generate</strong>. For <strong>Product Compositing</strong> use a PNG with a transparent background.</p>
           <div class="empty-tips">
             <div class="empty-tip">
               <div class="tip-icon">📸</div>
               <div class="tip-title">Product Compositing</div>
-              <div class="tip-desc">Drop a PNG with a transparent background, then describe the scene. Your exact packaging gets composited in.</div>
+              <div class="tip-desc">Your exact packaging placed into an AI scene.</div>
             </div>
             <div class="empty-tip">
               <div class="tip-icon">⚡</div>
               <div class="tip-title">Batch 4-Up</div>
-              <div class="tip-desc">Toggle "Generate 4 variations" for a Midjourney-style grid. ~2 min for 4 images.</div>
+              <div class="tip-desc">Toggle for a Midjourney-style grid.</div>
             </div>
             <div class="empty-tip">
               <div class="tip-icon">🎯</div>
               <div class="tip-title">Platform Presets</div>
-              <div class="tip-desc">Click Amazon, Instagram, Email, or Pinterest to auto-fill the prompt AND aspect ratio.</div>
+              <div class="tip-desc">Auto-fills the prompt and aspect ratio.</div>
             </div>
           </div>
         </div>
@@ -162,11 +184,10 @@
       </div>
     </div>
 
-    <!-- Gallery -->
     <div class="gallery-panel" id="galleryCard" style="display:none;">
       <div class="panel-title">
         <span>Session Gallery</span>
-        <span style="font-size:0.75rem;color:var(--text-dim);cursor:pointer;" id="clearGallery">Clear all</span>
+        <span style="font-size:0.75rem;color:var(--text-dim);cursor:pointer;min-height:32px;display:inline-flex;align-items:center;" id="clearGallery">Clear all</span>
       </div>
       <div class="gallery-toolbar" id="galleryToolbar" style="display:none;">
         <button id="selectAllBtn">Select all</button>
@@ -181,9 +202,6 @@
   </section>
 
 </main>
-
-
-
 
 </body>
 </html>

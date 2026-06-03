@@ -702,3 +702,33 @@ async function loadPromptHistory() {
   } catch (e) { console.log('prompt history load failed', e); }
 }
 loadPromptHistory();
+
+// ── Mobile UI: hamburger menu + collapsible panels ──
+(function initMobileUI() {
+  const menuToggle = $('menuToggle');
+  const mobileMenu = $('mobileMenu');
+  if (menuToggle && mobileMenu) {
+    menuToggle.addEventListener('click', () => {
+      const open = mobileMenu.classList.toggle('open');
+      menuToggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+    });
+    // Close menu on link click
+    mobileMenu.querySelectorAll('a').forEach(a => {
+      a.addEventListener('click', () => {
+        mobileMenu.classList.remove('open');
+        menuToggle.setAttribute('aria-label', 'Open menu');
+      });
+    });
+  }
+
+  // Collapsible panels — any element with [data-toggle] inside .collapsible
+  // becomes the click target; the panel itself toggles `.open`
+  document.querySelectorAll('.collapsible').forEach(panel => {
+    const toggle = panel.querySelector('[data-toggle]');
+    if (!toggle) return;
+    toggle.addEventListener('click', () => {
+      // On desktop, do nothing (CSS keeps all panels expanded via :not(.open) rule only at <=960px)
+      panel.classList.toggle('open');
+    });
+  });
+})();
