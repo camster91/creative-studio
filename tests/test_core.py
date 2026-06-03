@@ -279,6 +279,53 @@ class TestPageRoutes:
                 assert r.status_code == 200, f"{path} returned {r.status_code}"
                 assert len(r.get_data()) > 100
 
+    def test_app_viewport_meta(self):
+        """App must have viewport meta tag for proper mobile rendering."""
+        with cs.app.test_client() as c:
+            html = c.get("/app").get_data(as_text=True)
+            assert 'name="viewport"' in html
+            assert "width=device-width" in html
+
+    def test_app_has_hamburger_menu(self):
+        """Mobile UI requires a hamburger menu and a hidden mobile nav drawer."""
+        with cs.app.test_client() as c:
+            html = c.get("/app").get_data(as_text=True)
+            assert 'id="menuToggle"' in html
+            assert 'id="mobileMenu"' in html
+
+    def test_app_has_collapsible_panels(self):
+        """Panels should be marked collapsible so they fold on mobile."""
+        with cs.app.test_client() as c:
+            html = c.get("/app").get_data(as_text=True)
+            assert html.count('class="panel collapsible') >= 3
+            assert html.count('data-toggle') >= 3
+
+    def test_app_16px_inputs_no_ios_zoom(self):
+        """Inputs/textareas should be 16px font-size to prevent iOS auto-zoom."""
+        with cs.app.test_client() as c:
+            r = c.get("/static/app.css")
+            css = r.get_data(as_text=True)
+            assert "font-size: 16px" in css, "Missing 16px font-size on inputs to prevent iOS zoom"
+
+    def test_app_min_touch_target_44px(self):
+        """All interactive elements should respect Apple HIG 44px minimum touch target."""
+        with cs.app.test_client() as c:
+            r = c.get("/static/app.css")
+            css = r.get_data(as_text=True)
+            assert "--touch: 44px" in css
+            # The CSS should reference this variable on chips, buttons, and inputs
+            assert "min-height: var(--touch)" in css
+
+    def test_landing_viewport_meta(self):
+        with cs.app.test_client() as c:
+            html = c.get("/").get_data(as_text=True)
+            assert 'name="viewport"' in html
+
+    def test_landing_has_cta_to_app(self):
+        with cs.app.test_client() as c:
+            html = c.get("/").get_data(as_text=True)
+            assert 'href="/app"' in html
+
     def test_no_literal_unicode_escapes_in_frontend(self):
         """Regression: the HTML_TEMPLATE was a raw string, so literal '\\u003e' sequences
         were being served to the browser as the 6-char string instead of '>'. This broke
