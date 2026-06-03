@@ -189,3 +189,5 @@ bash launch.sh  # or: python -m scripts.creative-studio-web
 ## License
 
 MIT — Free for commercial use.
+
+<!-- Deploy pipeline verify run 2026-06-03 (no-op, closes unmerged) -->
