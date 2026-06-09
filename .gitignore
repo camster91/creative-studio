@@ -25,3 +25,4 @@ Thumbs.db
 
 # Flask
 .flask_secret
+*.bak
