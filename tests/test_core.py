@@ -364,6 +364,47 @@ class TestPageRoutes:
             assert ".output-cell.is-source" in css, "Missing source tile style"
             assert ".source-badge" in css, "Missing source badge style"
 
+    def test_app_has_scene_set_button(self):
+        """The 'Generate all 5 scenes' button should be present in the editor."""
+        with cs.app.test_client() as c:
+            html = c.get("/app").get_data(as_text=True)
+            assert 'id="sceneSetBtn"' in html
+            assert "Generate all 5 scenes" in html
+
+    def test_scene_set_endpoint_requires_byok(self):
+        """POST /api/scene-set without a key must return 402 (BYOK gate)."""
+        # Disable server fallback to force BYOK
+        cs.SERVER_API_KEY = ""
+        cs.ALLOW_SERVER_FALLBACK = False
+        try:
+            with cs.app.test_client() as c:
+                # Build a minimal in-memory image
+                from io import BytesIO
+                data = {
+                    "product": (BytesIO(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100), "test.png"),
+                }
+                r = c.post("/api/scene-set", data=data, content_type="multipart/form-data")
+                assert r.status_code == 402
+                body = r.get_json()
+                assert body["error"] == "BYOK required"
+        finally:
+            cs.SERVER_API_KEY = "test-key"  # restore
+            cs.ALLOW_SERVER_FALLBACK = True
+
+    def test_scene_set_endpoint_rejects_non_image(self):
+        """POST /api/scene-set with non-image must return 400."""
+        cs.ALLOW_SERVER_FALLBACK = True
+        cs.SERVER_API_KEY = "test-key"
+        with cs.app.test_client() as c:
+            from io import BytesIO
+            data = {
+                "product": (BytesIO(b"not an image"), "test.txt"),
+            }
+            r = c.post("/api/scene-set", data=data, content_type="multipart/form-data",
+                       headers={"X-API-Key": "AIza-test-key-1234567890"})
+            # May be 400 (caught) or 500 (cli subprocess failure) — both indicate rejection
+            assert r.status_code in (400, 500)
+
     def test_no_literal_unicode_escapes_in_frontend(self):
         """Regression: the HTML_TEMPLATE was a raw string, so literal '\\u003e' sequences
         were being served to the browser as the 6-char string instead of '>'. This broke

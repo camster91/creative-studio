@@ -1412,7 +1412,7 @@ def api_variations():
         input_image = str(tmp_dir / f"variations_ref_{int(time.time())}_{f.filename}")
         f.save(input_image)
 
-    images, session_key = run_cli_variations(_get_api_key(), 
+    images, session_key = run_cli_variations(_get_api_key(),
         prompt=prompt,
         count=count,
         tier=tier,
@@ -1442,6 +1442,131 @@ def api_variations():
             "session_id": session_id,
         }
     )
+
+
+# ── Scene-set endpoint: one product, 5 scene types, 5 outputs in parallel ──
+# This is the Riverflow-style "wow" — upload a product, get one of each
+# scene type back in a single click. No client-side loop required.
+_SCENE_PROMPTS = {
+    "inhand":   "Close-up of a hand holding the product, natural skin tone, soft daylight from window, shallow depth of field, the hand fills the lower half of the frame, product in sharp focus, editorial product photography, 85mm lens",
+    "studio":   "Product on a clean seamless studio backdrop, controlled soft-box lighting from upper left, soft natural shadow underneath, perfectly centered, no distractions, ecommerce-grade product photography, color-calibrated white background, sharp from edge to edge",
+    "action":   "Product in mid-use, dynamic action moment — pouring, opening, applying, or being squeezed — motion implied by blur on liquid or cap, frozen peak moment, high shutter speed feel, dramatic side lighting, lifestyle energy, candid and authentic",
+    "lifestyle": "Product in a real-world lifestyle scene with a person, natural environment (cafe, kitchen, gym, park, or shelf), warm available light, authentic and unstaged feeling, the person is mid-activity, product naturally placed, shot in documentary style, human warmth",
+    "withprops": "Product styled with complementary props that suggest its category and use — fresh ingredients, accessories, tools, or pairing items — arranged on a textured surface (marble, wood, linen), overhead 45 degree angle, editorial flatlay composition, warm natural light, the product is the focal point with props supporting",
+}
+_SCENE_ASPECTS = {
+    "inhand":   "4:5",
+    "studio":   "1:1",
+    "action":   "4:5",
+    "lifestyle": "4:5",
+    "withprops": "1:1",
+}
+_SCENE_LABELS = {
+    "inhand":   "In-hand",
+    "studio":   "Studio",
+    "action":   "Action",
+    "lifestyle": "Lifestyle",
+    "withprops": "With props",
+}
+
+
+@app.route("/api/scene-set", methods=["POST"])
+@rate_limited
+def api_scene_set():
+    """One product → 5 images, one per scene type, generated in parallel threads.
+
+    Form fields:
+      - product: the product image file (required)
+      - tier: 'fast' | 'balanced' | 'quality' | 'ultra' (default: balanced)
+      - session_id: optional session id
+
+    Returns JSON {images: [...], message, session_id} where each image has
+    scene (inhand|studio|action|lifestyle|withprops), label, url, cost, model.
+    """
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
+
+    if "product" not in request.files:
+        return jsonify({"error": "Product image required (form field 'product')"}), 400
+
+    f = request.files["product"]
+    if not f or not f.filename:
+        return jsonify({"error": "Empty product upload"}), 400
+    if not f.type.startswith("image/"):
+        return jsonify({"error": "Product must be an image (PNG, JPG, WEBP)"}), 400
+
+    tier = request.form.get("tier", "balanced")
+    if tier not in _TIER_MODEL:
+        tier = "balanced"
+    session_id = request.form.get("session_id", new_session_id())
+
+    # Cost guardrail: 5 images worst-case
+    guard = enforce_daily_limit(5, tier)
+    if guard is not None:
+        return guard
+
+    # Save the uploaded product once
+    tmp_dir = DATA_DIR / "uploads"
+    tmp_dir.mkdir(exist_ok=True)
+    product_path = tmp_dir / f"sceneset_{int(time.time())}_{f.filename}"
+    f.save(str(product_path))
+
+    # Use a thread pool to run all 5 scenes in parallel
+    images: List[Dict] = []
+    images_lock = threading.Lock()
+    scenes = list(_SCENE_PROMPTS.keys())
+
+    def _run_scene(scene_key: str):
+        prompt = _SCENE_PROMPTS[scene_key]
+        aspect = _SCENE_ASPECTS[scene_key]
+        try:
+            imgs = run_cli_composite(prompt, str(product_path), api_key, aspect)
+            if imgs and "error" not in imgs[0]:
+                img = imgs[0]
+                with images_lock:
+                    images.append({
+                        "scene": scene_key,
+                        "label": _SCENE_LABELS[scene_key],
+                        "url": img.get("url", ""),
+                        "path": img.get("path", ""),
+                        "name": img.get("name", ""),
+                        "cost": img.get("cost", 0),
+                        "model": img.get("model", ""),
+                        "ratio": aspect,
+                    })
+                    add_entry(
+                        session_id,
+                        {
+                            "type": "sceneset",
+                            "prompt": prompt[:100],
+                            "cost": img.get("cost", 0),
+                            "image_url": img.get("url", ""),
+                            "model": img.get("model", ""),
+                            "note": _SCENE_LABELS[scene_key],
+                        },
+                    )
+        except Exception as e:
+            # Silently skip failed scenes so the user still gets 4 of 5
+            print(f"[sceneset] {scene_key} failed: {e}", file=sys.stderr)
+
+    threads = [threading.Thread(target=_run_scene, args=(s,), daemon=True) for s in scenes]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=300)  # each scene up to 5 min
+
+    # Order the output to match scene order (Riverflow-style bento)
+    images.sort(key=lambda x: scenes.index(x["scene"]) if x["scene"] in scenes else 99)
+
+    total_cost = sum(img.get("cost", 0) for img in images)
+    return jsonify({
+        "message": f"Generated {len(images)}/{len(scenes)} scene(s)",
+        "images": images,
+        "session_id": session_id,
+        "total_cost": total_cost,
+        "scenes_requested": scenes,
+    })
 
 
 @app.route("/api/variations/<session_key>/refine", methods=["POST"])

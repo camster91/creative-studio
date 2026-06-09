@@ -200,6 +200,8 @@ function onFile(file) {
   previewImg.src = url;
   dropzoneEmpty.hidden = true;
   dropzoneFilled.hidden = false;
+  // Reveal the "Generate all 5 scenes" button — only useful with a product
+  $('sceneSetBtn').hidden = false;
   updateGenLabel();
 }
 
@@ -462,6 +464,93 @@ genBtn.addEventListener('click', async () => {
     genBtn.classList.remove('is-loading');
     btnSpinner.hidden = true;
     updateGenLabel();
+  }
+});
+
+// ── Scene-set: one product → 5 scene images in parallel ──
+const sceneSetBtn = $('sceneSetBtn');
+const sceneSetMeta = $('sceneSetMeta');
+const SCENE_LABELS_JS = {
+  inhand: 'In-hand', studio: 'Studio', action: 'Action',
+  lifestyle: 'Lifestyle', withprops: 'With props',
+};
+sceneSetBtn.addEventListener('click', async () => {
+  if (!state.prodImage) { showToast('Upload a product first', 'err'); return; }
+  if (state.generating) return;
+  state.generating = true;
+  sceneSetBtn.disabled = true;
+  sceneSetBtn.classList.add('is-loading');
+  const originalMeta = sceneSetMeta.textContent;
+  sceneSetMeta.textContent = 'Generating 5 scenes…';
+
+  // Show 5 skeleton tiles with scene labels, plus the source tile as anchor
+  outputEmpty.hidden = true;
+  outputGrid.hidden = false;
+  outputGrid.innerHTML = '';
+  if (state.productDataUrl) {
+    const src = document.createElement('div');
+    src.className = 'output-cell is-source';
+    src.innerHTML = `<img src="${state.productDataUrl}" alt="Source product"><span class="source-badge">Source</span>`;
+    outputGrid.appendChild(src);
+  }
+  // Bento: 6 cells (1 source + 5 scenes) — use the count-6 3-col layout
+  outputGrid.className = 'output-grid count-6';
+  const SCENES = ['inhand', 'studio', 'action', 'lifestyle', 'withprops'];
+  SCENES.forEach((scene, i) => {
+    const sk = document.createElement('div');
+    sk.className = 'skeleton-cell scene-loading';
+    sk.dataset.scene = scene;
+    sk.innerHTML = `<span class="skeleton-label">${SCENE_LABELS_JS[scene]}</span>`;
+    outputGrid.appendChild(sk);
+  });
+
+  try {
+    const fd = new FormData();
+    fd.append('product', state.prodImage);
+    fd.append('tier', state.tier);
+    const resp = await fetch('/api/scene-set', updateFetchOptions({ method: 'POST', body: fd }));
+    const data = await resp.json();
+    if (data.error) {
+      showEmpty();
+      showToast(data.error, 'err');
+      return;
+    }
+
+    // Replace skeletons with real images as they come back, in scene order
+    const got = data.images || [];
+    for (const img of got) {
+      const sk = outputGrid.querySelector(`.skeleton-cell[data-scene="${img.scene}"]`);
+      if (sk) {
+        sk.outerHTML = buildCellHTML(img);
+        // Re-apply output-cell class to the inserted node since buildCellHTML
+        // produces a <div class="output-cell ..."> already.
+        const newCell = outputGrid.querySelector(`img[alt=""]`);
+        if (newCell && newCell.parentElement) {
+          newCell.parentElement.className = 'output-cell ' + ratioClass(img.ratio);
+        }
+      } else {
+        // No matching skeleton (shouldn't happen), append at end
+        const cell = document.createElement('div');
+        cell.className = 'output-cell ' + ratioClass(img.ratio);
+        cell.innerHTML = buildCellHTML(img);
+        outputGrid.appendChild(cell);
+      }
+    }
+
+    // Remove any unfilled skeletons
+    outputGrid.querySelectorAll('.skeleton-cell').forEach(sk => sk.remove());
+
+    addToGallery(got);
+    refreshCost();
+    showToast(data.message || `Generated ${got.length} scene(s)`, got.length === 5 ? 'ok' : 'err');
+  } catch (e) {
+    showEmpty();
+    showToast('Network error: ' + e.message, 'err');
+  } finally {
+    state.generating = false;
+    sceneSetBtn.disabled = false;
+    sceneSetBtn.classList.remove('is-loading');
+    sceneSetMeta.textContent = originalMeta;
   }
 });
 

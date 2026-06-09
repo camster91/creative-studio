@@ -482,6 +482,33 @@ a:hover { text-decoration: underline; }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 .btn-primary.is-loading { cursor: wait; }
 
+/* Scene-set button: secondary CTA, only visible when product is uploaded */
+.btn-scene-set {
+  width: 100%;
+  min-height: var(--t);
+  padding: 0 16px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font);
+  font-size: var(--t-body);
+  font-weight: 600;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: background 0.15s, transform 0.1s;
+}
+.btn-scene-set:hover {
+  background: var(--accent-glow);
+  transform: translateY(-1px);
+}
+.btn-scene-set:active { transform: scale(0.98); }
+.btn-scene-set:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.scene-set-label { font-size: var(--t-body); }
+.scene-set-meta { font-size: var(--t-caption); font-weight: 500; opacity: 0.75; }
+
 .btn-secondary {
   background: var(--bg-input);
   color: var(--text);
@@ -757,9 +784,17 @@ a:hover { text-decoration: underline; }
 .skeleton-cell.ratio-4-5 { aspect-ratio: 4 / 5; }
 .skeleton-cell::after {
   content: ''; position: absolute; inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
   background-size: 200% 100%;
   animation: shimmer 1.4s infinite;
+}
+.skeleton-cell .skeleton-label {
+  position: absolute; top: 8px; left: 8px;
+  padding: 4px 8px; border-radius: 100px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff; font-size: var(--t-caption);
+  font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  z-index: 1;
 }
 @keyframes shimmer {
   0% { background-position: 200% 0; }
