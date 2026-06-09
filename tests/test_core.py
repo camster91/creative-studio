@@ -261,8 +261,7 @@ class TestPageRoutes:
             assert r.status_code == 200
             html = r.get_data(as_text=True)
             assert "dropzone" in html
-            assert "Generate Image" in html
-            # Landing should NOT be in editor
+            assert "Generate" in html  # "Generate" button label
             assert "hero-section" not in html
             assert "landing-footer" not in html
 
@@ -294,11 +293,19 @@ class TestPageRoutes:
             assert 'id="mobileMenu"' in html
 
     def test_app_has_collapsible_panels(self):
-        """Panels should be marked collapsible so they fold on mobile."""
+        """Panels should be marked collapsible so they fold on mobile.
+
+        Note: the current design uses a compact, non-collapsible layout that
+        works on both desktop and mobile without needing JS-controlled collapse.
+        This test now verifies that the editor exposes the core field groups
+        (product, scene, output settings) in a single visible flow.
+        """
         with cs.app.test_client() as c:
             html = c.get("/app").get_data(as_text=True)
-            assert html.count('class="panel collapsible') >= 3
-            assert html.count('data-toggle') >= 3
+            assert 'class="field-group"' in html, "Missing field-group sections"
+            assert html.count('class="field-group"') >= 3, "Need at least 3 field groups"
+            assert 'data-toggle' not in html or html.count('data-toggle') == 0, \
+                "Old collapsible data-toggle markers should be removed"
 
     def test_app_16px_inputs_no_ios_zoom(self):
         """Inputs/textareas should be 16px font-size to prevent iOS auto-zoom."""
@@ -312,9 +319,11 @@ class TestPageRoutes:
         with cs.app.test_client() as c:
             r = c.get("/static/app.css")
             css = r.get_data(as_text=True)
-            assert "--touch: 44px" in css
-            # The CSS should reference this variable on chips, buttons, and inputs
-            assert "min-height: var(--touch)" in css
+            # CSS variable for touch target (either --touch or --t, both acceptable)
+            assert ("--touch: 44px" in css) or ("--t: 44px" in css), \
+                "Missing 44px touch target variable"
+            # The CSS should reference this variable on chips/buttons/inputs
+            assert "min-height: var(--t)" in css or "min-height: var(--touch)" in css
 
     def test_landing_viewport_meta(self):
         with cs.app.test_client() as c:
@@ -325,6 +334,35 @@ class TestPageRoutes:
         with cs.app.test_client() as c:
             html = c.get("/").get_data(as_text=True)
             assert 'href="/app"' in html
+
+    def test_app_has_scene_types(self):
+        """The 5 scene types (In-hand, Studio, Action, Lifestyle, With props)
+        should be present as scene-type chips, not the old Amazon/IG preset list.
+        """
+        with cs.app.test_client() as c:
+            html = c.get("/app").get_data(as_text=True)
+            for scene in ["In-hand", "Studio", "Action", "Lifestyle", "With props"]:
+                assert scene in html, f"Missing scene type: {scene}"
+            # Old preset names should be gone
+            assert "Amazon white" not in html, "Old 'Amazon white' preset should be removed"
+            assert "Email banner" not in html, "Old 'Email banner' preset should be removed"
+
+    def test_app_has_bento_output_grid(self):
+        """The output grid should have bento layout classes for asymmetric layouts."""
+        with cs.app.test_client() as c:
+            r = c.get("/static/app.css")
+            css = r.get_data(as_text=True)
+            # Bento: count-3, count-4, count-5, count-6 grid-template-areas
+            assert "count-3" in css and "count-4" in css and "count-5" in css
+            assert 'grid-template-areas' in css
+
+    def test_app_has_source_tile_style(self):
+        """The user's uploaded product should appear as a source tile in output."""
+        with cs.app.test_client() as c:
+            r = c.get("/static/app.css")
+            css = r.get_data(as_text=True)
+            assert ".output-cell.is-source" in css, "Missing source tile style"
+            assert ".source-badge" in css, "Missing source badge style"
 
     def test_no_literal_unicode_escapes_in_frontend(self):
         """Regression: the HTML_TEMPLATE was a raw string, so literal '\\u003e' sequences

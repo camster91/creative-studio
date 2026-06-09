@@ -1,15 +1,30 @@
+// ════════════════════════════════════════════════════════════════════
+// Creative Studio — Refactored editor logic
+// ════════════════════════════════════════════════════════════════════
 
 const $ = id => document.getElementById(id);
-let state = { tier: 'fast', aspect: '1:1', prodImage: null, generating: false, gallery: [], selected: new Set(), lastClicked: null, outputImages: [], lastPrompt: '', apiKey: '' };
 
-// ── API Key (BYOK) ──
-const API_KEY_STORAGE='cs_api_key';
-function loadApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
-function saveApiKey(key) { localStorage.setItem(API_KEY_STORAGE, key); }
-function getApiKey() { return loadApiKey(); }
+const state = {
+  tier: 'balanced',
+  aspect: '1:1',
+  prodImage: null,
+  productDataUrl: null,  // data:URL/objectURL of uploaded product (for bento source tile)
+  generating: false,
+  gallery: [],
+  selected: new Set(),
+  outputImages: [],
+  lastPrompt: '',
+  apiKey: '',
+  costToday: 0,
+};
+
+// ── API Key (BYOK) ──────────────────────────────────────────────
+const API_KEY_STORAGE = 'cs_api_key';
+const loadApiKey = () => localStorage.getItem(API_KEY_STORAGE) || '';
+const saveApiKey = (key) => localStorage.setItem(API_KEY_STORAGE, key);
 
 function updateFetchOptions(opts = {}) {
-  const key = getApiKey();
+  const key = loadApiKey();
   if (key) {
     opts.headers = opts.headers || {};
     opts.headers['X-API-Key'] = key;
@@ -27,329 +42,300 @@ async function validateApiKey(key) {
   } catch (e) { return { valid: false, error: e.message }; }
 }
 
-$('apikeyBtn').addEventListener('click', async () => {
-  const key = $('apikeyInput').value.trim();
+const apikeyDot = $('apikeyDot');
+const apikeyStatus = $('apikeyStatus');
+const apikeyForm = $('apikeyForm');
+const apikeyInput = $('apikeyInput');
+const apikeyBtn = $('apikeyBtn');
+const apikeyEdit = $('apikeyEdit');
+
+function setKeyState(state_) {
+  // state_: 'none' | 'shared' | 'user' | 'required'
+  apikeyDot.className = 'apikey-status-dot dot-' + state_;
+  apikeyEdit.textContent = state_ === 'user' ? 'Change' : 'Add';
+  if (state_ === 'user') apikeyStatus.textContent = 'Your Gemini key';
+  else if (state_ === 'shared') apikeyStatus.textContent = 'Shared demo key';
+  else if (state_ === 'required') apikeyStatus.textContent = 'API key required';
+  else apikeyStatus.textContent = 'No key configured';
+}
+
+apikeyEdit.addEventListener('click', () => {
+  apikeyForm.hidden = false;
+  apikeyInput.value = loadApiKey();
+  apikeyInput.focus();
+  apikeyEdit.textContent = 'Cancel';
+  apikeyEdit.onclick = closeApikeyForm;
+});
+
+function closeApikeyForm() {
+  apikeyForm.hidden = true;
+  apikeyEdit.textContent = state.apiKey ? 'Change' : 'Add';
+  apikeyEdit.onclick = null;
+  apikeyEdit.addEventListener('click', openApikeyForm);
+}
+
+function openApikeyForm() {
+  apikeyForm.hidden = false;
+  apikeyInput.value = loadApiKey();
+  apikeyInput.focus();
+  apikeyEdit.textContent = 'Cancel';
+}
+
+// Replace the inline onclick pattern
+apikeyEdit.addEventListener('click', openApikeyForm);
+
+apikeyBtn.addEventListener('click', async () => {
+  const key = apikeyInput.value.trim();
   if (!key) { showToast('Paste a key first', 'err'); return; }
-  $('apikeyStatus').textContent = 'Checking...';
-  $('apikeyStatus').className = 'apikey-status';
+  apikeyBtn.disabled = true;
+  apikeyBtn.textContent = 'Checking…';
   const result = await validateApiKey(key);
+  apikeyBtn.disabled = false;
+  apikeyBtn.textContent = 'Save';
   if (result.valid) {
     saveApiKey(key);
-    $('apikeyStatus').textContent = 'Key saved ✓';
-    $('apikeyStatus').className = 'apikey-status ok';
-    $('apikeyInput').className = 'valid';
+    state.apiKey = key;
+    setKeyState('user');
+    closeApikeyForm();
     showToast('API key saved', 'ok');
   } else {
-    $('apikeyStatus').textContent = result.error || 'Invalid key';
-    $('apikeyStatus').className = 'apikey-status err';
-    $('apikeyInput').className = 'invalid';
+    showToast(result.error || 'Invalid key', 'err');
   }
 });
 
-// Load saved key on startup
-const savedKey = loadApiKey();
-if (savedKey) {
-  $('apikeyInput').value = savedKey;
-  $('apikeyInput').className = 'valid';
-  $('apikeyStatus').textContent = 'Key loaded ✓';
-  $('apikeyStatus').className = 'apikey-status ok';
-} else {
-  // Probe server: is there a fallback key?
-  fetch('/api/whoami', updateFetchOptions())
-    .then(r => r.json())
-    .then(info => {
-      if (info.fallback_enabled && !info.byok) {
-        $('apikeyStatus').textContent = 'Using shared demo key — paste your own for privacy';
-        $('apikeyStatus').className = 'apikey-status warn';
-        $('apikeyInput').placeholder = 'Paste your Gemini API key (recommended)...';
-      } else if (info.byok_required && !info.byok) {
-        $('apikeyStatus').textContent = 'Required — paste your Gemini API key to generate';
-        $('apikeyStatus').className = 'apikey-status err';
-        $('apikeyInput').placeholder = 'Paste your Gemini API key (required)...';
-      } else {
-        $('apikeyStatus').textContent = 'Key saved — ready to generate';
-        $('apikeyStatus').className = 'apikey-status ok';
-        $('apikeyInput').placeholder = 'Paste your Gemini API key (recommended)...';
-      }
-    })
-    .catch(() => {});
+// Probe whoami to know if there's a server fallback
+async function initKeyState() {
+  state.apiKey = loadApiKey();
+  if (state.apiKey) {
+    setKeyState('user');
+    return;
+  }
+  try {
+    const r = await fetch('/api/whoami', updateFetchOptions());
+    const info = await r.json();
+    if (info.fallback_enabled) setKeyState('shared');
+    else setKeyState('required');
+  } catch (e) { setKeyState('required'); }
 }
+initKeyState();
 
-const PRESETS = {
-  amazon:    { prompt: 'Clean pure white background, soft shadow underneath, studio lighting, product centered, ecommerce photography, high detail, ecommerce listing photo', aspect: '1:1' },
-  instagram: { prompt: 'Lifestyle flatlay on textured surface, natural soft window light from left, shallow depth of field, instagram feed aesthetic, warm tones, lifestyle product photography', aspect: '4:5' },
-  email:     { prompt: 'Product on clean gradient background, dramatic side lighting, hero shot, wide composition with negative space for headline text overlay', aspect: '16:9' },
-  pinterest: { prompt: 'Product in styled scene with complementary props, warm golden tones, overhead 45 degree angle, editorial style, pinterest pin composition', aspect: '2:3' },
+// ── Scene types (work for any product) ────────────────────────────
+// Each scene type has a prompt template that describes the *scene* but leaves
+// the product generic ("the product"). When the user uploads a product photo,
+// it's composited in via the existing Product Compositing flow.
+const SCENE_TYPES = {
+  inhand: {
+    label: 'In-hand',
+    prompt: 'Close-up of a hand holding the product, natural skin tone, soft daylight from window, shallow depth of field, the hand fills the lower half of the frame, product in sharp focus, editorial product photography, 85mm lens',
+    aspect: '4:5',
+  },
+  studio: {
+    label: 'Studio',
+    prompt: 'Product on a clean seamless studio backdrop, controlled soft-box lighting from upper left, soft natural shadow underneath, perfectly centered, no distractions, ecommerce-grade product photography, color-calibrated white background, sharp from edge to edge',
+    aspect: '1:1',
+  },
+  action: {
+    label: 'Action',
+    prompt: 'Product in mid-use, dynamic action moment — pouring, opening, applying, or being squeezed — motion implied by blur on liquid or cap, frozen peak moment, high shutter speed feel, dramatic side lighting, lifestyle energy, candid and authentic',
+    aspect: '4:5',
+  },
+  lifestyle: {
+    label: 'Lifestyle',
+    prompt: 'Product in a real-world lifestyle scene with a person, natural environment (cafe, kitchen, gym, park, or shelf), warm available light, authentic and unstaged feeling, the person is mid-activity, product naturally placed, shot in documentary style, human warmth',
+    aspect: '4:5',
+  },
+  withprops: {
+    label: 'With props',
+    prompt: 'Product styled with complementary props that suggest its category and use — fresh ingredients, accessories, tools, or pairing items — arranged on a textured surface (marble, wood, linen), overhead 45 degree angle, editorial flatlay composition, warm natural light, the product is the focal point with props supporting',
+    aspect: '1:1',
+  },
 };
 
-// ── Chip selectors ──
-function initChips(rowId, key, cls) {
+document.querySelectorAll('#presetRow .chip-scene').forEach(chip => {
+  chip.addEventListener('click', () => {
+    const scene = SCENE_TYPES[chip.dataset.preset];
+    if (!scene) return;
+    $('prompt').value = scene.prompt;
+    state.aspect = scene.aspect;
+    document.querySelectorAll('#aspectRow .chip').forEach(c => {
+      c.classList.toggle('active', c.dataset.ratio === scene.aspect);
+    });
+    document.querySelectorAll('#presetRow .chip-scene').forEach(c => c.classList.toggle('active', c === chip));
+  });
+});
+
+// ── Chip selectors (aspect + quality) ───────────────────────────
+function bindChips(rowId, onChange) {
   $(rowId).addEventListener('click', e => {
-    const chip = e.target.closest('.' + cls);
+    const chip = e.target.closest('.chip');
     if (!chip) return;
-    document.querySelectorAll('#' + rowId + ' .' + cls).forEach(c => c.classList.remove('active'));
+    document.querySelectorAll('#' + rowId + ' .chip').forEach(c => c.classList.remove('active'));
     chip.classList.add('active');
-    state[key] = chip.dataset.tier || chip.dataset.ratio || chip.dataset.preset;
+    onChange(chip);
   });
 }
-initChips('qualityRow', 'tier', 'quality-chip');
+bindChips('aspectRow', chip => { state.aspect = chip.dataset.ratio; updateGenLabel(); });
+bindChips('qualityRow', chip => { state.tier = chip.dataset.tier; updateGenLabel(); });
 
-// Aspect chips (separate to avoid initChips eating preset clicks)
-$('aspectRow').addEventListener('click', e => {
-  const chip = e.target.closest('.aspect-chip');
-  if (!chip) return;
-  document.querySelectorAll('#aspectRow .aspect-chip').forEach(c => c.classList.remove('active'));
-  chip.classList.add('active');
-  state.aspect = chip.dataset.ratio;
-});
+// ── Dropzone ─────────────────────────────────────────────────────
+const dropzone = $('dropzone');
+const fileInput = $('fileInput');
+const dropzoneEmpty = $('dropzoneEmpty');
+const dropzoneFilled = $('dropzoneFilled');
+const previewImg = $('previewImg');
+const removeBtn = $('removeBtn');
 
-// ── Presets ──
-$('presetRow').addEventListener('click', e => {
-  const chip = e.target.closest('.preset-chip');
-  if (!chip) return;
-  const key = chip.dataset.preset;
-  const p = PRESETS[key];
-  if (!p) return;
-  $('prompt').value = p.prompt;
-  state.aspect = p.aspect;
-  document.querySelectorAll('.aspect-chip').forEach(c => {
-    c.classList.toggle('active', c.dataset.ratio === p.aspect);
-  });
-  document.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('active'));
-  chip.classList.add('active');
-});
-
-// ── Dropzone with mouse glow ──
-const dz = $('dropzone'), fi = $('fileInput');
-dz.addEventListener('mousemove', e => {
-  const rect = dz.getBoundingClientRect();
-  dz.style.setProperty('--mx', ((e.clientX - rect.left) / rect.width * 100) + '%');
-  dz.style.setProperty('--my', ((e.clientY - rect.top) / rect.height * 100) + '%');
-});
-
-const onFile = file => {
-  if (!file || !file.type.startsWith('image/')) return;
+function onFile(file) {
+  if (!file || !file.type.startsWith('image/')) {
+    showToast('That doesn\'t look like an image', 'err');
+    return;
+  }
+  if (file.size > 32 * 1024 * 1024) {
+    showToast('Image too large (32MB max)', 'err');
+    return;
+  }
   state.prodImage = file;
-  $('fileName').textContent = file.name;
   const url = URL.createObjectURL(file);
-  $('previewImg').src = url;
-  $('previewWrap').style.display = 'block';
-  $('removeBtn').style.display = 'inline-block';
-  dz.querySelector('.label').textContent = 'Replace product photo';
-  dz.querySelector('.icon').textContent = '🔄';
+  state.productDataUrl = url;  // keep a reference for the output bento source tile
+  previewImg.src = url;
+  dropzoneEmpty.hidden = true;
+  dropzoneFilled.hidden = false;
   updateGenLabel();
-};
-fi.addEventListener('change', e => onFile(e.target.files[0]));
-dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
-dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
-dz.addEventListener('drop', e => {
-  e.preventDefault(); dz.classList.remove('dragover');
+}
+
+dropzone.addEventListener('click', e => {
+  // Don't double-trigger from remove button
+  if (e.target.closest('.dropzone-remove')) return;
+  fileInput.click();
+});
+dropzone.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+});
+fileInput.addEventListener('change', e => onFile(e.target.files[0]));
+
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault(); dropzone.classList.remove('dragover');
   onFile(e.dataTransfer.files[0]);
 });
 
-$('removeBtn').addEventListener('click', () => {
+removeBtn.addEventListener('click', e => {
+  e.stopPropagation();
   state.prodImage = null;
-  $('fileName').textContent = '';
-  $('previewWrap').style.display = 'none';
-  $('removeBtn').style.display = 'none';
-  fi.value = '';
-  dz.querySelector('.label').textContent = 'Drop product photo here';
-  dz.querySelector('.icon').textContent = '📸';
+  fileInput.value = '';
+  previewImg.src = '';
+  dropzoneEmpty.hidden = false;
+  dropzoneFilled.hidden = true;
   updateGenLabel();
 });
+
+// ── Generate label ──────────────────────────────────────────────
+const TIER_COST = { fast: 0.02, balanced: 0.045, quality: 0.09, ultra: 0.24 };
 
 function updateGenLabel() {
   const batch = $('batchToggle').checked;
   const count = state.prodImage ? 1 : (batch ? 4 : 1);
-  const label = state.prodImage ? 'Generate Composite' : (batch ? 'Generate 4 Images' : 'Generate Image');
+  let label = 'Generate';
+  if (state.prodImage) label = 'Generate composite';
+  else if (batch) label = 'Generate 4 images';
+  else label = 'Generate image';
   $('genLabel').textContent = label;
-  // Per-tier pricing (must match data-cost on quality-chip + server _TIER_MODEL)
-  const TIER_COST = { fast: 0.02, balanced: 0.045, quality: 0.09, ultra: 0.24 };
+
   const unit = TIER_COST[state.tier] || 0.045;
-  const cost = state.prodImage ? TIER_COST.quality : (unit * count);
+  const cost = state.prodImage ? TIER_COST.quality : unit * count;
   const time = batch && !state.prodImage ? '~2 min' : '~30s';
-  $('genMeta').textContent = '$' + cost.toFixed(2) + ' · ' + time;
+  $('genMeta').textContent = '· $' + cost.toFixed(2) + ' · ' + time;
 }
 $('batchToggle').addEventListener('change', updateGenLabel);
+updateGenLabel();
 
-async function getCostToday() {
+// ── Cost ─────────────────────────────────────────────────────────
+async function refreshCost() {
   try {
     const r = await fetch('/api/costs', updateFetchOptions());
     const d = await r.json();
-    return d.today || 0;
-  } catch (e) { return 0; }
+    state.costToday = d.today || 0;
+  } catch (e) { /* offline */ }
 }
+refreshCost();
 
-function addToGallery(images) {
-  images.forEach(img => state.gallery.push(img));
-  renderGallery();
-}
+// ── Output rendering ────────────────────────────────────────────
+const outputEmpty = $('outputEmpty');
+const outputGrid = $('outputGrid');
+const exampleChips = document.querySelectorAll('.example-chip');
 
-function renderGallery() {
-  const g = $('gallery');
-  g.innerHTML = '';
-  state.gallery.forEach((img, idx) => {
-    const thumb = document.createElement('div');
-    const isSel = state.selected.has(idx);
-    thumb.className = 'gallery-thumb' + (isSel ? ' selected' : '');
-    thumb.innerHTML = '<img src="' + img.url + '" alt=""><div class="check">' + (isSel ? '✓' : '') + '</div><div class="del" data-idx="' + idx + '">×</div>';
-    thumb.querySelector('.del').addEventListener('click', (e) => {
-      e.stopPropagation();
-      state.gallery.splice(idx, 1);
-      state.selected.delete(idx);
-      const newSelected = new Set();
-      state.selected.forEach(i => { if (i < idx) newSelected.add(i); else if (i > idx) newSelected.add(i - 1); });
-      state.selected = newSelected;
-      renderGallery();
-      updateToolbar();
-    });
-    thumb.addEventListener('click', (e) => {
-      if (e.shiftKey && state.lastClicked !== null) {
-        const start = Math.min(state.lastClicked, idx);
-        const end = Math.max(state.lastClicked, idx);
-        for (let i = start; i <= end; i++) state.selected.add(i);
-      } else {
-        if (state.selected.has(idx)) state.selected.delete(idx);
-        else state.selected.add(idx);
-        state.lastClicked = idx;
-      }
-      renderGallery();
-      updateToolbar();
-    });
-    g.appendChild(thumb);
+exampleChips.forEach(chip => {
+  chip.addEventListener('click', () => {
+    $('prompt').value = chip.textContent.replace(/^["']|["']$/g, '');
   });
-  $('galleryCard').style.display = state.gallery.length > 0 ? 'block' : 'none';
-  updateToolbar();
+});
+
+function ratioClass(r) { return 'ratio-' + (r || '1:1').replace(':', '-'); }
+
+function showEmpty() {
+  outputEmpty.hidden = false;
+  outputGrid.hidden = true;
+  outputGrid.innerHTML = '';
 }
 
-function updateToolbar() {
-  const hasSel = state.selected.size > 0;
-  $('galleryToolbar').style.display = state.gallery.length > 0 ? 'flex' : 'none';
-  $('selectedCount').textContent = state.selected.size + ' selected';
-  $('downloadZipBtn').disabled = !hasSel;
-  $('deleteSelectedBtn').disabled = !hasSel;
-}
+function showOutput(images, append = false) {
+  outputEmpty.hidden = true;
+  outputGrid.hidden = false;
+  if (!append) outputGrid.innerHTML = '';
 
-$('selectAllBtn').addEventListener('click', () => {
-  state.gallery.forEach((_, i) => state.selected.add(i));
-  renderGallery();
-});
-$('deselectAllBtn').addEventListener('click', () => {
-  state.selected.clear();
-  renderGallery();
-});
-$('deleteSelectedBtn').addEventListener('click', () => {
-  if (!state.selected.size) return;
-  const remaining = state.gallery.filter((_, i) => !state.selected.has(i));
-  state.gallery = remaining;
-  state.selected.clear();
-  renderGallery();
-  showToast('Deleted selected images', 'ok');
-});
-$('downloadZipBtn').addEventListener('click', async () => {
-  if (!state.selected.size) { showToast('Select images first', 'err'); return; }
-  const urls = [];
-  state.selected.forEach(i => { if (state.gallery[i]) urls.push(state.gallery[i].url); });
-  try {
-    const r = await fetch('/api/export-zip', updateFetchOptions({
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({urls})
-    }));
-    if (!r.ok) throw new Error('ZIP failed');
-    const blob = await r.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'creative-studio-export.zip';
-    a.click();
-    showToast('ZIP downloaded', 'ok');
-  } catch (e) { showToast('Export failed: ' + e.message, 'err'); }
-});
-
-async function loadServerGallery() {
-  try {
-    const r = await fetch('/api/sessions');
-    const d = await r.json();
-    if (d.sessions) {
-      d.sessions.forEach(s => {
-        (s.entries || []).forEach(e => {
-          if (e.image_url && !state.gallery.find(g => g.url === e.image_url)) {
-            state.gallery.push({ url: e.image_url, name: e.note || 'image.png', cost: e.cost || 0, model: e.model || '' });
-          }
-        });
-      });
-      renderGallery();
-    }
-  } catch (e) { console.log('session load failed', e); }
-}
-loadServerGallery();
-
-// Delegate click for Save-to-gallery + Copy-prompt on output cells
-$('outputGrid').addEventListener('click', (e) => {
-  const btn = e.target.closest('.add-to-gallery');
-  if (btn) {
-    const url = btn.dataset.url;
-    const name = btn.dataset.name;
-    const cost = parseFloat(btn.dataset.cost) || 0;
-    const model = btn.dataset.model || '';
-    if (!state.gallery.find(g => g.url === url)) {
-      state.gallery.push({ url, name, cost, model, ratio: state.aspect });
-      renderGallery();
-      showToast('Saved to gallery', 'ok');
-    } else {
-      showToast('Already in gallery', 'err');
-    }
-    return;
+  // Prepend source product tile if user uploaded one (anchors the bento)
+  const totalCells = (state.productDataUrl ? 1 : 0) + images.length;
+  if (!append && state.productDataUrl) {
+    const src = document.createElement('div');
+    src.className = 'output-cell is-source';
+    src.innerHTML = `
+      <img src="${state.productDataUrl}" alt="Source product">
+      <span class="source-badge">Source</span>
+    `;
+    outputGrid.appendChild(src);
   }
-  const copyBtn = e.target.closest('.copy-prompt');
-  if (copyBtn) {
-    const prompt = decodeURIComponent(copyBtn.dataset.prompt || '');
-    if (prompt) {
-      navigator.clipboard.writeText(prompt).then(() => showToast('Prompt copied', 'ok')).catch(() => showToast('Copy failed', 'err'));
-    }
-  }
-});
 
-function loadIntoOutput(images) {
-  const grid = $('outputGrid');
-  grid.innerHTML = '';
-  grid.style.display = 'grid';
-  grid.className = 'output-grid' + (images.length === 1 ? ' single' : '');
-  $('emptyState').style.display = 'none';
-  state.outputImages = images.slice();
+  // Bento class based on total cell count
+  const countClass = 'count-' + Math.min(Math.max(totalCells, 1), 6);
+  outputGrid.className = 'output-grid ' + countClass;
 
   images.forEach((img, i) => {
     const cell = document.createElement('div');
-    const ratioClass = (img.ratio || state.aspect || '1:1').replace(':', '-');
-    cell.className = 'output-cell fade-in ratio-' + ratioClass;
-    cell.style.animationDelay = (i * 0.08) + 's';
+    cell.className = 'output-cell ' + ratioClass(img.ratio || state.aspect);
+    cell.style.animationDelay = (i * 0.06) + 's';
     cell.innerHTML = buildCellHTML(img);
-    grid.appendChild(cell);
+    outputGrid.appendChild(cell);
   });
-
-  const totalCost = images.reduce((s, img) => s + (img.cost || 0), 0);
-  $('outputMeta').textContent = images.length + ' image' + (images.length > 1 ? 's' : '') + ' · $' + totalCost.toFixed(2);
-  $('downloadAllBtn').style.display = images.length > 0 ? 'inline-block' : 'none';
 }
 
-function appendToOutput(images) {
-  const grid = $('outputGrid');
-  grid.style.display = 'grid';
-  $('emptyState').style.display = 'none';
-  images.forEach(img => state.outputImages.push(img));
-
-  images.forEach((img, i) => {
-    const cell = document.createElement('div');
-    const ratioClass = (img.ratio || state.aspect || '1:1').replace(':', '-');
-    cell.className = 'output-cell fade-in ratio-' + ratioClass;
-    cell.style.animationDelay = (i * 0.08) + 's';
-    cell.innerHTML = buildCellHTML(img);
-    grid.appendChild(cell);
-  });
-
-  const allCells = grid.querySelectorAll('.output-cell');
-  const totalCost = images.reduce((s, img) => s + (img.cost || 0), 0);
-  $('outputMeta').textContent = allCells.length + ' images · streaming...';
-  $('downloadAllBtn').style.display = 'inline-block';
+function buildCellHTML(img) {
+  const ratio = img.ratio || '';
+  const cost = img.cost ? '$' + img.cost.toFixed(2) : '';
+  const model = (img.model || '').replace('gemini-3.1-flash-image-preview', 'Flash').replace('gemini-3-pro-image-preview', 'Pro').replace('imagen-4.0-', '');
+  const prompt = encodeURIComponent(img.prompt || state.lastPrompt || '');
+  const dims = ratio ? dimBadge(ratio) : '';
+  return `
+    <img src="${img.url}" alt="" loading="lazy">
+    <div class="cell-overlay">
+      <div class="cell-meta">
+        ${ratio ? `<span class="cell-tag">${ratio}</span>` : ''}
+        ${dims ? `<span class="cell-tag cell-tag-dim">${dims}</span>` : ''}
+        ${cost ? `<span class="cell-tag cell-tag-cost">${cost}</span>` : ''}
+        ${model ? `<span class="cell-tag cell-tag-model">${model}</span>` : ''}
+      </div>
+      <div class="cell-actions">
+        <button class="cell-action" data-action="save" data-url="${img.url}" data-name="${img.name}" data-cost="${img.cost||0}" data-model="${img.model||''}" aria-label="Save to gallery">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        </button>
+        <button class="cell-action" data-action="copy" data-prompt="${prompt}" aria-label="Copy prompt">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+        <a class="cell-action" href="${img.url}" download="${img.name}" aria-label="Download">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </a>
+      </div>
+    </div>`;
 }
 
 function dimBadge(ratio) {
@@ -357,63 +343,73 @@ function dimBadge(ratio) {
   return map[ratio] || '';
 }
 
-function buildCellHTML(img) {
-  const ratio = img.ratio || '';
-  const cost = img.cost ? '$' + img.cost.toFixed(2) : '';
-  const model = img.model ? img.model.replace('gemini-3.1-flash-image-preview', 'Flash').replace('gemini-3-pro-image-preview', 'Pro') : '';
-  const prompt = img.prompt || state.lastPrompt || '';
-  const dims = ratio ? dimBadge(ratio) : '';
-  return (
-    '<img src="' + img.url + '" alt="" data-prompt="' + encodeURIComponent(prompt) + '">' +
-    '<div class="cell-bar">' +
-      '<div class="left">' +
-        (ratio ? '<span class="pill ratio">' + ratio + '</span>' : '') +
-        (cost ? '<span class="pill cost">' + cost + '</span>' : '') +
-        (model ? '<span class="pill model">' + model + '</span>' : '') +
-        (dims ? '<span class="pill dims">' + dims + '</span>' : '') +
-      '</div>' +
-      '<div class="right">' +
-        '<span class="copy-prompt" data-prompt="' + encodeURIComponent(prompt) + '" title="Copy prompt">📋</span>' +
-        '<a href="' + img.url + '" download="' + img.name + '">Download</a>' +
-        '<span class="add-to-gallery" data-url="' + img.url + '" data-name="' + img.name + '" data-cost="' + (img.cost||0) + '" data-model="' + (img.model||'') + '">Save</span>' +
-      '</div>' +
-    '</div>'
-  );
-}
-
-// ── Generate ──
-$('genBtn').addEventListener('click', async () => {
-  const prompt = $('prompt').value.trim();
-  if (!prompt) { showToast('Enter a scene description', 'err'); return; }
-  if (state.generating) return;
-  state.lastPrompt = prompt;
-
-  const limit = parseFloat($('costLimit').value) || 5;
-  if (limit < 0 || isNaN(limit)) { showToast('Invalid cost limit', 'err'); return; }
-  const costToday = await getCostToday();
-  const batch = $('batchToggle').checked;
-  const count = state.prodImage ? 1 : (batch ? 4 : 1);
-  const est = state.prodImage ? 0.09 : (({ fast: 0.02, balanced: 0.045, quality: 0.09, ultra: 0.24 })[state.tier] || 0.045) * count;
-  if (costToday + est > limit) {
-    showToast('Would exceed $' + limit.toFixed(2) + ' cost limit', 'err');
+outputGrid.addEventListener('click', e => {
+  const save = e.target.closest('[data-action="save"]');
+  if (save) {
+    const url = save.dataset.url;
+    if (!state.gallery.find(g => g.url === url)) {
+      state.gallery.push({ url, name: save.dataset.name, cost: parseFloat(save.dataset.cost) || 0, model: save.dataset.model, ratio: state.aspect });
+      renderGallery();
+      showToast('Saved to gallery', 'ok');
+    } else {
+      showToast('Already in gallery', 'ok');
+    }
     return;
   }
+  const copy = e.target.closest('[data-action="copy"]');
+  if (copy) {
+    const prompt = decodeURIComponent(copy.dataset.prompt || '');
+    if (prompt) {
+      navigator.clipboard.writeText(prompt).then(() => showToast('Prompt copied', 'ok')).catch(() => showToast('Copy failed', 'err'));
+    }
+    return;
+  }
+  // Lightbox
+  const img = e.target.closest('img');
+  if (img) {
+    const list = state.outputImages;
+    const idx = list.findIndex(i => i.url === img.src);
+    if (idx !== -1) lightboxOpen(list, idx);
+  }
+});
 
+// ── Generate ─────────────────────────────────────────────────────
+const genBtn = $('genBtn');
+const btnSpinner = $('btnSpinner');
+const genMeta = $('genMeta');
+
+genBtn.addEventListener('click', async () => {
+  const prompt = $('prompt').value.trim();
+  if (!prompt) { showToast('Describe a scene first', 'err'); return; }
+  if (state.generating) return;
+  state.lastPrompt = prompt;
   state.generating = true;
-  $('genBtn').disabled = true;
-  $('genBtn').classList.add('generating');
-  $('outputMeta').textContent = '';
+  genBtn.disabled = true;
+  genBtn.classList.add('is-loading');
+  btnSpinner.hidden = false;
+  genMeta.textContent = '';
 
-  // Show skeleton placeholders
-  const grid = $('outputGrid');
-  grid.innerHTML = '';
-  grid.style.display = 'grid';
-  grid.className = 'output-grid' + (count === 1 ? ' single' : '');
-  $('emptyState').style.display = 'none';
+  // Show skeletons (with source tile as anchor if product uploaded)
+  const count = state.prodImage ? 1 : ($('batchToggle').checked ? 4 : 1);
+  const totalCount = (state.productDataUrl ? 1 : 0) + count;
+  outputEmpty.hidden = true;
+  outputGrid.hidden = false;
+  outputGrid.innerHTML = '';
+
+  // Prepend source tile (just like the real output)
+  if (state.productDataUrl) {
+    const src = document.createElement('div');
+    src.className = 'output-cell is-source';
+    src.innerHTML = `<img src="${state.productDataUrl}" alt="Source product"><span class="source-badge">Source</span>`;
+    outputGrid.appendChild(src);
+  }
+
+  const countClass = 'count-' + Math.min(Math.max(totalCount, 1), 6);
+  outputGrid.className = 'output-grid ' + countClass;
   for (let i = 0; i < count; i++) {
     const sk = document.createElement('div');
-    sk.className = 'skeleton-cell ratio-' + (state.aspect || '1:1').replace(':', '-');
-    grid.appendChild(sk);
+    sk.className = 'skeleton-cell ' + ratioClass(state.aspect);
+    outputGrid.appendChild(sk);
   }
 
   try {
@@ -427,308 +423,259 @@ $('genBtn').addEventListener('click', async () => {
       const resp = await fetch('/api/composite', updateFetchOptions({ method: 'POST', body: fd }));
       data = await resp.json();
     } else {
-      const body = {
-        prompt, mode: 'direct', tier: state.tier,
-        aspect_ratio: state.aspect, variations: count
-      };
       const resp = await fetch('/api/generate', updateFetchOptions({
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify({ prompt, mode: 'direct', tier: state.tier, aspect_ratio: state.aspect, variations: count })
       }));
       data = await resp.json();
     }
 
     if (data.error) {
+      showOutput([]);
+      showEmpty();
       showToast(data.error, 'err');
       return;
     }
 
-    let streamed = false;
     if (data.job_id && data.status === 'running') {
-      showToast('Batch started — this takes ~2 minutes', 'ok');
+      showToast('Batch started — about 2 minutes', 'ok');
       const result = await pollJob(data.job_id, count);
-      if (result.error) { showToast(result.error, 'err'); return; }
+      if (result.error) { showEmpty(); showToast(result.error, 'err'); return; }
       data = result;
-      streamed = true;
     }
 
     if (data.images && data.images.length) {
-      if (!streamed) {
-        loadIntoOutput(data.images);
-        addToGallery(data.images);
-      } else if (data.partial) {
-        const grid3 = $('outputGrid');
-        const retry = document.createElement('div');
-        retry.className = 'output-cell';
-        retry.style.display = 'flex'; retry.style.alignItems = 'center'; retry.style.justifyContent = 'center';
-        retry.style.flexDirection = 'column'; retry.style.gap = '8px'; retry.style.color = 'var(--text-dim)';
-        retry.innerHTML = '<div style="font-size:0.85rem;font-weight:600;">' + data.got + '/' + data.expected + ' generated</div><button id="retryBtn" style="padding:6px 14px;border-radius:var(--radius-xs);border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:var(--font);font-size:0.78rem;cursor:pointer;">Retry missing</button>';
-        grid3.appendChild(retry);
-        $('retryBtn').addEventListener('click', () => {
-          $('genBtn').click();
-        });
-        showToast(data.message, 'ok');
-        $('downloadAllBtn').style.display = 'inline-block';
-      } else {
-        showToast(data.message || 'Done!', 'ok');
-        $('downloadAllBtn').style.display = 'inline-block';
-      }
+      showOutput(data.images);
+      addToGallery(data.images);
+      showToast('Done', 'ok');
       refreshCost();
     } else {
+      showEmpty();
       showToast('No images returned', 'err');
     }
   } catch (e) {
+    showEmpty();
     showToast('Network error: ' + e.message, 'err');
   } finally {
     state.generating = false;
-    $('genBtn').disabled = false;
-    $('genBtn').classList.remove('generating');
+    genBtn.disabled = false;
+    genBtn.classList.remove('is-loading');
+    btnSpinner.hidden = true;
+    updateGenLabel();
   }
 });
 
-async function pollJob(jobId, expectedCount) {
-  const maxWait = 300;
-  const interval = 4;
+async function pollJob(jobId, expected) {
   const start = Date.now();
-  let dots = 0;
-  let streamedCount = 0;
-
+  let streamed = 0;
   while (true) {
-    const elapsed = (Date.now() - start) / 1000;
-    if (elapsed > maxWait) {
-      return { error: 'Timed out waiting for batch generation' };
-    }
-    dots = (dots + 1) % 4;
-    $('genLabel').textContent = 'Generating' + '.'.repeat(dots) + ' (' + Math.round(elapsed) + 's)';
-
-    await new Promise(r => setTimeout(r, interval * 1000));
-    const r = await fetch('/api/jobs/' + jobId);
-    const d = await r.json();
-
-    // Stream partial results as they arrive
-    if (d.partial && d.partial.images && d.partial.images.length > streamedCount) {
-      const newImages = d.partial.images.slice(streamedCount);
-      streamedCount = d.partial.images.length;
-      // Remove skeleton placeholders, then append real images
-      const grid2 = $('outputGrid');
-      const skeletons = grid2.querySelectorAll('.skeleton-cell');
-      skeletons.forEach((sk, idx) => {
-        if (idx < streamedCount) sk.remove();
-      });
-      appendToOutput(newImages);
-      addToGallery(newImages);
-      $('genLabel').textContent = 'Generating ' + streamedCount + '/' + expectedCount + '...';
-    }
-
-    if (d.status === 'done') {
-      $('genLabel').textContent = state.prodImage ? 'Generate Composite' : (expectedCount > 1 ? 'Generate 4 Images' : 'Generate Image');
-      $('outputGrid').querySelectorAll('.skeleton-cell').forEach(sk => sk.remove());
-      const got = d.images ? d.images.length : 0;
-      if (got < expectedCount) {
-        return { images: d.images || [], partial: true, expected: expectedCount, got, message: d.message || 'Partial: ' + got + '/' + expectedCount, session_id: d.session_id };
+    await new Promise(r => setTimeout(r, 3500));
+    const d = await fetch('/api/jobs/' + jobId, updateFetchOptions()).then(r => r.json());
+    if (d.partial && d.partial.images && d.partial.images.length > streamed) {
+      const newOnes = d.partial.images.slice(streamed);
+      streamed = d.partial.images.length;
+      // Replace skeletons with real images as they stream
+      const sk = outputGrid.querySelectorAll('.skeleton-cell');
+      for (let i = 0; i < newOnes.length; i++) {
+        if (sk[i]) sk[i].remove();
       }
-      return { images: d.images || [], message: d.message || 'Done!', session_id: d.session_id };
+      newOnes.forEach(img => state.outputImages.push(img));
+      addToGallery(newOnes);
+      showOutput(state.outputImages, true);
+      genMeta.textContent = '· ' + streamed + '/' + expected;
     }
-    if (d.status === 'error') {
-      $('genLabel').textContent = state.prodImage ? 'Generate Composite' : (expectedCount > 1 ? 'Generate 4 Images' : 'Generate Image');
-      return { error: d.error || 'Generation failed' };
-    }
+    if (d.status === 'done') return { images: d.images || state.outputImages };
+    if (d.status === 'error') return { error: d.error || 'Generation failed' };
+    if ((Date.now() - start) / 1000 > 300) return { error: 'Timed out' };
   }
 }
 
-$('clearGallery').addEventListener('click', () => {
+// ── Gallery ──────────────────────────────────────────────────────
+const galleryCard = $('galleryCard');
+const galleryGrid = $('gallery');
+const clearGalleryBtn = $('clearGallery');
+const selectAllBtn = $('selectAllBtn');
+const deselectAllBtn = $('deselectAllBtn');
+const downloadZipBtn = $('downloadZipBtn');
+
+function addToGallery(images) {
+  images.forEach(img => {
+    if (!state.gallery.find(g => g.url === img.url)) {
+      state.gallery.push({ url: img.url, name: img.name, cost: img.cost, model: img.model, ratio: img.ratio });
+    }
+  });
+  renderGallery();
+}
+
+function renderGallery() {
+  galleryGrid.innerHTML = '';
+  if (state.gallery.length === 0) {
+    galleryCard.hidden = true;
+    return;
+  }
+  galleryCard.hidden = false;
+  state.gallery.forEach((img, idx) => {
+    const t = document.createElement('div');
+    t.className = 'gallery-item' + (state.selected.has(idx) ? ' is-selected' : '');
+    t.innerHTML = `<img src="${img.url}" alt="" loading="lazy">
+      <button class="gallery-item-del" data-idx="${idx}" aria-label="Remove">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>`;
+    t.addEventListener('click', e => {
+      if (e.target.closest('.gallery-item-del')) return;
+      if (state.selected.has(idx)) state.selected.delete(idx);
+      else state.selected.add(idx);
+      renderGallery();
+    });
+    galleryGrid.appendChild(t);
+  });
+  updateGalleryActions();
+}
+
+function updateGalleryActions() {
+  const has = state.gallery.length > 0;
+  const sel = state.selected.size;
+  selectAllBtn.hidden = sel > 0;
+  deselectAllBtn.hidden = sel === 0;
+  downloadZipBtn.disabled = sel === 0;
+}
+
+clearGalleryBtn.addEventListener('click', () => {
+  if (!state.gallery.length) return;
+  if (!confirm('Clear all ' + state.gallery.length + ' images from this session?')) return;
   state.gallery = [];
+  state.selected.clear();
   renderGallery();
 });
 
-async function refreshCost() {
-  try {
-    const r = await fetch('/api/costs', updateFetchOptions());
-    const d = await r.json();
-    $('costToday').textContent = '$' + (d.today?.toFixed(2) || '0.00');
-  } catch (e) { console.log('cost fetch failed', e); }
-}
-refreshCost();
+galleryGrid.addEventListener('click', e => {
+  const del = e.target.closest('.gallery-item-del');
+  if (del) {
+    e.stopPropagation();
+    state.gallery.splice(parseInt(del.dataset.idx), 1);
+    state.selected.clear();
+    renderGallery();
+  }
+});
 
-function showToast(msg, type) {
-  const t = $('toast');
-  t.textContent = msg;
-  t.className = 'toast ' + type;
-  requestAnimationFrame(() => t.classList.add('show'));
-  setTimeout(() => t.classList.remove('show'), 3000);
-}
+selectAllBtn.addEventListener('click', () => {
+  state.gallery.forEach((_, i) => state.selected.add(i));
+  renderGallery();
+});
 
-// ── Lightbox ──
-const lightbox = {
-  overlay: null, img: null, meta: null, list: [], idx: 0,
-  init() {
-    this.overlay = document.createElement('div');
-    this.overlay.className = 'lightbox-overlay';
-    this.overlay.innerHTML = (
-      '<div class="lightbox-inner">' +
-        '<button class="lightbox-close">×</button>' +
-        '<img class="lightbox-img" src="" alt="">' +
-        '<div class="lightbox-meta"></div>' +
-        '<button class="lightbox-nav prev">‹</button>' +
-        '<button class="lightbox-nav next">›</button>' +
-      '</div>'
-    );
-    document.body.appendChild(this.overlay);
-    this.img = this.overlay.querySelector('.lightbox-img');
-    this.meta = this.overlay.querySelector('.lightbox-meta');
-    this.overlay.querySelector('.lightbox-close').addEventListener('click', () => this.close());
-    this.overlay.querySelector('.lightbox-nav.prev').addEventListener('click', (e) => { e.stopPropagation(); this.prev(); });
-    this.overlay.querySelector('.lightbox-nav.next').addEventListener('click', (e) => { e.stopPropagation(); this.next(); });
-    this.overlay.addEventListener('click', (e) => {
-      if (e.target === this.overlay) this.close();
-      const copyBtn = e.target.closest('.copy-lightbox');
-      if (copyBtn) {
-        const prompt = decodeURIComponent(copyBtn.dataset.prompt || '');
-        if (prompt) {
-          navigator.clipboard.writeText(prompt).then(() => showToast('Prompt copied', 'ok')).catch(() => showToast('Copy failed', 'err'));
-        }
-      }
-    });
-    document.addEventListener('keydown', (e) => {
-      if (!this.overlay.classList.contains('active')) return;
-      if (e.key === 'Escape') this.close();
-      if (e.key === 'ArrowLeft') this.prev();
-      if (e.key === 'ArrowRight') this.next();
-    });
-  },
-  open(imgList, startIdx) {
-    this.list = imgList;
-    this.idx = startIdx || 0;
-    this.render();
-    this.overlay.classList.add('active');
-    document.body.style.overflow = 'hidden';
-  },
-  close() {
-    this.overlay.classList.remove('active');
-    document.body.style.overflow = '';
-  },
-  render() {
-    const img = this.list[this.idx];
-    if (!img) return;
-    this.img.src = img.url;
-    const ratio = img.ratio || '';
-    const cost = img.cost ? '$' + img.cost.toFixed(2) : '';
-    const model = img.model ? img.model.replace('gemini-3.1-flash-image-preview', 'Flash').replace('gemini-3-pro-image-preview', 'Pro') : '';
-    const prompt = img.prompt || state.lastPrompt || '';
-    this.meta.innerHTML = (
-      (ratio ? '<span class="pill ratio">' + ratio + '</span>' : '') +
-      (cost ? '<span class="pill cost">' + cost + '</span>' : '') +
-      (model ? '<span class="pill model">' + model + '</span>' : '') +
-      (prompt ? '<span class="copy-lightbox" data-prompt="' + encodeURIComponent(prompt) + '" style="cursor:pointer;margin-left:6px;padding:4px 10px;border-radius:var(--radius-xs);background:rgba(255,255,255,0.08);color:#fff;font-size:0.72rem;"">📋 Copy prompt</span>' : '') +
-      '<a href="' + img.url + '" download="' + img.name + '" style="margin-left:8px;padding:4px 10px;border-radius:var(--radius-xs);background:rgba(255,255,255,0.1);color:#fff;font-size:0.72rem;text-decoration:none;">Download</a>'
-    );
-  },
-  prev() { if (this.idx > 0) { this.idx--; this.render(); } },
-  next() { if (this.idx < this.list.length - 1) { this.idx++; this.render(); } }
-};
-lightbox.init();
+deselectAllBtn.addEventListener('click', () => {
+  state.selected.clear();
+  renderGallery();
+});
 
-// Wire lightbox clicks on output grid + gallery
-function wireLightbox(container, getImgList) {
-  container.addEventListener('click', (e) => {
-    const img = e.target.closest('img');
-    if (!img) return;
-    const list = getImgList();
-    const idx = list.findIndex(i => i.url === img.src);
-    if (idx !== -1) lightbox.open(list, idx);
-  });
-}
-wireLightbox($('outputGrid'), () => state.outputImages);
-wireLightbox($('gallery'), () => state.gallery);
-
-// ── Download all from output stage ──
-$('downloadAllBtn').addEventListener('click', async () => {
-  if (!state.outputImages.length) { showToast('No images to download', 'err'); return; }
-  const urls = state.outputImages.map(img => img.url);
+downloadZipBtn.addEventListener('click', async () => {
+  if (!state.selected.size) return;
+  const urls = [];
+  state.selected.forEach(i => { if (state.gallery[i]) urls.push(state.gallery[i].url); });
   try {
     const r = await fetch('/api/export-zip', updateFetchOptions({
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({urls})
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls })
     }));
     if (!r.ok) throw new Error('ZIP failed');
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'creative-studio-output.zip';
+    a.download = 'creative-studio-export.zip';
     a.click();
     showToast('ZIP downloaded', 'ok');
   } catch (e) { showToast('Export failed: ' + e.message, 'err'); }
 });
 
-// ── Keyboard shortcuts ──
-$('prompt').addEventListener('keydown', (e) => {
+galleryGrid.addEventListener('click', e => {
+  const img = e.target.closest('img');
+  if (!img) return;
+  const idx = state.gallery.findIndex(g => g.url === img.src);
+  if (idx !== -1) lightboxOpen(state.gallery, idx);
+});
+
+// ── Lightbox ─────────────────────────────────────────────────────
+const lightbox = $('lightbox');
+const lightboxImg = $('lightboxImg');
+let lightboxList = [];
+let lightboxIdx = 0;
+
+function lightboxOpen(list, idx) {
+  lightboxList = list;
+  lightboxIdx = idx;
+  lightbox.hidden = false;
+  document.body.style.overflow = 'hidden';
+  lightboxRender();
+}
+function lightboxClose() {
+  lightbox.hidden = true;
+  document.body.style.overflow = '';
+}
+function lightboxRender() {
+  const img = lightboxList[lightboxIdx];
+  if (!img) return;
+  lightboxImg.src = img.url;
+  $('lightboxPrev').disabled = lightboxIdx === 0;
+  $('lightboxNext').disabled = lightboxIdx === lightboxList.length - 1;
+}
+$('lightboxClose').addEventListener('click', lightboxClose);
+$('lightboxPrev').addEventListener('click', () => { if (lightboxIdx > 0) { lightboxIdx--; lightboxRender(); } });
+$('lightboxNext').addEventListener('click', () => { if (lightboxIdx < lightboxList.length - 1) { lightboxIdx++; lightboxRender(); } });
+lightbox.addEventListener('click', e => { if (e.target === lightbox) lightboxClose(); });
+document.addEventListener('keydown', e => {
+  if (lightbox.hidden) return;
+  if (e.key === 'Escape') lightboxClose();
+  if (e.key === 'ArrowLeft') $('lightboxPrev').click();
+  if (e.key === 'ArrowRight') $('lightboxNext').click();
+});
+
+// ── Toast ────────────────────────────────────────────────────────
+const toast = $('toast');
+let toastTimer = null;
+function showToast(msg, type = 'ok') {
+  toast.textContent = msg;
+  toast.className = 'toast toast-' + type + ' is-visible';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('is-visible'), 2800);
+}
+
+// ── Mobile menu ──────────────────────────────────────────────────
+const menuToggle = $('menuToggle');
+const mobileMenu = $('mobileMenu');
+menuToggle.addEventListener('click', () => {
+  const open = mobileMenu.classList.toggle('open');
+  menuToggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+});
+mobileMenu.querySelectorAll('a').forEach(a => {
+  a.addEventListener('click', () => {
+    mobileMenu.classList.remove('open');
+    menuToggle.setAttribute('aria-label', 'Open menu');
+  });
+});
+
+// ── Keyboard: Cmd/Ctrl+Enter to generate ───────────────────────
+$('prompt').addEventListener('keydown', e => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
-    $('genBtn').click();
+    genBtn.click();
   }
 });
 
-// ── Prompt history from server sessions ──
-async function loadPromptHistory() {
+// ── Load existing sessions on startup ──────────────────────────
+async function loadServerGallery() {
   try {
-    const r = await fetch('/api/sessions');
+    const r = await fetch('/api/sessions', updateFetchOptions());
     const d = await r.json();
-    const prompts = [];
-    const seen = new Set();
-    (d.sessions || []).forEach(s => {
-      (s.entries || []).forEach(e => {
-        const p = e.prompt || '';
-        if (p && !seen.has(p)) { seen.add(p); prompts.push({ text: p, date: s.created_at || '' }); }
-      });
-    });
-    const container = $('promptHistory');
-    if (prompts.length) {
-      $('promptHistoryPanel').style.display = 'block';
-      container.innerHTML = prompts.slice(0, 10).map(p =>
-        '<div class="prompt-history-item" data-prompt="' + encodeURIComponent(p.text) + '">' +
-          '<span class="prompt-text">' + p.text + '</span>' +
-          '<span class="prompt-meta">' + (p.date ? p.date.split('T')[0] : '') + '</span>' +
-        '</div>'
-      ).join('');
-      container.querySelectorAll('.prompt-history-item').forEach(el => {
-        el.addEventListener('click', () => {
-          $('prompt').value = decodeURIComponent(el.dataset.prompt);
-          $('prompt').focus();
+    if (d.sessions) {
+      d.sessions.forEach(s => {
+        (s.entries || []).forEach(e => {
+          if (e.image_url && !state.gallery.find(g => g.url === e.image_url)) {
+            state.gallery.push({ url: e.image_url, name: 'image.png', cost: e.cost || 0, model: e.model || '' });
+          }
         });
       });
-    } else {
-      $('promptHistoryPanel').style.display = 'none';
+      renderGallery();
     }
-  } catch (e) { console.log('prompt history load failed', e); }
+  } catch (e) { /* offline ok */ }
 }
-loadPromptHistory();
-
-// ── Mobile UI: hamburger menu + collapsible panels ──
-(function initMobileUI() {
-  const menuToggle = $('menuToggle');
-  const mobileMenu = $('mobileMenu');
-  if (menuToggle && mobileMenu) {
-    menuToggle.addEventListener('click', () => {
-      const open = mobileMenu.classList.toggle('open');
-      menuToggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
-    });
-    // Close menu on link click
-    mobileMenu.querySelectorAll('a').forEach(a => {
-      a.addEventListener('click', () => {
-        mobileMenu.classList.remove('open');
-        menuToggle.setAttribute('aria-label', 'Open menu');
-      });
-    });
-  }
-
-  // Collapsible panels — any element with [data-toggle] inside .collapsible
-  // becomes the click target; the panel itself toggles `.open`
-  document.querySelectorAll('.collapsible').forEach(panel => {
-    const toggle = panel.querySelector('[data-toggle]');
-    if (!toggle) return;
-    toggle.addEventListener('click', () => {
-      // On desktop, do nothing (CSS keeps all panels expanded via :not(.open) rule only at <=960px)
-      panel.classList.toggle('open');
-    });
-  });
-})();
+loadServerGallery();
