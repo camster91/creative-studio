@@ -402,8 +402,8 @@ class TestPageRoutes:
             }
             r = c.post("/api/scene-set", data=data, content_type="multipart/form-data",
                        headers={"X-API-Key": "AIza-test-key-1234567890"})
-            # May be 400 (caught) or 500 (cli subprocess failure) — both indicate rejection
-            assert r.status_code in (400, 500)
+            # 400 for bad extension, 402 if BYOK gate fires first
+            assert r.status_code in (400, 402)
 
     def test_no_literal_unicode_escapes_in_frontend(self):
         """Regression: the HTML_TEMPLATE was a raw string, so literal '\\u003e' sequences

@@ -1493,8 +1493,12 @@ def api_scene_set():
     f = request.files["product"]
     if not f or not f.filename:
         return jsonify({"error": "Empty product upload"}), 400
-    if not f.type.startswith("image/"):
-        return jsonify({"error": "Product must be an image (PNG, JPG, WEBP)"}), 400
+    # Filename-based mime sniff (works across storage backends; some
+    # FileStorage wrappers raise on .type access for in-memory uploads).
+    fname = f.filename or ""
+    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+    if ext not in ("png", "jpg", "jpeg", "webp", "gif", "bmp"):
+        return jsonify({"error": "Product must be PNG, JPG, WEBP, GIF, or BMP"}), 400
 
     tier = request.form.get("tier", "balanced")
     if tier not in _TIER_MODEL:
