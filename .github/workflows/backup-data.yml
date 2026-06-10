@@ -1,0 +1,42 @@
+name: Backup photogen data
+on:
+  schedule:
+    # 03:00 UTC daily (off-peak for most users)
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Snapshot data + outputs, retain 7 days
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.COOLIFY_HOST }}
+          username: ${{ secrets.COOLIFY_USER }}
+          key: ${{ secrets.COOLIFY_SSH_KEY }}
+          script: |
+            set -e
+            cd /root
+            # Skip if no data has accumulated yet (fresh install)
+            if [ ! -d photogen-data ] && [ ! -d photogen-outputs ]; then
+              echo "No data dirs yet — skipping backup"
+              exit 0
+            fi
+            mkdir -p backups
+            DATE=$(date +%Y%m%d)
+            OUT=backups/photogen-${DATE}.tar.gz
+            # Use pigz if available, fall back to gzip
+            if command -v pigz >/dev/null; then
+              tar --use-compress-program=pigz -cf "$OUT" \
+                photogen-data photogen-outputs
+            else
+              tar czf "$OUT" photogen-data photogen-outputs
+            fi
+            ls -lh "$OUT"
+            # Retain 7 days
+            DELETED=$(find backups/ -name 'photogen-*.tar.gz' -mtime +7 -delete -print | wc -l)
+            echo "Pruned $DELETED old backup(s)"
+            echo "--- remaining backups ---"
+            ls -lh backups/ | tail -10
