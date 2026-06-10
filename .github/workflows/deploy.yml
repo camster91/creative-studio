@@ -122,7 +122,8 @@ jobs:
           fi
           cat /tmp/whoami.json
           echo ""
-          python3 -c "import json; d=json.load(open('/tmp/whoami.json')); assert 'version' in d; assert d['version'] == '4.5.1', f'expected 4.5.1, got {d[\"version\"]}'; print('whoami OK')"
+          # Verify the app is up (version-agnostic — drifts every release)
+          python3 -c "import json; d=json.load(open('/tmp/whoami.json')); assert 'version' in d, f'no version in whoami: {d}'; print('whoami OK, version=' + d['version'])"
       - name: Costs endpoint
         run: |
           set -e
@@ -134,8 +135,17 @@ jobs:
           echo "$HTML" | grep -q "Creative Studio" || (echo "FAIL: home page missing brand"; exit 1)
           # No literal \u003e in served HTML (regression guard for the
           # raw-string arrow bug we hit before)
-          echo "$HTML" | grep -q "u003e" && (echo "FAIL: served HTML contains literal \\\\u003e (raw-string arrow bug regression)"; exit 1) || echo "No literal \\u003e — OK"
+          echo "$HTML" | grep -q "u003e" && (echo "FAIL: served HTML contains literal \\\\u003e (raw-string arrow bug regression)"; exit 1) || echo "No literal \u003e — OK"
           echo "Home page OK"
+      - name: Editor renders
+        run: |
+          set -e
+          HTML=$(curl -sf http://localhost:15173/app)
+          # Must contain the 3 core editor surfaces
+          for marker in "dropzone" "Generate" "SCENE" "In-hand" "Studio" "Lifestyle"; do
+            echo "$HTML" | grep -q "$marker" || (echo "FAIL: /app missing '$marker'"; exit 1)
+          done
+          echo "Editor OK — all 6 core markers present"
       - name: Teardown
         if: always()
         run: |
