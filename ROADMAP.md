@@ -1,18 +1,41 @@
 # Creative Studio — Web App Roadmap
 
-Current status: v4.6.0 deployed at https://photogen.ashbi.ca
+Current status: v4.9.0 deployed at https://photogen.ashbi.ca
 
 ## ✅ Done
 - [x] Direct generation (exact prompt passthrough, no rewriting)
-- [x] Tier selection (Fast / Balanced / Quality)
+- [x] Tier selection (Fast / Balanced / Quality / Ultra)
 - [x] Optional reference image upload (drag-and-drop)
 - [x] Smart prompt enhancement (toggleable, defaults OFF)
-- [x] Aspect ratio selection (hidden behind Advanced toggle)
+- [x] Aspect ratio selection
 - [x] Cost tracking (live footer)
 - [x] Responsive layout
 - [x] Docker containerized deployment
 - [x] Production deployment on Coolify VPS
 - [x] Spatial pin annotations (CLI + web)
+- [x] BYOK gate (Bring Your Own Gemini API key) — `CREATIVE_ALLOW_SERVER_FALLBACK` opt-in
+- [x] Mobile-first rewrite (collapsible panels, hamburger menu, 44px touch targets, 16px inputs)
+- [x] 5 scene types (In-hand / Studio / Action / Lifestyle / With props) with curated prompts
+- [x] Bento output grid (asymmetric, source-anchored)
+- [x] **Scene-set endpoint** — one product → 5 scene images in parallel (the Riverflow-style "wow")
+- [x] Session gallery with multi-select, ZIP download, delete
+- [x] Lightbox viewer, prompt history, copy-prompt
+- [x] 34 automated tests, all passing
+
+## 🚧 Pending / Next
+
+### 1. URL → brand-aware scene generation (the Riverflow real deal)
+Paste a URL, scrape product + brand colors, auto-generate 5 scenes. (2-4 weeks)
+For now: scene-set works with manual product upload.
+
+### 2. Landing page editorial polish
+Currently dark-mode utilitarian. Riverflow uses off-white + editorial typography + blue accents + magazine-style hero. Could ship a "marketing variant" CSS theme in 4-8 hours.
+
+### 3. CI workflows (#33)
+2 of 4 GitHub Actions are failing. Probably stale image tags or secrets.
+
+### 4. Marketing surface mobile QA
+Need to test on actual iPhone — see what the sticky CTA, touch targets, and iOS Safari quirks feel like for real.
 
 ## 🚧 CLI-Only Features — Need Web UI Integration
 

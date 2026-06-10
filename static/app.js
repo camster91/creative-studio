@@ -175,7 +175,7 @@ function bindChips(rowId, onChange) {
   });
 }
 bindChips('aspectRow', chip => { state.aspect = chip.dataset.ratio; updateGenLabel(); });
-bindChips('qualityRow', chip => { state.tier = chip.dataset.tier; updateGenLabel(); });
+bindChips('qualityRow', chip => { state.tier = chip.dataset.tier; updateGenLabel(); updateSceneSetLabel(); });
 
 // ── Dropzone ─────────────────────────────────────────────────────
 const dropzone = $('dropzone');
@@ -474,12 +474,24 @@ const SCENE_LABELS_JS = {
   inhand: 'In-hand', studio: 'Studio', action: 'Action',
   lifestyle: 'Lifestyle', withprops: 'With props',
 };
+const TIER_COST_PER_IMAGE = { fast: 0.02, balanced: 0.045, quality: 0.09, ultra: 0.24 };
+const TIER_TIME_PER_IMAGE = { fast: 15, balanced: 30, quality: 30, ultra: 45 };
+
+function updateSceneSetLabel() {
+  const tier = state.tier || 'balanced';
+  const cost = (TIER_COST_PER_IMAGE[tier] * 5).toFixed(2);
+  const sec = TIER_TIME_PER_IMAGE[tier] * 2;  // rough total for 5 parallel
+  sceneSetMeta.textContent = `~$${cost} · ~${sec}s`;
+}
+updateSceneSetLabel();
 sceneSetBtn.addEventListener('click', async () => {
   if (!state.prodImage) { showToast('Upload a product first', 'err'); return; }
   if (state.generating) return;
   state.generating = true;
   sceneSetBtn.disabled = true;
+  genBtn.disabled = true;  // prevent double-fire
   sceneSetBtn.classList.add('is-loading');
+  genBtn.classList.add('is-loading');
   const originalMeta = sceneSetMeta.textContent;
   sceneSetMeta.textContent = 'Generating 5 scenes…';
 
@@ -549,7 +561,9 @@ sceneSetBtn.addEventListener('click', async () => {
   } finally {
     state.generating = false;
     sceneSetBtn.disabled = false;
+    genBtn.disabled = false;
     sceneSetBtn.classList.remove('is-loading');
+    genBtn.classList.remove('is-loading');
     sceneSetMeta.textContent = originalMeta;
   }
 });

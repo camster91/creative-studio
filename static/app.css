@@ -991,24 +991,43 @@ a:hover { text-decoration: underline; }
 .hero {
   padding: 80px 24px 64px;
   text-align: center;
+  position: relative;
 }
-.hero-inner { max-width: 720px; margin: 0 auto; }
+.hero-eyebrow {
+  display: inline-block;
+  padding: 6px 14px;
+  margin-bottom: 20px;
+  border-radius: 100px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--t-foot);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+.hero-inner { max-width: 760px; margin: 0 auto; }
 .hero h1 {
-  font-size: var(--t-hero);
-  font-weight: 700;
+  font-size: 3rem;
+  font-weight: 800;
   letter-spacing: -0.03em;
   line-height: 1.1;
   margin-bottom: 20px;
   color: var(--text);
 }
-.hero h1 span { color: var(--accent); }
-.hero p {
+.hero h1 span {
+  background: linear-gradient(135deg, var(--accent) 0%, #ff9268 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.hero p.hero-sub {
   font-size: var(--t-title);
   color: var(--text-2);
-  line-height: 1.5;
-  max-width: 540px;
+  line-height: 1.55;
+  max-width: 580px;
   margin: 0 auto 32px;
-  font-weight: 400;
+}
 }
 .hero-cta {
   display: flex; align-items: center; justify-content: center;
@@ -1222,7 +1241,8 @@ a:hover { text-decoration: underline; }
 }
 @media (max-width: 960px) {
   .hero { padding: 48px 20px 40px; }
-  .hero h1 { font-size: 26px; }
+  .hero h1 { font-size: 2.4rem; }
+  .hero p.hero-sub { font-size: 1rem; }
   .showcase, .how, .pricing, .faq, .cta-section { padding: 56px 20px; }
   .how-steps { grid-template-columns: 1fr; gap: 12px; }
   .showcase-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1230,7 +1250,7 @@ a:hover { text-decoration: underline; }
   .landing-footer-links { flex-wrap: wrap; }
 }
 @media (max-width: 640px) {
-  .hero h1 { font-size: 22px; }
-  .hero p { font-size: var(--t-body); }
+  .hero h1 { font-size: 2rem; }
+  .hero p.hero-sub { font-size: 0.95rem; }
   .showcase-head h2, .how h2, .pricing h2, .faq h2, .cta-section h2 { font-size: var(--t-title); }
 }

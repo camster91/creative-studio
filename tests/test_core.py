@@ -334,6 +334,10 @@ class TestPageRoutes:
         with cs.app.test_client() as c:
             html = c.get("/").get_data(as_text=True)
             assert 'href="/app"' in html
+            # The hero should mention the 5 scene types
+            assert "Five scene types" in html or "5 scene types" in html
+            # The CTA should be the new "Try it free" copy
+            assert "Try it free" in html
 
     def test_app_has_scene_types(self):
         """The 5 scene types (In-hand, Studio, Action, Lifestyle, With props)
