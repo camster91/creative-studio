@@ -1824,7 +1824,7 @@ def api_whoami():
         "server_has_fallback": bool(SERVER_API_KEY),
         "fallback_enabled": bool(ALLOW_SERVER_FALLBACK and SERVER_API_KEY),
         "byok_required": not (ALLOW_SERVER_FALLBACK and SERVER_API_KEY),
-        "version": "4.5.2",
+        "version": "4.9.0",
     })
 
 
