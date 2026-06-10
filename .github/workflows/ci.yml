@@ -18,6 +18,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+        # npm test currently has no real tests (package.json echoes a stub);
+        # leave continue-on-error until that script is real.
         continue-on-error: true
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -27,8 +29,13 @@ jobs:
       - name: Install Python dependencies
         run: pip install -e .
       - name: Lint with ruff
+        # ruff failures are noisy on a working app; gate behind a follow-up
+        # cleanup pass before making blocking.
         run: pip install ruff && ruff check scripts/ || true
       - name: Type check with mypy
+        # Same as ruff — needs a separate pass to clean up before blocking.
         run: pip install mypy && mypy scripts/ --ignore-missing-imports --follow-untyped-imports || true
       - name: Run pytest
-        run: pytest || true
+        # The real test suite — this MUST block. Removing the || true here
+        # is the one CI fix that actually catches regressions.
+        run: pytest
