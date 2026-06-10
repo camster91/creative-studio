@@ -1,0 +1,30 @@
+name: Uptime check
+on:
+  schedule:
+    # Every 10 minutes. Cheap, no third-party service required.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit /api/whoami
+        env:
+          URL: https://photogen.ashbi.ca
+        run: |
+          set -e
+          code=$(curl -s -o /tmp/whoami.json -w "%{http_code}" "$URL/api/whoami")
+          if [ "$code" != "200" ]; then
+            echo "FAIL: $URL/api/whoami returned HTTP $code"
+            cat /tmp/whoami.json 2>/dev/null || true
+            exit 1
+          fi
+          # Verify the editor still renders (catches the bug class where
+          # /api/whoami works but the editor JS is broken)
+          html=$(curl -sf "$URL/app")
+          for marker in "dropzone" "Generate" "SCENE"; do
+            echo "$html" | grep -q "$marker" || (echo "FAIL: /app missing '$marker'"; exit 1)
+          done
+          echo "OK — both /api/whoami and /app rendered cleanly"
