@@ -905,6 +905,33 @@ app = Flask(__name__, template_folder=str(TEMPLATES_DIR), static_folder=str(STAT
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32))
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32MB uploads
 
+# ── Error logging ──
+# Persist warnings+ to a rotating log so failures are debuggable via SSH
+# when the app breaks. No external Sentry needed for a side project.
+import logging
+from logging.handlers import RotatingFileHandler
+if not app.debug:
+    try:
+        _log_dir = DATA_DIR if DATA_DIR else Path("/tmp")
+        _log_dir.mkdir(parents=True, exist_ok=True)
+        _err_log = _log_dir / "flask-errors.log"
+        _handler = RotatingFileHandler(
+            str(_err_log), maxBytes=10_000_000, backupCount=3, encoding="utf-8"
+        )
+        _handler.setLevel(logging.WARNING)
+        _handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s "
+            "[in %(pathname)s:%(lineno)d]"
+        ))
+        app.logger.addHandler(_handler)
+        app.logger.setLevel(logging.WARNING)
+        app.logger.info("Creative Studio starting (logger attached: %s)", _err_log)
+    except Exception as _e:
+        # If we can't attach a file handler, fall back to stderr only —
+        # don't break the app boot over a logger setup failure
+        logging.basicConfig(level=logging.WARNING)
+        app.logger.warning("Failed to attach rotating file handler: %s", _e)
+
 # ── Simple in-memory rate limiter ───────────────────────────────────────
 _request_log: Dict[str, list] = {}
 _RATE_LIMIT = 20  # requests per minute per IP
