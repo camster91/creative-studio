@@ -988,7 +988,7 @@ a:hover { text-decoration: underline; }
 .landing-body .main { display: block; padding: 0; max-width: none; }
 
 /* Hero */
-.hero {
+.hero, .hero-section {
   padding: 80px 24px 64px;
   text-align: center;
   position: relative;
@@ -1006,7 +1006,7 @@ a:hover { text-decoration: underline; }
   text-transform: none;
 }
 .hero-inner { max-width: 760px; margin: 0 auto; }
-.hero h1 {
+.hero h1, .hero-section h1 {
   font-size: 3rem;
   font-weight: 800;
   letter-spacing: -0.03em;
@@ -1014,14 +1014,14 @@ a:hover { text-decoration: underline; }
   margin-bottom: 20px;
   color: var(--text);
 }
-.hero h1 span {
+.hero h1 span, .hero-section h1 span {
   background: linear-gradient(135deg, var(--accent) 0%, #ff9268 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
 }
-.hero p.hero-sub {
+.hero p.hero-sub, .hero-section p.hero-sub {
   font-size: var(--t-title);
   color: var(--text-2);
   line-height: 1.55;
@@ -1240,9 +1240,9 @@ a:hover { text-decoration: underline; }
   .pricing-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 960px) {
-  .hero { padding: 48px 20px 40px; }
-  .hero h1 { font-size: 2.4rem; }
-  .hero p.hero-sub { font-size: 1rem; }
+  .hero, .hero-section { padding: 48px 20px 40px; }
+  .hero h1, .hero-section h1 { font-size: 2.4rem; }
+  .hero p.hero-sub, .hero-section p.hero-sub { font-size: 1rem; }
   .showcase, .how, .pricing, .faq, .cta-section { padding: 56px 20px; }
   .how-steps { grid-template-columns: 1fr; gap: 12px; }
   .showcase-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1250,7 +1250,7 @@ a:hover { text-decoration: underline; }
   .landing-footer-links { flex-wrap: wrap; }
 }
 @media (max-width: 640px) {
-  .hero h1 { font-size: 2rem; }
-  .hero p.hero-sub { font-size: 0.95rem; }
+  .hero h1, .hero-section h1 { font-size: 2rem; }
+  .hero p.hero-sub, .hero-section p.hero-sub { font-size: 0.95rem; }
   .showcase-head h2, .how h2, .pricing h2, .faq h2, .cta-section h2 { font-size: var(--t-title); }
 }
