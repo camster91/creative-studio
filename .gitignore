@@ -26,3 +26,9 @@ Thumbs.db
 # Flask
 .flask_secret
 *.bak
+
+# Shell-injection accident artifacts (zero-byte files with malformed names)
+# Added 2026-06-09 when cleaning up after a heredoc redirect accident
+# (see .github/workflows/deploy.yml or git log for the smoking gun)
+source-*
+*n;
