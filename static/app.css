@@ -1108,25 +1108,25 @@ a:hover { text-decoration: underline; }
 .nav a:hover { color: var(--text); background: var(--bg-hover); text-decoration: none; }
 
 /* How it works */
-.how { padding: 80px 24px; }
+.how, .how-section { padding: 80px 24px; }
 .how-inner { max-width: 1100px; margin: 0 auto; }
-.how h2 {
+.how h2, .how-section h2 {
   text-align: center;
   font-size: var(--t-display);
   font-weight: 700;
   letter-spacing: -0.02em;
   margin-bottom: 48px;
 }
-.how-steps {
+.how-steps, .steps-row {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
 }
-.how-step {
+.how-step, .step {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   padding: 28px 24px;
 }
-.how-step-num {
+.how-step-num, .step-num {
   font-size: var(--t-foot);
   font-weight: 700;
   color: var(--accent);
@@ -1134,13 +1134,13 @@ a:hover { text-decoration: underline; }
   margin-bottom: 12px;
   text-transform: uppercase;
 }
-.how-step h3 { font-size: var(--t-title); font-weight: 600; margin-bottom: 8px; letter-spacing: -0.01em; }
-.how-step p { font-size: var(--t-body); color: var(--text-2); line-height: 1.55; }
+.how-step h3, .step h4 { font-size: var(--t-title); font-weight: 600; margin-bottom: 8px; letter-spacing: -0.01em; }
+.how-step p, .step p { font-size: var(--t-body); color: var(--text-2); line-height: 1.55; }
 
 /* Pricing */
-.pricing { padding: 80px 24px; border-top: 1px solid var(--border); }
+.pricing, .pricing-section { padding: 80px 24px; border-top: 1px solid var(--border); }
 .pricing-inner { max-width: 1100px; margin: 0 auto; }
-.pricing h2 {
+.pricing h2, .pricing-section h2 {
   text-align: center;
   font-size: var(--t-display);
   font-weight: 700;
@@ -1148,19 +1148,19 @@ a:hover { text-decoration: underline; }
   margin-bottom: 8px;
 }
 .pricing-sub { text-align: center; color: var(--text-2); font-size: var(--t-body); margin-bottom: 40px; }
-.pricing-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.pricing-card {
+.tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.tier {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   padding: 20px;
   position: relative;
 }
-.pricing-card.is-popular {
+.tier.tier-popular {
   border-color: var(--accent);
   background: linear-gradient(180deg, var(--accent-soft), var(--bg-elevated));
 }
-.pricing-badge {
+.tier-badge {
   position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
   padding: 3px 10px; border-radius: 100px;
   background: var(--accent); color: #fff;
@@ -1168,17 +1168,17 @@ a:hover { text-decoration: underline; }
   text-transform: uppercase; letter-spacing: 0.06em;
   white-space: nowrap;
 }
-.pricing-tier { font-size: var(--t-foot); font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
-.pricing-price { font-size: var(--t-display); font-weight: 700; color: var(--text); margin-bottom: 2px; letter-spacing: -0.02em; }
-.pricing-unit { font-size: var(--t-foot); color: var(--text-3); margin-bottom: 12px; }
-.pricing-features { list-style: none; padding: 0; }
-.pricing-features li { font-size: var(--t-foot); color: var(--text-2); margin-bottom: 6px; line-height: 1.4; display: flex; gap: 6px; }
-.pricing-features li::before { content: '✓'; color: var(--success); }
+.tier-label { font-size: var(--t-foot); font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+.tier-price { font-size: var(--t-display); font-weight: 700; color: var(--text); margin-bottom: 2px; letter-spacing: -0.02em; }
+.tier-unit { font-size: var(--t-foot); color: var(--text-3); margin-bottom: 12px; }
+.tier-features { list-style: none; padding: 0; }
+.tier-features li { font-size: var(--t-foot); color: var(--text-2); margin-bottom: 6px; line-height: 1.4; display: flex; gap: 6px; }
+.tier-features li::before { content: '✓'; color: var(--success); }
 
 /* FAQ */
-.faq { padding: 80px 24px; border-top: 1px solid var(--border); }
-.faq-inner { max-width: 720px; margin: 0 auto; }
-.faq h2 {
+.faq, .faq-section { padding: 80px 24px; border-top: 1px solid var(--border); }
+.faq-inner, .faq-list { max-width: 720px; margin: 0 auto; }
+.faq h2, .faq-section h2 {
   text-align: center;
   font-size: var(--t-display);
   font-weight: 700;
@@ -1215,14 +1215,63 @@ a:hover { text-decoration: underline; }
 .faq-item[open] summary::after { transform: rotate(45deg); }
 .faq-item > p { padding: 0 18px 16px; font-size: var(--t-body); color: var(--text-2); line-height: 1.6; }
 
-/* Final CTA */
-.cta-section {
+/* Showcase */
+.showcase, .showcase-section { padding: 80px 24px; border-top: 1px solid var(--border); }
+.showcase-inner { max-width: 1100px; margin: 0 auto; }
+.showcase-head { text-align: center; margin-bottom: 40px; }
+.showcase-head h2 {
+  font-size: var(--t-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+}
+.showcase-head p { color: var(--text-2); font-size: var(--t-body); }
+.showcase-foot { text-align: center; color: var(--text-3); font-size: var(--t-foot); margin-top: 32px; }
+
+/* Hero */
+.hero, .hero-section { padding: 80px 24px 64px; }
+.hero-inner { max-width: 1100px; margin: 0 auto; text-align: center; }
+.hero h1, .hero-section h1 {
+  font-size: 3.2rem; font-weight: 700; letter-spacing: -0.02em;
+  line-height: 1.05; margin-bottom: 16px;
+}
+.hero-eyebrow {
+  display: inline-block;
+  padding: 4px 12px; border-radius: 100px;
+  background: var(--accent-soft); color: var(--accent);
+  font-size: var(--t-caption); font-weight: 600;
+  margin-bottom: 24px;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.hero p.hero-sub, .hero-section p.hero-sub {
+  font-size: 1.15rem; color: var(--text-2); margin-bottom: 32px; line-height: 1.5;
+  max-width: 720px; margin-left: auto; margin-right: auto;
+}
+.hero-cta { display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; margin-bottom: 16px; }
+.hero-note { color: var(--text-3); font-size: var(--t-foot); }
+.hero-stats {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
+  margin-top: 48px; max-width: 600px; margin-left: auto; margin-right: auto;
+}
+.hero-stats .stat { text-align: center; }
+.stat-num { display: block; font-size: var(--t-title); font-weight: 700; color: var(--text); }
+.stat-lbl { display: block; font-size: var(--t-caption); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
+
+/* CTA banner (final) */
+.cta-section, .cta-banner {
   padding: 80px 24px;
   text-align: center;
   border-top: 1px solid var(--border);
 }
-.cta-section h2 { font-size: var(--t-display); font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
-.cta-section p { color: var(--text-2); font-size: var(--t-body); margin-bottom: 24px; }
+.cta-section h2, .cta-banner h2, .cta-inner h2 { font-size: var(--t-display); font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
+.cta-section p, .cta-banner p, .cta-inner p { color: var(--text-2); font-size: var(--t-body); margin-bottom: 24px; }
+.cta-inner { max-width: 720px; margin: 0 auto; }
+
+/* Generate button label spans (used inside the .btn-primary chip on /app) */
+.btn-label { display: inline-block; }
+
+/* Landing body — give the hero backdrop its own space if needed */
+.landing { display: block; }
 
 /* Footer */
 /* Footer — template uses .footer-* (not .landing-footer-*) */
@@ -1254,20 +1303,22 @@ a:hover { text-decoration: underline; }
 
 @media (max-width: 1100px) {
   .showcase-grid { grid-template-columns: repeat(3, 1fr); }
-  .pricing-grid { grid-template-columns: repeat(2, 1fr); }
+  .tiers { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 960px) {
   .hero, .hero-section { padding: 48px 20px 40px; }
   .hero h1, .hero-section h1 { font-size: 2.4rem; }
   .hero p.hero-sub, .hero-section p.hero-sub { font-size: 1rem; }
-  .showcase, .how, .pricing, .faq, .cta-section { padding: 56px 20px; }
-  .how-steps { grid-template-columns: 1fr; gap: 12px; }
+  .showcase, .showcase-section, .how, .how-section, .pricing, .pricing-section, .faq, .faq-section, .cta-section, .cta-banner { padding: 56px 20px; }
+  .how-steps, .steps-row { grid-template-columns: 1fr; gap: 12px; }
   .showcase-grid { grid-template-columns: repeat(2, 1fr); }
-  .pricing-grid { grid-template-columns: repeat(2, 1fr); }
+  .tiers { grid-template-columns: repeat(2, 1fr); }
+  .hero-stats { grid-template-columns: repeat(2, 1fr); gap: 12px; }
   .footer-links { flex-wrap: wrap; }
 }
 @media (max-width: 640px) {
   .hero h1, .hero-section h1 { font-size: 2rem; }
   .hero p.hero-sub, .hero-section p.hero-sub { font-size: 0.95rem; }
-  .showcase-head h2, .how h2, .pricing h2, .faq h2, .cta-section h2 { font-size: var(--t-title); }
+  .showcase-head h2, .showcase-section h2, .how h2, .how-section h2, .pricing h2, .pricing-section h2, .faq h2, .faq-section h2, .cta-section h2, .cta-banner h2 { font-size: var(--t-title); }
+  .showcase-grid, .tiers { grid-template-columns: 1fr; }
 }

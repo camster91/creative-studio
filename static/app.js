@@ -196,7 +196,7 @@ function applyUrlParams() {
     }
   }
 }
-applyUrlParams();
+// Invocation deferred to end of file so TIER_COST / updateGenLabel are initialized.
 
 // ── Chip selectors (aspect + quality) ───────────────────────────
 function bindChips(rowId, onChange) {
@@ -816,3 +816,4 @@ async function loadServerGallery() {
   } catch (e) { /* offline ok */ }
 }
 loadServerGallery();
+applyUrlParams();
