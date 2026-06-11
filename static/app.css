@@ -1093,11 +1093,11 @@ a:hover { text-decoration: underline; }
 .showcase-placeholder {
   width: 100%; height: 100%; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 6px;
-  background: linear-gradient(135deg, var(--bg-elevated) 0%, var(--surface-2) 100%);
+  background: linear-gradient(135deg, rgba(255, 122, 61, 0.12) 0%, rgba(255, 122, 61, 0.04) 100%);
   color: var(--text-3); font-size: var(--t-foot);
 }
-.showcase-placeholder span { font-size: 28px; font-weight: 700; color: var(--text-2); letter-spacing: 0.02em; }
-.showcase-placeholder b { font-weight: 600; font-size: var(--t-caption); color: var(--text-3); }
+.showcase-placeholder span { font-size: 28px; font-weight: 700; color: var(--accent); letter-spacing: 0.02em; }
+.showcase-placeholder b { font-weight: 600; font-size: var(--t-caption); color: var(--text-2); }
 .showcase-meta { padding: 12px 14px; }
 .showcase-label { font-size: var(--t-body); font-weight: 600; color: var(--text); display: block; }
 .showcase-tags { font-size: var(--t-foot); color: var(--text-3); }
@@ -1225,30 +1225,32 @@ a:hover { text-decoration: underline; }
 .cta-section p { color: var(--text-2); font-size: var(--t-body); margin-bottom: 24px; }
 
 /* Footer */
-.landing-footer {
+/* Footer — template uses .footer-* (not .landing-footer-*) */
+.landing-footer { /* keep for back-compat */ }
+.footer {
   padding: 24px;
   border-top: 1px solid var(--border);
 }
-.landing-footer-inner {
+.footer-inner {
   max-width: 1100px; margin: 0 auto;
   display: flex; justify-content: space-between; align-items: center;
   flex-wrap: wrap; gap: 12px;
 }
-.landing-footer-brand {
+.footer-brand {
   display: flex; align-items: center; gap: 8px;
   font-weight: 600; font-size: var(--t-foot);
   color: var(--text);
 }
-.landing-footer-brand .mark {
+.footer-mark {
   width: 22px; height: 22px;
   background: var(--accent); border-radius: 5px;
   display: flex; align-items: center; justify-content: center;
   font-size: 10px; color: #fff; font-weight: 700;
 }
-.landing-footer-links { display: flex; gap: 12px; }
-.landing-footer-links a { color: var(--text-2); font-size: var(--t-foot); padding: 8px 4px; min-height: 32px; display: inline-flex; align-items: center; }
-.landing-footer-links a:hover { color: var(--text); text-decoration: none; }
-.landing-footer-credit { font-size: var(--t-caption); color: var(--text-3); width: 100%; margin-top: 8px; }
+.footer-links { display: flex; gap: 12px; }
+.footer-links a { color: var(--text-2); font-size: var(--t-foot); padding: 8px 4px; min-height: 32px; display: inline-flex; align-items: center; }
+.footer-links a:hover { color: var(--text); text-decoration: none; }
+.footer-copy { font-size: var(--t-caption); color: var(--text-3); width: 100%; margin-top: 8px; }
 
 @media (max-width: 1100px) {
   .showcase-grid { grid-template-columns: repeat(3, 1fr); }
@@ -1262,7 +1264,7 @@ a:hover { text-decoration: underline; }
   .how-steps { grid-template-columns: 1fr; gap: 12px; }
   .showcase-grid { grid-template-columns: repeat(2, 1fr); }
   .pricing-grid { grid-template-columns: repeat(2, 1fr); }
-  .landing-footer-links { flex-wrap: wrap; }
+  .footer-links { flex-wrap: wrap; }
 }
 @media (max-width: 640px) {
   .hero h1, .hero-section h1 { font-size: 2rem; }
