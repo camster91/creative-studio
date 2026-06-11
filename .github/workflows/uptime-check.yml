@@ -24,7 +24,7 @@ jobs:
           # Verify the editor still renders (catches the bug class where
           # /api/whoami works but the editor JS is broken)
           html=$(curl -sf "$URL/app")
-          for marker in "dropzone" "Generate" "SCENE"; do
+          for marker in "dropzone" "Generate" "scene"; do
             echo "$html" | grep -q "$marker" || (echo "FAIL: /app missing '$marker'"; exit 1)
           done
           echo "OK — both /api/whoami and /app rendered cleanly"
