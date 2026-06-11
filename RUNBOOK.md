@@ -7,94 +7,110 @@ Operational reference for photogen.ashbi.ca. If you're paged at 2am, start here.
 | Thing | Value |
 |---|---|
 | Live URL | https://photogen.ashbi.ca |
-| Staging URL | https://stage.photogen.ashbi.ca (when set up) |
-| Server | `coolify` (187.77.26.99) — `ssh coolify` |
+| Staging URL | https://stage.photogen.ashbi.ca (not yet set up) |
+| Server | `coolify` (vps.ashbi.ca / 187.77.26.99) — `ssh coolify` |
 | Container name (prod) | `photogen` |
-| Container name (stage) | `photogen-stage` |
+| Container name (stage) | `photogen-stage` (planned) |
 | Data dir (prod) | `/root/photogen-data` (bind mount) |
 | Outputs dir (prod) | `/root/photogen-outputs` (bind mount) |
 | Data dir (stage) | `/root/photogen-stage-data` (bind mount) |
 | Outputs dir (stage) | `/root/photogen-stage-outputs` (bind mount) |
 | Env file (prod) | `/root/.env.photogen` (chmod 600) |
 | Env file (stage) | `/root/.env.photogen-stage` (chmod 600) |
-| Traefik config (prod) | `/data/coolify/proxy/dynamic/photogen.yml` |
-| Traefik config (stage) | `/data/coolify/proxy/dynamic/photogen-stage.yml` |
-| Image registry | `ghcr.io/camster91/creative-studio:<sha>` |
+| Caddy block (prod) | `/opt/caddy/Caddyfile` → `photogen.ashbi.ca { reverse_proxy 127.0.0.1:32778 }` |
+| Caddy block (stage) | `/opt/caddy/Caddyfile` → `stage.photogen.ashbi.ca { reverse_proxy 127.0.0.1:<port> }` (when set up) |
+| Image tag (server-built) | `creative-studio:<sha>` (local Docker, not registry) |
 | Backups | `/root/backups/creative-studio/<YYYY-MM-DD>/` |
 | Health check | `curl -sf https://photogen.ashbi.ca/api/whoami` |
 | Cost tracking | `curl -s https://photogen.ashbi.ca/api/costs` |
-| Last stable tag | `v4.5.1-prod` (git tag, points at commit `142ed75`) |
+| Last deployed SHA | `cab721c` (built 2026-06-11) |
 
 ## Architecture
 
 ```
 GitHub repo (camster91/creative-studio)
     │
-    │  push to main
+    │  rsync or scp source to server
     ▼
-GitHub Actions workflow (.github/workflows/deploy.yml)
+VPS (coolify = vps.ashbi.ca = 187.77.26.99)
     │
-    │ 1. build image → 2. push to ghcr.io → 3. SSH to Coolify
-    ▼
-Coolify server (187.77.26.99)
-    │
-    │ docker pull ghcr.io/camster91/creative-studio:<sha>
-    │ docker stop photogen && docker rm photogen
-    │ docker run --name photogen --env-file /root/.env.photogen ...
+    │  docker build → tags: creative-studio:<sha>, creative-studio:latest, photogen:latest
+    │  docker run --name photogen -p 32778:5173 ...
     │
     ▼
-Traefik (dynamic config: /data/coolify/proxy/dynamic/photogen.yml)
-    │  Host(`photogen.ashbi.ca`) → http://photogen:5173
+Caddy (systemd, /opt/caddy/Caddyfile)
+    │  Host(`photogen.ashbi.ca`) → 127.0.0.1:32778
+    │  Auto-TLS via Let's Encrypt HTTP-01
     ▼
-gunicorn (2 workers) → Flask app (scripts/creative-studio-web.py)
+gunicorn (1 worker) → Flask app (scripts/creative-studio-web.py)
 ```
 
-## Deploy procedure (manual, when GitHub Actions is down)
+Reverse proxy is **Caddy on the host**, not Traefik (as of 2026-06-11). If you see Traefik config in the repo (`ops/traefik/*`), it's legacy and ignored.
+
+## Deploy procedure (manual)
 
 ```bash
-# 1. SSH to the server
-ssh coolify
+# 1. Build a source tarball locally (excludes .venv, .git, build artifacts)
+cd ~/projects/creative-studio
+tar --exclude='./.venv' --exclude='./__pycache__' --exclude='./.ruff_cache' \
+    --exclude='./node_modules' --exclude='./.git' \
+    -czf /tmp/photogen-source.tar.gz .
 
-# 2. Pull latest code
-cd /root/repos/creative-studio
-git fetch origin main
-git reset --hard origin/main
-SHA=$(git rev-parse --short HEAD)
+# 2. Copy to server and unpack
+scp /tmp/photogen-source.tar.gz coolify:/root/photogen-build/
+ssh coolify "cd /root/photogen-build && tar xzf photogen-source.tar.gz"
 
-# 3. Build image with the SHA tag (also tag as :latest for fallback)
-docker build -t "creative-studio:${SHA}" -t creative-studio:latest -t photogen:latest .
+# 3. Build image with the SHA tag (also :latest + photogen:latest fallback)
+ssh coolify "cd /root/photogen-build && \\
+  docker build -t creative-studio:\$(git rev-parse --short HEAD) \\
+               -t creative-studio:latest \\
+               -t photogen:latest ."
+# (Use the local SHA of the unpacked source if not a git checkout on the server.)
 
 # 4. Swap the container
-docker stop photogen 2>/dev/null
+ssh coolify "docker stop photogen 2>/dev/null
 docker rm photogen 2>/dev/null
-docker run -d \
-  --name photogen \
-  --network coolify \
-  --restart unless-stopped \
-  -p 5173:5173 \
-  -v /root/photogen-data:/app/data \
-  -v /root/photogen-outputs:/app/outputs \
-  --env-file /root/.env.photogen \
-  -e CREATIVE_OUTPUT_DIR=/app/outputs \
-  -e CREATIVE_DATA_DIR=/app/data \
-  -e PORT=5173 \
-  -l traefik.enable=true \
-  -l "traefik.http.routers.https-0-photogen.rule=Host(\`photogen.ashbi.ca\`)" \
-  -l traefik.http.routers.https-0-photogen.tls=true \
-  -l traefik.http.routers.https-0-photogen.tls.certresolver=letsencrypt \
-  -l traefik.http.routers.https-0-photogen.entrypoints=https \
-  -l traefik.http.services.https-0-photogen.loadbalancer.server.port=5173 \
-  -l coolify.managed=true \
-  photogen:latest
+docker run -d \\
+  --name photogen \\
+  --restart unless-stopped \\
+  -p 32778:5173 \\
+  -v /root/photogen-data:/app/data \\
+  -v /root/photogen-outputs:/app/outputs \\
+  --env-file /root/.env.photogen \\
+  -e CREATIVE_OUTPUT_DIR=/app/outputs \\
+  -e CREATIVE_DATA_DIR=/app/data \\
+  -e PORT=5173 \\
+  photogen:latest"
 
 # 5. Verify
-sleep 5
-docker ps --format "{{.Names}} {{.Status}}" | grep photogen
+ssh coolify "sleep 4 && docker ps --format '{{.Names}} {{.Status}}' | grep photogen
+docker inspect --format='{{.State.Health.Status}}' photogen
 docker logs photogen --tail 10
-curl -sf http://localhost:5173/api/whoami
+curl -sf http://127.0.0.1:32778/api/whoami"
+curl -sf https://photogen.ashbi.ca/api/whoami
 ```
 
-If `/api/whoami` returns 200, deploy is good. The Traefik dynamic file at `/data/coolify/proxy/dynamic/photogen.yml` references the container by name, not IP, so it routes to whatever container is currently named `photogen`.
+The Caddy block for `photogen.ashbi.ca` is already in `/opt/caddy/Caddyfile`. No Caddy change needed for routine image updates — only when changing host port.
+
+## Caddy / DNS changes (one-time setup, already done for prod)
+
+- **A record** for `photogen.ashbi.ca` → `187.77.26.99` (Cloudflare, **DNS-only**, not proxied).
+- **Caddy block** appended to `/opt/caddy/Caddyfile`:
+  ```caddyfile
+  # Creative Studio (Photogen) — Flask + gunicorn on 127.0.0.1:32778
+  photogen.ashbi.ca {
+      reverse_proxy 127.0.0.1:32778
+  }
+  ```
+- Restart: `ssh coolify "systemctl restart caddy"`. Cert auto-issues via Let's Encrypt HTTP-01 (no DNS-01 needed since the apex `ashbi.ca` is on Cloudflare but this subdomain is DNS-only).
+
+## Changing the host port
+
+If `32778` collides with another service, pick a free port in the `32768–60999` range (avoid 80/443/22). Then:
+
+1. Update the `-p <PORT>:5173` flag in the `docker run` block above.
+2. Update the Caddyfile `reverse_proxy 127.0.0.1:<PORT>` to match.
+3. `ssh coolify "systemctl restart caddy"`.
 
 ## Rollback procedure
 
@@ -104,26 +120,18 @@ ssh coolify
 # List recent images
 docker images creative-studio --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}\t{{.ID}}"
 
-# Pick the previous good SHA. Example: 142ed75
-PREVIOUS=142ed75
+# Pick the previous good SHA
+PREVIOUS=cab721c
 
 # Stop current, start previous
-docker stop photogen
-docker rm photogen
-docker run -d \
-  --name photogen \
-  --network coolify \
-  --restart unless-stopped \
-  -p 5173:5173 \
-  -v /root/photogen-data:/app/data \
-  -v /root/photogen-outputs:/app/outputs \
+docker stop photogen && docker rm photogen
+docker run -d --name photogen --restart unless-stopped -p 32778:5173 \
+  -v /root/photogen-data:/app/data -v /root/photogen-outputs:/app/outputs \
   --env-file /root/.env.photogen \
-  -e CREATIVE_OUTPUT_DIR=/app/outputs \
-  -e CREATIVE_DATA_DIR=/app/data \
-  -e PORT=5173 \
-  photogen:${PREVIOUS}
+  -e CREATIVE_OUTPUT_DIR=/app/outputs -e CREATIVE_DATA_DIR=/app/data -e PORT=5173 \
+  "creative-studio:${PREVIOUS}"
 
-sleep 5
+sleep 4
 curl -sf https://photogen.ashbi.ca/api/whoami
 ```
 
@@ -133,9 +141,9 @@ Total rollback time: ~30 seconds.
 
 ### "502 Bad Gateway" on photogen.ashbi.ca
 
-**Symptom:** Site returns 502, /api/whoami hangs or fails.
+**Symptom:** Site returns 502, `/api/whoami` hangs or fails.
 
-**Likely cause:** Container crashed or isn't running. Traefik can't reach it.
+**Likely cause:** Container crashed or isn't running. Caddy can't reach `127.0.0.1:32778`.
 
 **Fix:**
 ```bash
@@ -143,29 +151,17 @@ ssh coolify
 docker ps --format "{{.Names}} {{.Status}}" | grep photogen
 docker logs photogen --tail 30
 # If container is down:
-docker start photogen   # if it exists but is stopped
-# or follow the "Deploy procedure" above to start fresh
+docker start photogen
+# Otherwise follow the "Deploy procedure" above.
 ```
 
 ### Site works but generation returns "API_KEY_INVALID"
 
 **Symptom:** `/api/whoami` returns OK, but `/api/generate` fails with `API key not valid`.
 
-**Likely cause:** Either the key in `/root/.env.photogen` has been revoked/expired, or no user-supplied key is set and the server fallback is broken.
+**Likely cause:** User-supplied key (X-API-Key header from the UI) is wrong, expired, or revoked. The server itself runs with **BYOK default** (`CREATIVE_ALLOW_SERVER_FALLBACK=false`), so a broken UI key is the most common cause.
 
-**Fix:**
-```bash
-# Test the server's fallback key
-ssh coolify
-docker exec photogen env | grep GEMINI_API_KEY  # check the key is set
-# User can also paste their own key in the UI sidebar
-# If the server key is broken, replace it:
-# 1. Get a new key from https://aistudio.google.com/app/apikey
-# 2. Edit /root/.env.photogen on the server
-# 3. Restart the container
-docker stop photogen && docker rm photogen
-docker run -d --name photogen ... (same flags as deploy)
-```
+**Fix:** Have the user re-paste their key in the editor sidebar. If you want to verify the server fallback works, set `CREATIVE_ALLOW_SERVER_FALLBACK=true` AND a real `GEMINI_API_KEY` in `/root/.env.photogen`, then restart the container.
 
 ### "Daily limit $X reached" error
 
@@ -175,16 +171,20 @@ docker run -d --name photogen ... (same flags as deploy)
 
 **Fix:**
 ```bash
-# Either wait until tomorrow (UTC date changes at 00:00), or:
 ssh coolify
-# Reset the costs file (last resort)
+# Wait until tomorrow (UTC date changes at 00:00), or:
 docker stop photogen
 rm /root/photogen-data/costs.json
 docker start photogen
 
 # Or raise the limit
 echo "CREATIVE_DAILY_LIMIT=20" >> /root/.env.photogen
-# then restart the container
+docker stop photogen && docker rm photogen
+docker run -d --name photogen --restart unless-stopped -p 32778:5173 \
+  -v /root/photogen-data:/app/data -v /root/photogen-outputs:/app/outputs \
+  --env-file /root/.env.photogen \
+  -e CREATIVE_OUTPUT_DIR=/app/outputs -e CREATIVE_DATA_DIR=/app/data -e PORT=5173 \
+  photogen:latest
 ```
 
 ### "JS is dead — buttons do nothing"
@@ -195,49 +195,46 @@ echo "CREATIVE_DAILY_LIMIT=20" >> /root/.env.photogen
 
 **Fix:** Roll back to the previous known-good SHA. Fix the bug locally, run `pytest tests/`, re-deploy.
 
+### Caddy returns 521 (origin down)
+
+**Symptom:** Browser shows "521 Origin Down" from Cloudflare (if you later turn proxy on) or Caddy 502.
+
+**Likely cause:** Container died. Check `docker ps` and `docker logs photogen`.
+
+### TLS cert won't issue
+
+**Symptom:** `caddy validate` says valid, restart succeeds, but `https://photogen.ashbi.ca/` fails with cert error.
+
+**Likely cause:** A record doesn't point to `187.77.26.99` (or it's still propagating), or Cloudflare proxy is intercepting the HTTP-01 challenge.
+
+**Fix:**
+```bash
+dig +short photogen.ashbi.ca   # must be 187.77.26.99
+ssh coolify "find /var/lib/caddy -name 'photogen.ashbi.ca.crt'"  # must exist
+ssh coolify "journalctl -u caddy --since '5 min ago' | grep -i acme"
+```
+
 ## Backup procedure (manual, when cron is down)
 
 ```bash
 ssh coolify
-DATE=$(date +%F)
-mkdir -p /root/backups/creative-studio/$DATE/{data,outputs,env}
-tar czf /root/backups/creative-studio/$DATE/data/sessions-and-costs.tgz -C /root/photogen-data .
-tar czf /root/backups/creative-studio/$DATE/outputs/outputs.tgz -C /root/photogen-outputs .
-cp /root/.env.photogen /root/backups/creative-studio/$DATE/env/env.photogen.$DATE
-chmod 600 /root/backups/creative-studio/$DATE/env/env.photogen.$DATE
+BACKUP=/root/backups/creative-studio/$(date +%Y-%m-%d)
+mkdir -p "$BACKUP"
+cp -R /root/photogen-data "$BACKUP/data"
+cp -R /root/photogen-outputs "$BACKUP/outputs"
+cp /root/.env.photogen "$BACKUP/env"
+ls -la "$BACKUP"
 ```
 
-Restoration: extract the tarballs back to `/root/photogen-data` and `/root/photogen-outputs`, restart the container.
-
-## Log locations
-
-- App stdout/stderr: `docker logs photogen` (no log shipping, captured by Coolify)
-- Gunicorn access: same
-- Costs/sessions: `/root/photogen-data/costs.json` and `/root/photogen-data/sessions/*.json`
-- Outputs: `/root/photogen-outputs/YYYY-MM-DD/<mode>/*.png`
-
-## Cost monitoring
-
-```bash
-# Today's spend
-curl -s https://photogen.ashbi.ca/api/costs | python3 -m json.tool
-
-# Per-model breakdown
-curl -s https://photogen.ashbi.ca/api/costs | jq '.by_model'
-
-# Recent sessions
-ssh coolify 'ls -lt /root/photogen-data/sessions/ | head -5'
-```
-
-## When all else fails
-
-The service is a single container. Worst case: it can be rebuilt from a git tag in 5 minutes. Data loss is bounded by how often you back up (currently: manually on deploy). Phase 3 of the shipping plan adds automated daily backups.
-
-If you need to start completely fresh:
+Restore:
 ```bash
 ssh coolify
-cd /root/repos/creative-studio
-git fetch --tags
-git checkout v4.5.1-prod
-# then run the "Deploy procedure" from a known-good tag
+docker stop photogen
+cp -R /root/backups/creative-studio/<DATE>/data /root/photogen-data
+cp -R /root/backups/creative-studio/<DATE>/outputs /root/photogen-outputs
+cp /root/backups/creative-studio/<DATE>/env /root/.env.photogen
+chmod 600 /root/.env.photogen
+docker start photogen
 ```
+
+The `backup-data.yml` GitHub workflow handles daily snapshots via SSH if it's still wired up. If it's been broken, run this manually.
