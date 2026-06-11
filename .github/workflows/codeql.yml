@@ -19,7 +19,7 @@ jobs:
       matrix:
         language: ['javascript-typescript', 'python']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Setup Python so CodeQL can resolve imports and analyze Python code
       - name: Setup Python
