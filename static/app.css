@@ -254,9 +254,11 @@ a:hover { text-decoration: underline; }
   font-size: var(--t-foot);
   color: var(--accent);
   font-weight: 500;
-  padding: 4px 8px;
+  padding: 6px 10px;
   border-radius: var(--r-sm);
-  min-height: 28px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
 }
 .link-btn:hover { background: var(--accent-soft); }
 .link-btn.link-danger { color: var(--danger); }
@@ -1088,9 +1090,22 @@ a:hover { text-decoration: underline; }
 .showcase-img.ratio-9-16 { aspect-ratio: 9 / 16; }
 .showcase-img.ratio-16-9 { aspect-ratio: 16 / 9; }
 .showcase-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.showcase-placeholder {
+  width: 100%; height: 100%; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px;
+  background: linear-gradient(135deg, var(--bg-elevated) 0%, var(--surface-2) 100%);
+  color: var(--text-3); font-size: var(--t-foot);
+}
+.showcase-placeholder span { font-size: 28px; font-weight: 700; color: var(--text-2); letter-spacing: 0.02em; }
+.showcase-placeholder b { font-weight: 600; font-size: var(--t-caption); color: var(--text-3); }
 .showcase-meta { padding: 12px 14px; }
 .showcase-label { font-size: var(--t-body); font-weight: 600; color: var(--text); display: block; }
 .showcase-tags { font-size: var(--t-foot); color: var(--text-3); }
+
+/* /history, /docs, /status back-link rows rendered as inline HTML in the Flask app */
+.nav { display: flex; gap: 16px; padding: 12px 0; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+.nav a { color: var(--text-2); padding: 6px 10px; min-height: 32px; display: inline-flex; align-items: center; border-radius: var(--r-sm); }
+.nav a:hover { color: var(--text); background: var(--bg-hover); text-decoration: none; }
 
 /* How it works */
 .how { padding: 80px 24px; }
@@ -1230,8 +1245,8 @@ a:hover { text-decoration: underline; }
   display: flex; align-items: center; justify-content: center;
   font-size: 10px; color: #fff; font-weight: 700;
 }
-.landing-footer-links { display: flex; gap: 20px; }
-.landing-footer-links a { color: var(--text-2); font-size: var(--t-foot); }
+.landing-footer-links { display: flex; gap: 12px; }
+.landing-footer-links a { color: var(--text-2); font-size: var(--t-foot); padding: 8px 4px; min-height: 32px; display: inline-flex; align-items: center; }
 .landing-footer-links a:hover { color: var(--text); text-decoration: none; }
 .landing-footer-credit { font-size: var(--t-caption); color: var(--text-3); width: 100%; margin-top: 8px; }
 

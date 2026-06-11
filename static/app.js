@@ -164,6 +164,40 @@ document.querySelectorAll('#presetRow .chip-scene').forEach(chip => {
   });
 });
 
+// Read ?preset=&ratio=&prompt= from the landing page gallery cards.
+// Runs once on init. Overrides the default preset + prompt when present.
+function applyUrlParams() {
+  const p = new URLSearchParams(window.location.search);
+  if (![...p.keys()].length) return;
+
+  const preset = p.get('preset');
+  const ratio = p.get('ratio');
+  const promptText = p.get('prompt');
+
+  if (preset && SCENE_TYPES[preset]) {
+    const scene = SCENE_TYPES[preset];
+    if (promptText) $('prompt').value = promptText;
+    else $('prompt').value = scene.prompt;
+    document.querySelectorAll('#presetRow .chip-scene').forEach(c => c.classList.toggle('active', c.dataset.preset === preset));
+    if (ratio) {
+      state.aspect = ratio;
+      document.querySelectorAll('#aspectRow .chip').forEach(c => c.classList.toggle('active', c.dataset.ratio === ratio));
+    } else {
+      state.aspect = scene.aspect;
+      document.querySelectorAll('#aspectRow .chip').forEach(c => c.classList.toggle('active', c.dataset.ratio === scene.aspect));
+    }
+    updateGenLabel();
+  } else if (promptText) {
+    $('prompt').value = promptText;
+    if (ratio) {
+      state.aspect = ratio;
+      document.querySelectorAll('#aspectRow .chip').forEach(c => c.classList.toggle('active', c.dataset.ratio === ratio));
+      updateGenLabel();
+    }
+  }
+}
+applyUrlParams();
+
 // ── Chip selectors (aspect + quality) ───────────────────────────
 function bindChips(rowId, onChange) {
   $(rowId).addEventListener('click', e => {
