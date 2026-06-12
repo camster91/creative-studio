@@ -32,3 +32,10 @@ Thumbs.db
 # (see .github/workflows/deploy.yml or git log for the smoking gun)
 source-*
 *n;
+
+# Local smoke-test artifacts
+.testdata/
+
+# Dockerfile creates this symlink at image build time
+/app/figma_utils.py
+figma_utils.py

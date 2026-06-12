@@ -1,0 +1,46 @@
+# Creative Studio — .dockerignore
+# Keep the build context small and deterministic
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+.venv*/
+
+# Outputs and data
+Downloads/
+creative-studio-outputs/
+tests/sessions/
+
+# Env and secrets — never bake into an image
+.env
+.env.*
+*.env
+.flask_secret
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Local shell / shell-injection accident artifacts (see .gitignore)
+source-*
+*n;
+
+# Tests don't need to ship inside the runtime image
+tests/
+
+# This file
+.dockerignore

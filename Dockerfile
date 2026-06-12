@@ -26,9 +26,6 @@ RUN ln -s /app/scripts/figma_utils.py /app/figma_utils.py 2>/dev/null || true
 RUN uv sync --frozen --no-dev
 RUN chown -R appuser:appuser /app
 
-# Production WSGI server
-RUN uv pip install gunicorn
-
 # Create writable directories for output
 RUN mkdir -p /app/data/sessions /app/outputs /app/data/uploads
 

@@ -1,9 +1,11 @@
 {
   "name": "creative-studio",
-  "version": "1.0.0",
+  "version": "4.6.0",
   "private": true,
+  "description": "Creative Studio — Flask app, no Node build step. The `build` and `test` scripts are no-op stubs preserved for the camster91/* Node-CI workflow which runs `npm ci && npm run build` against every repo. Real Python tests run via `make test` (pytest).",
   "scripts": {
-    "build": "echo 'No build step needed'",
-    "test": "echo 'No tests configured'"
+    "build": "echo 'No Node build step — Flask app, see Makefile'",
+    "test": "echo 'No Node tests — see `make test` for pytest'",
+    "lint": "echo 'No Node lint — see `make lint` for Python checks'"
   }
 }

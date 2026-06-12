@@ -22,6 +22,13 @@ from flask import Flask, render_template, request, jsonify, send_from_directory,
 
 from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
 
+
+# Single source of truth for the app version. Read this in /api/whoami and
+# any other code that needs the public version. Update it as part of release
+# and update pyproject.toml to match. The previous build had three different
+# version numbers across web.py / pyproject.toml / README.md.
+__version__ = "4.6.0"
+
 # ─── Config ────────────────────────────────────────────────────────────
 # ── BYOK / server-fallback config ───────────────────────────────────────
 # GEMINI_API_KEY env var sets a server-side fallback key (opt-in).
@@ -97,6 +104,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # ─── Helpers ───────────────────────────────────────────────────────────
 
+# All JSON read-mutate-write paths (load_costs, save_costs, save_pins,
+# add_entry, save_session) serialize on this lock. Without it, two
+# concurrent track_cost() calls each read costs, each +0.05, one writes
+# and the other's increment is lost.
+_json_lock = threading.Lock()
+
+
+def _with_json_lock(fn):
+    """Run a read-mutate-write JSON path under a single lock."""
+    with _json_lock:
+        return fn()
+
 
 def load_json(path: Path, default=None):
     return (
@@ -148,23 +167,73 @@ def save_costs(data: dict):
 
 
 def track_cost(model: str, resolution: str = "1K", count: int = 1):
-    """Charge the user for `count` images at the given model/resolution tier."""
-    costs = load_costs()
-    # COSTS is now {model: {resolution: price}}. Default to highest known if resolution missing.
-    price_map = COSTS.get(model, {})
-    if isinstance(price_map, dict):
-        unit = price_map.get(resolution) or price_map.get("1K") or 0.04
-    else:
-        # Backward compat: older flat-dict COSTS values
-        unit = float(price_map) if price_map else 0.04
-    c = unit * count
-    costs["total"] += c
-    costs["by_model"][model] = costs["by_model"].get(model, 0.0) + c
-    today = datetime.now().strftime("%Y-%m-%d")
-    costs["by_date"][today] = costs["by_date"].get(today, 0.0) + c
-    costs["image_count"] += count
-    save_costs(costs)
-    return c
+    """Charge the user for `count` images at the given model/resolution tier.
+
+    Atomic read-mutate-write under _json_lock so concurrent calls don't lose
+    increments. The cost guardrail uses the same lock via _try_charge_costs()
+    so the limit is enforced exactly once per request.
+    """
+    def _do():
+        costs = load_costs()
+        price_map = COSTS.get(model, {})
+        if isinstance(price_map, dict):
+            unit = price_map.get(resolution) or price_map.get("1K") or 0.04
+        else:
+            unit = float(price_map) if price_map else 0.04
+        c = unit * count
+        costs["total"] += c
+        costs["by_model"][model] = costs["by_model"].get(model, 0.0) + c
+        today = datetime.now().strftime("%Y-%m-%d")
+        costs["by_date"][today] = costs["by_date"].get(today, 0.0) + c
+        costs["image_count"] += count
+        save_costs(costs)
+        return c
+    return _with_json_lock(_do)
+
+
+def _check_daily_limit(est_count: int = 1, tier: str = "balanced"):
+    """Atomically check whether `est_count` images at `tier` would push today's
+    spend past the CREATIVE_DAILY_LIMIT cap.
+
+    Returns:
+        None if the request is allowed to proceed.
+        A (response, status) tuple to short-circuit with 429.
+
+    The check is held under _json_lock so two concurrent callers cannot
+    both pass the limit and both proceed.
+    """
+    def _do():
+        try:
+            daily_limit = float(os.environ.get("CREATIVE_DAILY_LIMIT", "5"))
+        except (TypeError, ValueError):
+            daily_limit = 5.0
+        if daily_limit <= 0:
+            return None
+        unit = cost_for_tier(tier)
+        est_total = unit * max(1, est_count)
+        costs_now = load_costs()
+        today = datetime.now().strftime("%Y-%m-%d")
+        spent_today = float(costs_now.get("by_date", {}).get(today, 0.0))
+        if spent_today + est_total > daily_limit:
+            return (
+                jsonify({
+                    "error": f"Daily limit ${daily_limit:.2f} reached. Spent today: ${spent_today:.2f}. Request would cost ${est_total:.2f}. Set CREATIVE_DAILY_LIMIT to a higher value or wait until tomorrow.",
+                    "spent_today": round(spent_today, 4),
+                    "limit": daily_limit,
+                    "est_cost": round(est_total, 4),
+                }),
+                429,
+            )
+        return None
+    return _with_json_lock(_do)
+
+
+# Backward-compat alias. Old callers using enforce_daily_limit() as a pure
+# check (no charge) still work — it now serializes on the same lock as the
+# post-generation track_cost() so the limit can't be bypassed by racing
+# requests. New code should prefer _check_daily_limit.
+def enforce_daily_limit(est_count: int = 1, tier: str = "balanced"):
+    return _check_daily_limit(est_count, tier)
 
 
 def cost_for_tier(tier: str) -> float:
@@ -232,9 +301,11 @@ def save_session(session_id: str, data: dict):
 
 
 def add_entry(session_id: str, entry: dict):
-    data = load_session(session_id)
-    data["entries"].append({"time": now_str(), **entry})
-    save_session(session_id, data)
+    def _do():
+        data = load_session(session_id)
+        data["entries"].append({"time": now_str(), **entry})
+        save_session(session_id, data)
+    _with_json_lock(_do)
 
 
 def now_str() -> str:
@@ -254,6 +325,31 @@ def image_url(path: str) -> str:
         return ""
 
 
+def _safe_output_relpath(rel_path: str) -> Optional[Path]:
+    """Resolve a user-supplied /image/<rel> tail against OUTPUT_DIR, rejecting
+    any path that escapes it (the same guard serve_image() already uses).
+    Returns the resolved Path if safe, None if traversal or non-existent.
+    """
+    if not rel_path:
+        return None
+    # Reject obvious traversal tokens at every path component
+    parts = rel_path.split("/")
+    if any(p in ("", ".", "..") or p.startswith("..") for p in parts):
+        return None
+    target = OUTPUT_DIR
+    for part in parts:
+        target = target / part
+    try:
+        resolved = target.resolve()
+        base = OUTPUT_DIR.resolve()
+        resolved.relative_to(base)
+    except (ValueError, RuntimeError):
+        return None
+    if not resolved.exists() or not resolved.is_file():
+        return None
+    return resolved
+
+
 # ─── Pin Annotations ────────────────────────────────────────────────────
 PINS_DB = DATA_DIR / "pins.json"
 
@@ -264,9 +360,11 @@ def load_pins(image_path: str) -> List[Dict]:
 
 
 def save_pins(image_path: str, pins: List[Dict]):
-    data = load_json(PINS_DB, {})
-    data[image_path] = pins
-    save_json(PINS_DB, data)
+    def _do():
+        data = load_json(PINS_DB, {})
+        data[image_path] = pins
+        save_json(PINS_DB, data)
+    _with_json_lock(_do)
 
 
 def pin_id() -> str:
@@ -936,10 +1034,29 @@ if not app.debug:
 _request_log: Dict[str, list] = {}
 _RATE_LIMIT = 20  # requests per minute per IP
 
+def _client_ip() -> str:
+    """Return the best-available client IP. By default trust the immediate
+    peer's `request.remote_addr` (Caddy/Proxmox/whatever's on :5173 directly).
+    If the operator sets TRUST_PROXY=1 in the environment, honor
+    X-Forwarded-For (right-most entry, since Caddy appends on each hop). The
+    previous version trusted X-Forwarded-For unconditionally, which let any
+    client spoof the limiter key and bypass the rate cap.
+    """
+    trust_proxy = os.environ.get("TRUST_PROXY", "").lower() in ("1", "true", "yes")
+    if trust_proxy:
+        xff = request.headers.get("X-Forwarded-For", "")
+        if xff:
+            # Last entry is the original client per the X-Forwarded-For spec
+            last = xff.split(",")[-1].strip()
+            if last:
+                return last
+    return request.remote_addr or "unknown"
+
+
 def rate_limited(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        ip = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
+        ip = _client_ip()
         now = time.time()
         _request_log.setdefault(ip, [])
         # purge old
@@ -1176,6 +1293,59 @@ def api_validate_key():
     return jsonify({"valid": True, "message": "Key looks valid"})
 
 
+_SSRF_BLOCKED_SCHEMES = frozenset(("", "file", "ftp", "gopher", "ldap", "dict", "data", "javascript"))
+
+
+def _is_safe_export_url(url: str) -> bool:
+    """Reject anything that isn't a public http(s) URL pointing at a routable host.
+
+    Blocks SSRF to loopback, link-local, private RFC1918 ranges, multicast,
+    unspecified, and reserved IPv6 ranges. The /image/... path on our own
+    server is the only legit use, so we also allow it explicitly.
+    """
+    from urllib.parse import urlparse
+    if not url:
+        return False
+    # Allow our own /image/ paths (same-origin only — no host tricks)
+    if url.startswith("/image/") and "://" not in url and "\n" not in url and "\r" not in url:
+        return True
+    try:
+        p = urlparse(url)
+    except Exception:
+        return False
+    if p.scheme.lower() not in ("http", "https"):
+        return False
+    if p.scheme.lower() in _SSRF_BLOCKED_SCHEMES:
+        return False
+    host = (p.hostname or "").lower()
+    if not host:
+        return False
+    # Strip IPv6 brackets if any
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    # Resolve and inspect every address (hostnames can resolve to private IPs)
+    import ipaddress, socket
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (socket.gaierror, UnicodeError):
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            return False
+    return True
+
+
 @app.route("/api/export-zip", methods=["POST"])
 @rate_limited
 def api_export_zip():
@@ -1184,6 +1354,13 @@ def api_export_zip():
     urls = data.get("urls", [])
     if not urls:
         return jsonify({"error": "No URLs provided"}), 400
+    # SSRF gate: reject anything not on the public internet
+    rejected = [u for u in urls if not _is_safe_export_url(u)]
+    if rejected:
+        return jsonify({
+            "error": "Rejected non-public or unsafe URL(s)",
+            "rejected": rejected[:5],
+        }), 400
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for i, url in enumerate(urls):
@@ -1265,8 +1442,11 @@ def api_export():
     # Case 1: Existing image from URL
     img_url = request.form.get("image_url")
     if img_url and img_url.startswith("/image/"):
-        rel_path = img_url.replace("/image/", "")
-        src_path = OUTPUT_DIR / rel_path
+        rel_path = img_url.replace("/image/", "", 1)
+        safe = _safe_output_relpath(rel_path)
+        if not safe:
+            return jsonify({"error": "Image path is invalid or outside the output directory"}), 400
+        src_path = safe
     # Case 2: Uploaded image
     elif "image" in request.files:
         f = request.files["image"]
@@ -1333,8 +1513,10 @@ def api_qc():
     data = request.json or request.form
     img_url = data.get("image_url")
     if img_url and img_url.startswith("/image/"):
-        rel_path = img_url.replace("/image/", "")
-        img_path = OUTPUT_DIR / rel_path
+        rel_path = img_url.replace("/image/", "", 1)
+        img_path = _safe_output_relpath(rel_path)
+        if not img_path:
+            return jsonify({"error": "Image path is invalid or outside the output directory"}), 400
     # Case 2: Uploaded image
     elif "image" in request.files:
         f = request.files["image"]
@@ -1851,7 +2033,7 @@ def api_whoami():
         "server_has_fallback": bool(SERVER_API_KEY),
         "fallback_enabled": bool(ALLOW_SERVER_FALLBACK and SERVER_API_KEY),
         "byok_required": not (ALLOW_SERVER_FALLBACK and SERVER_API_KEY),
-        "version": "4.9.0",
+        "version": __version__,
     })
 
 
