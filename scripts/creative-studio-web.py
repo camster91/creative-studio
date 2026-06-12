@@ -29,6 +29,31 @@ from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_wit
 # version numbers across web.py / pyproject.toml / README.md.
 __version__ = "4.6.0"
 
+# Max bytes for a user-supplied prompt. Defense against a 100KB figma-context
+# concat blowing up the subprocess argv (POSIX ARG_MAX is ~128KB on Linux;
+# macOS is 256KB, but a runaway length will OOM the worker or break the
+# shell). 16KB is enough for a full figma palette + a 2KB user brief.
+_MAX_PROMPT_BYTES = int(os.environ.get("CREATIVE_MAX_PROMPT_BYTES", str(16 * 1024)))
+
+
+def _enforce_prompt_length(prompt: str):
+    """Reject a prompt that exceeds _MAX_PROMPT_BYTES. Returns either None
+    (allowed) or a (jsonify_response, 413) tuple for the caller to return.
+    Counts bytes (not chars) so a Unicode paste doesn't sneak past with a
+    huge BMP-replacement-char payload.
+    """
+    if not prompt:
+        return None
+    if len(prompt.encode("utf-8")) > _MAX_PROMPT_BYTES:
+        return (
+            jsonify({
+                "error": f"Prompt too long: {len(prompt.encode('utf-8'))} bytes > limit {_MAX_PROMPT_BYTES} bytes. Shorten your prompt or the figma context.",
+                "limit": _MAX_PROMPT_BYTES,
+            }),
+            413,
+        )
+    return None
+
 # ─── Config ────────────────────────────────────────────────────────────
 # ── BYOK / server-fallback config ───────────────────────────────────────
 # GEMINI_API_KEY env var sets a server-side fallback key (opt-in).
@@ -1071,9 +1096,41 @@ def rate_limited(f):
 _jobs: Dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 
+# Cap the in-memory job map. Without this, a long-running photogen instance
+# serving 100 generations/day accumulates thousands of completed job records
+# for free (and they're never GC'd by `running` status). When the cap is
+# exceeded, the oldest *completed* (done|error) job is evicted; running jobs
+# are never evicted. Cap is overridable via CREATIVE_MAX_JOBS env var.
+_MAX_JOBS = int(os.environ.get("CREATIVE_MAX_JOBS", "500"))
+_JOB_TTL_SECONDS = 24 * 60 * 60  # evict completed jobs older than 24h regardless
+
 
 def _job_id() -> str:
     return "job_" + uuid.uuid4().hex[:12]
+
+
+def _evict_old_jobs():
+    """Called under _jobs_lock. Evict oldest completed jobs to keep the map
+    under _MAX_JOBS, and drop any completed job older than _JOB_TTL_SECONDS.
+    """
+    now = time.time()
+    # 1) Time-based sweep first — drop stale completed jobs regardless of count
+    stale = [
+        jid for jid, j in _jobs.items()
+        if j.get("finished_at") and (now - j["finished_at"]) > _JOB_TTL_SECONDS
+    ]
+    for jid in stale:
+        _jobs.pop(jid, None)
+    # 2) Size cap — drop oldest completed jobs (running jobs are protected)
+    if len(_jobs) <= _MAX_JOBS:
+        return
+    completed = sorted(
+        ((jid, j) for jid, j in _jobs.items() if j.get("status") in ("done", "error")),
+        key=lambda kv: kv[1].get("finished_at") or kv[1].get("started_at") or 0,
+    )
+    while len(_jobs) > _MAX_JOBS and completed:
+        jid, _ = completed.pop(0)
+        _jobs.pop(jid, None)
 
 
 def _run_job_background(
@@ -1091,11 +1148,13 @@ def _run_job_background(
                 _jobs[job_id]["status"] = "done"
                 _jobs[job_id]["result"] = result
                 _jobs[job_id]["finished_at"] = time.time()
+                _evict_old_jobs()
         except Exception as e:
             with _jobs_lock:
                 _jobs[job_id]["status"] = "error"
                 _jobs[job_id]["error"] = str(e)
                 _jobs[job_id]["finished_at"] = time.time()
+                _evict_old_jobs()
 
     with _jobs_lock:
         _jobs[job_id] = {
@@ -1105,6 +1164,7 @@ def _run_job_background(
             "error": None,
             "finished_at": None,
         }
+        _evict_old_jobs()
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
 
@@ -1141,6 +1201,11 @@ def api_generate():
     prompt = data.get("prompt", "").strip()
     if not prompt:
         return jsonify({"error": "Prompt required"}), 400
+    # Length cap runs before figma context expansion so a huge figma
+    # payload can't sneak past via concatenation.
+    cap = _enforce_prompt_length(prompt)
+    if cap is not None:
+        return cap
 
     # ── BYOK gate (applies to both sync and async paths) ──
     api_key, err = _require_api_key()
@@ -1396,6 +1461,9 @@ def api_composite():
     session_id = request.form.get("session_id", new_session_id())
     if not prompt:
         return jsonify({"error": "Prompt required"}), 400
+    cap = _enforce_prompt_length(prompt)
+    if cap is not None:
+        return cap
     api_key, err = _require_api_key()
     if err is not None:
         return err
@@ -1458,6 +1526,8 @@ def api_export():
         return jsonify({"error": "Image required"}), 400
 
     images = run_cli_export(str(src_path), presets, _get_api_key())
+    # NB: api_export doesn't call _require_api_key() (export uses a local
+    # PIL pipeline and isn't billed), so _get_api_key() is the correct call.
     selected_list = [p.strip() for p in presets.split(",") if p.strip()]
     for img in images:
         add_entry(
@@ -1527,7 +1597,7 @@ def api_qc():
     else:
         return jsonify({"error": "Image required"}), 400
 
-    qc = run_cli_qc(str(img_path), _get_api_key())
+    qc = run_cli_qc(str(img_path), api_key)
     return jsonify({"message": f"QC Score: {qc['quality_score']}/10", "qc": qc})
 
 
@@ -1571,7 +1641,7 @@ def api_refine():
     else:
         return jsonify({"error": "changes or pins required"}), 400
 
-    images = run_cli_refine(image_path, full_changes, _get_api_key(), tier)
+    images = run_cli_refine(image_path, full_changes, api_key, tier)
     for img in images:
         add_entry(
             session_id,
@@ -1600,6 +1670,9 @@ def api_variations():
     prompt = data.get("prompt", "").strip()
     if not prompt:
         return jsonify({"error": "Prompt required"}), 400
+    cap = _enforce_prompt_length(prompt)
+    if cap is not None:
+        return cap
 
     count = int(data.get("count", 4))
     count = max(1, min(8, count))
@@ -1621,7 +1694,7 @@ def api_variations():
         input_image = str(tmp_dir / f"variations_ref_{int(time.time())}_{f.filename}")
         f.save(input_image)
 
-    images, session_key = run_cli_variations(_get_api_key(),
+    images, session_key = run_cli_variations(api_key,
         prompt=prompt,
         count=count,
         tier=tier,
@@ -1836,6 +1909,9 @@ def api_chat():
     prompt = data.get("prompt", "").strip()
     if not prompt:
         return jsonify({"error": "Prompt required"}), 400
+    cap = _enforce_prompt_length(prompt)
+    if cap is not None:
+        return cap
 
     tier = data.get("tier", "balanced")
     aspect = data.get("aspect_ratio", "1:1")
@@ -1854,7 +1930,7 @@ def api_chat():
         if session_key not in _chat_sessions:
             pass  # run_cli_chat_turn handles first-turn initialization
 
-    images, sess = run_cli_chat_turn(_get_api_key(), 
+    images, sess = run_cli_chat_turn(api_key,
         session_key=session_key,
         prompt=prompt,
         tier=tier,
