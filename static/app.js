@@ -345,6 +345,22 @@ function showOutput(images, append = false) {
   });
 }
 
+function safeAttr(s) {
+  // Escape a value for safe insertion into an HTML attribute (double-quoted).
+  // All cells currently use img.url, img.name, img.model, img.prompt, and a
+  // numeric cost. img.name flows from f.name on the server, img.prompt is
+  // URI-encoded by encodeURIComponent above — but defense-in-depth: never
+  // trust any string into innerHTML.
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '&#10;')
+    .replace(/\r/g, '&#13;');
+}
+
 function buildCellHTML(img) {
   const ratio = img.ratio || '';
   const cost = img.cost ? '$' + img.cost.toFixed(2) : '';
@@ -352,22 +368,22 @@ function buildCellHTML(img) {
   const prompt = encodeURIComponent(img.prompt || state.lastPrompt || '');
   const dims = ratio ? dimBadge(ratio) : '';
   return `
-    <img src="${img.url}" alt="" loading="lazy">
+    <img src="${safeAttr(img.url)}" alt="" loading="lazy">
     <div class="cell-overlay">
       <div class="cell-meta">
-        ${ratio ? `<span class="cell-tag">${ratio}</span>` : ''}
-        ${dims ? `<span class="cell-tag cell-tag-dim">${dims}</span>` : ''}
-        ${cost ? `<span class="cell-tag cell-tag-cost">${cost}</span>` : ''}
-        ${model ? `<span class="cell-tag cell-tag-model">${model}</span>` : ''}
+        ${ratio ? `<span class="cell-tag">${safeAttr(ratio)}</span>` : ''}
+        ${dims ? `<span class="cell-tag cell-tag-dim">${safeAttr(dims)}</span>` : ''}
+        ${cost ? `<span class="cell-tag cell-tag-cost">${safeAttr(cost)}</span>` : ''}
+        ${model ? `<span class="cell-tag cell-tag-model">${safeAttr(model)}</span>` : ''}
       </div>
       <div class="cell-actions">
-        <button class="cell-action" data-action="save" data-url="${img.url}" data-name="${img.name}" data-cost="${img.cost||0}" data-model="${img.model||''}" aria-label="Save to gallery">
+        <button class="cell-action" data-action="save" data-url="${safeAttr(img.url)}" data-name="${safeAttr(img.name)}" data-cost="${safeAttr(img.cost||0)}" data-model="${safeAttr(img.model||'')}" aria-label="Save to gallery">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
         </button>
-        <button class="cell-action" data-action="copy" data-prompt="${prompt}" aria-label="Copy prompt">
+        <button class="cell-action" data-action="copy" data-prompt="${safeAttr(prompt)}" aria-label="Copy prompt">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
-        <a class="cell-action" href="${img.url}" download="${img.name}" aria-label="Download">
+        <a class="cell-action" href="${safeAttr(img.url)}" download="${safeAttr(img.name)}" aria-label="Download">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </a>
       </div>
