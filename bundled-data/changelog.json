@@ -1,0 +1,25 @@
+{
+  "entries": [
+    {
+      "date": "2026-06-11",
+      "date_iso": "2026-06-11",
+      "tag": "launch",
+      "title": "v4.9.0 — Public launch",
+      "body": "<p>Photogen is live at <a href='https://photogen.ashbi.ca'>photogen.ashbi.ca</a>. The first public version of Creative Studio's product photo generator.</p><h3>What's in the box</h3><ul><li>BYOK (bring your own Gemini key) with shared-key fallback</li><li>5 scene types: In-hand, Studio, Action, Lifestyle, With-props</li><li>6 aspect ratios: 1:1, 4:5, 9:16, 16:9, 2:3, 4:3</li><li>4-tier quality: Fast, Balanced, Quality, Ultra ($0.02 / $0.045 / $0.09 / $0.24)</li><li>Composite pipeline: product photo is composited into a generated scene, no hallucinated packaging</li><li>Real-time cost tracking at <a href='/status'>/status</a></li><li>REST API at <a href='/docs'>/docs</a></li></ul><h3>Try it</h3><p><a href='/app'>Open the editor</a> with a product photo and a prompt. No signup needed for the first generation.</p>"
+    },
+    {
+      "date": "2026-06-11",
+      "date_iso": "2026-06-11",
+      "tag": "ui",
+      "title": "Landing page revamp",
+      "body": "<p>Replaced the broken sample-image gallery with a 4-card try-a-prompt grid. Each card opens the editor with the scene pre-loaded, the aspect ratio locked, and a starter prompt in the textarea.</p><p>Touch targets fixed across the site: footer links, API key button, back-link rows on /history, /docs, /status are all ≥32px on mobile.</p>"
+    },
+    {
+      "date": "2026-06-11",
+      "date_iso": "2026-06-11",
+      "tag": "fix",
+      "title": "Mobile audit + class-name drift fix",
+      "body": "<p>Full mobile pass at 375px. Caught a systemic CSS/template class-name drift that left the pricing section, footer, hero stats, and several other sections unstyled on every viewport. All aliased to match the template.</p><p>Fixed a TDZ bug in <code>applyUrlParams()</code> that was breaking the deeplink from the landing gallery cards.</p>"
+    }
+  ]
+}

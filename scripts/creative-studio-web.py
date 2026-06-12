@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Optional, List, Dict
 from functools import wraps
 
-from flask import Flask, render_template, request, jsonify, send_from_directory, send_file
+from flask import Flask, render_template, request, jsonify, send_from_directory, send_file, Response, abort
 
 from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
 
@@ -1020,11 +1020,21 @@ def app_editor():
 
 from datetime import datetime as _dt
 import json as _json
-import sys as _sys
-_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
-if _DATA_DIR not in _sys.path:
-    _sys.path.insert(0, _DATA_DIR)
-import competitors as _competitors  # noqa: E402
+import importlib.util as _importlib_util
+import importlib as _importlib
+import os as _os
+
+# Load the data/competitors.py module from disk (not via sys.path) so we
+# don't depend on sys.path ordering or whether /app is on the path at all.
+# We load from /app/bundled-data (image-baked) NOT /app/data (the runtime
+# volume mount) — the volume is for writable per-user state (sessions,
+# uploads, costs.json), the bundled data is for read-only marketing content.
+_DATA_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "bundled-data")
+_competitors_spec = _importlib_util.spec_from_file_location(
+    "_competitors_data", _os.path.join(_DATA_DIR, "competitors.py")
+)
+_competitors = _importlib_util.module_from_spec(_competitors_spec)
+_competitors_spec.loader.exec_module(_competitors)
 
 
 @app.route("/pricing")

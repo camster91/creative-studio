@@ -18,6 +18,7 @@ COPY templates/ ./templates/
 COPY static/ ./static/
 COPY launch.sh refine.sh ./
 COPY recipes/ ./recipes/
+COPY data/ ./bundled-data/
 
 # Fix figma_utils import path (file in scripts/ imported directly)
 RUN ln -s /app/scripts/figma_utils.py /app/figma_utils.py 2>/dev/null || true
