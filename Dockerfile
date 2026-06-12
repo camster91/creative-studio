@@ -19,8 +19,10 @@ COPY static/ ./static/
 COPY launch.sh refine.sh ./
 COPY recipes/ ./recipes/
 
-# Fix figma_utils import path (file in scripts/ imported directly)
-RUN ln -s /app/scripts/figma_utils.py /app/figma_utils.py 2>/dev/null || true
+# Fix figma_utils import path. The file lives in scripts/ but is imported
+# directly as `from figma_utils import ...`. Symlink it into the app root
+# so the import works regardless of the worker's cwd.
+RUN ln -s scripts/figma_utils.py figma_utils.py
 
 # Install dependencies as root first (uv needs write), then fix ownership
 RUN uv sync --frozen --no-dev

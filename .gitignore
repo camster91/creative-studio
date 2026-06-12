@@ -36,6 +36,7 @@ source-*
 # Local smoke-test artifacts
 .testdata/
 
-# Dockerfile creates this symlink at image build time
-/app/figma_utils.py
-figma_utils.py
+# NOTE: figma_utils.py is a real source file imported by creative-studio-web.py.
+# The Dockerfile symlinks it into /app/figma_utils.py so the import works
+# regardless of cwd (line in Dockerfile). Do NOT add figma_utils.py to this
+# gitignore — it must be tracked and shipped.
