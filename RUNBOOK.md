@@ -45,7 +45,7 @@ Caddy (systemd, /opt/caddy/Caddyfile)
 gunicorn (1 worker) → Flask app (scripts/creative-studio-web.py)
 ```
 
-Reverse proxy is **Caddy on the host**, not Traefik (as of 2026-06-11). If you see Traefik config in the repo (`ops/traefik/*`), it's legacy and ignored.
+Reverse proxy is **Caddy on the host**, not Traefik (as of 2026-06-11). The Traefik config in the repo was removed (no `ops/traefik/*` files remain).
 
 ## Deploy procedure (manual)
 
