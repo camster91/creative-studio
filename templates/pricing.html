@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Pricing — pay per image, no subscription — Creative Studio{% endblock %}
+{% block description %}Pay per image. No subscription, no minimums. $0.02 per draft, $0.05 balanced, $0.09 quality, $0.24 ultra. Bring your own Gemini API key or use ours.{% endblock %}
+{% block canonical %}https://photogen.ashbi.ca/pricing{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="page-hero-inner">
+    <h1>Pay per image. No subscription, no minimums.</h1>
+    <p class="page-hero-sub">Bring your own Gemini API key and we charge you nothing. Use our shared key and you pay Google directly. Either way, no per-seat license.</p>
+    <div class="price-toggles">
+      <button class="price-toggle is-active" data-billing="payg">Pay per image</button>
+      <button class="price-toggle" data-billing="monthly">Monthly plans (coming soon)</button>
+    </div>
+  </div>
+</section>
+
+<section class="pricing-grid-section" data-billing="payg">
+  <div class="pricing-grid-inner">
+    <article class="tier">
+      <div class="tier-label">Fast</div>
+      <div class="tier-price">$0.02</div>
+      <div class="tier-unit">per image</div>
+      <ul class="tier-features">
+        <li>1K resolution</li>
+        <li>~8s per image</li>
+        <li>imagen-4.0-fast</li>
+        <li>Product composited into scene</li>
+        <li>6 aspect ratios</li>
+        <li>No watermark</li>
+      </ul>
+      <p class="tier-best-for">Best for: drafts, mood boards, internal reviews</p>
+    </article>
+
+    <article class="tier tier-popular">
+      <div class="tier-badge">Most popular</div>
+      <div class="tier-label">Balanced</div>
+      <div class="tier-price">$0.045</div>
+      <div class="tier-unit">per image</div>
+      <ul class="tier-features">
+        <li>1K resolution with rich detail</li>
+        <li>~25s per image</li>
+        <li>gemini-2.5-flash-image</li>
+        <li>Product composited into scene</li>
+        <li>6 aspect ratios</li>
+        <li>Batch 4-up for one set of props</li>
+      </ul>
+      <p class="tier-best-for">Best for: PDP, social, email banners — the daily driver</p>
+    </article>
+
+    <article class="tier">
+      <div class="tier-label">Quality</div>
+      <div class="tier-price">$0.09</div>
+      <div class="tier-unit">per image</div>
+      <ul class="tier-features">
+        <li>2K resolution</li>
+        <li>~45s per image</li>
+        <li>gemini-2.5-flash-image (2K)</li>
+        <li>Product composited into scene</li>
+        <li>6 aspect ratios</li>
+        <li>Batch 4-up for one set of props</li>
+      </ul>
+      <p class="tier-best-for">Best for: hero banners, packaging mockups, paid ad creative</p>
+    </article>
+
+    <article class="tier">
+      <div class="tier-label">Ultra</div>
+      <div class="tier-price">$0.24</div>
+      <div class="tier-unit">per image</div>
+      <ul class="tier-features">
+        <li>2K with Pro model</li>
+        <li>~60s per image</li>
+        <li>gemini-3-pro-image-preview</li>
+        <li>Product composited into scene</li>
+        <li>6 aspect ratios</li>
+        <li>Best for: launch creative, billboards, print</li>
+      </ul>
+      <p class="tier-best-for">Best for: launch creative, billboards, print</p>
+    </article>
+  </div>
+</section>
+
+<section class="faq pricing-faq" id="pricing-faq">
+  <div class="faq-inner">
+    <h2>Pricing FAQ</h2>
+    <details class="faq-item">
+      <summary>What does "bring your own key" mean?</summary>
+      <p>Paste a free Google AI Studio key in the editor sidebar. We never see or store your key on the server. Every generation goes directly from your browser to Google — and Google bills you, not us.</p>
+    </details>
+    <details class="faq-item">
+      <summary>What if I use the shared key?</summary>
+      <p>The server uses a shared Gemini key to generate images. Your prompts and product photos still go directly to Google's API (we don't log them). You share the daily cost cap with other users, default $5/day.</p>
+    </details>
+    <details class="faq-item">
+      <summary>Are there monthly plans?</summary>
+      <p>Not yet. We're building them — see the <a href="/roadmap">roadmap</a>. For now, the per-image model is the lowest-friction way to scale.</p>
+    </details>
+    <details class="faq-item">
+      <summary>Why does Ultra cost 12x more than Fast?</summary>
+      <p>It's the same product photo in 2K with the Pro model. The Pro model produces noticeably more detail on labels, packaging, and reflections. For most CPG and DTC use, Balanced is the sweet spot.</p>
+    </details>
+    <details class="faq-item">
+      <summary>Can I get a refund if I don't like the image?</summary>
+      <p>There's nothing to refund — you pay Google directly (or the shared quota gets a bit lower). Re-generate as many times as you want, only successful generations are billed by Google.</p>
+    </details>
+  </div>
+</section>
+
+<section class="cta-banner">
+  <div class="cta-inner">
+    <h2>Stop paying $500/day for studio time</h2>
+    <p>Drop in a SKU. Get 5 scenes in 30 seconds. Ship the PNG to your storefront.</p>
+    <a href="/app" class="hero-btn">Open the editor →</a>
+  </div>
+</section>
+{% endblock %}

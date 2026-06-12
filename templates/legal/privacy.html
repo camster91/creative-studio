@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Privacy Policy — Creative Studio{% endblock %}
+{% block description %}How Creative Studio handles your data. What we store, what we don't, who we share with.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="page-hero-inner">
+    <h1>Privacy Policy</h1>
+    <p class="page-hero-sub">Last updated June 11, 2026</p>
+  </div>
+</section>
+
+<section class="legal-content">
+  <div class="legal-inner">
+    <h2>What we store</h2>
+    <ul>
+      <li><strong>Your email</strong> if you create an account. Hashed, used for login only.</li>
+      <li><strong>Your generated images</strong> in our object storage, linked to your account.</li>
+      <li><strong>Aggregate cost data</strong> (date, model, count) — no personally identifying prompts.</li>
+      <li><strong>Server logs</strong> (IP, user agent, request path) for 30 days for security and abuse prevention.</li>
+    </ul>
+
+    <h2>What we do NOT store</h2>
+    <ul>
+      <li>Your Gemini API key — that's in your browser's localStorage only</li>
+      <li>Your prompts (after generation completes) — they're transient, passed to Google and discarded</li>
+      <li>Your product photos on the server (during shared-key generation) — they're transient, passed to Google and discarded</li>
+    </ul>
+
+    <h2>Who we share with</h2>
+    <p>Google. When you use the shared key or paste your own key, your prompt and product photo are sent to Google's Gemini API. Google's terms and privacy policy apply to that data: <a href="https://ai.google.dev/terms" rel="noopener">https://ai.google.dev/terms</a>.</p>
+    <p>That's it. We do not sell, rent, or share your data with any other third party.</p>
+
+    <h2>Your rights</h2>
+    <ul>
+      <li><strong>Export</strong> — download all your images and data at any time from /account</li>
+      <li><strong>Delete</strong> — delete your account and all associated data from /account/delete. Permanent, no recovery.</li>
+      <li><strong>Access</strong> — request a copy of everything we have on you by emailing <a href="mailto:hello@ashbi.ca">hello@ashbi.ca</a></li>
+    </ul>
+
+    <h2>Cookies</h2>
+    <p>We use a single first-party session cookie for authentication. No third-party tracking, no analytics, no ad pixels. Server logs are the only telemetry.</p>
+
+    <h2>Children's data</h2>
+    <p>This service is not directed at children under 13. We do not knowingly collect data from children.</p>
+
+    <h2>Changes</h2>
+    <p>We may update this policy. Changes are posted here and on the <a href="/changelog">changelog</a>. Significant changes get an email to your account address.</p>
+
+    <h2>Contact</h2>
+    <p>Email <a href="mailto:hello@ashbi.ca">hello@ashbi.ca</a>. We read every email.</p>
+  </div>
+</section>
+{% endblock %}

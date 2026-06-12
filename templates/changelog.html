@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Changelog — Creative Studio release notes{% endblock %}
+{% block description %}Every release, every fix, every feature. Subscribe via RSS at /changelog.xml.{% endblock %}
+{% block canonical %}https://photogen.ashbi.ca/changelog{% endblock %}
+{% block content %}
+<section class="page-hero">
+  <div class="page-hero-inner">
+    <h1>Changelog</h1>
+    <p class="page-hero-sub">Every release, every fix, every feature. <a href="/changelog.xml">RSS</a></p>
+  </div>
+</section>
+
+<section class="changelog">
+  <div class="changelog-inner">
+    {% for entry in entries %}
+    <article class="changelog-entry">
+      <header class="changelog-header">
+        <span class="changelog-tag changelog-tag-{{ entry.tag }}">{{ entry.tag }}</span>
+        <time class="changelog-date" datetime="{{ entry.date_iso }}">{{ entry.date }}</time>
+        <h2 class="changelog-title">{{ entry.title }}</h2>
+      </header>
+      <div class="changelog-body">
+        {{ entry.body|safe }}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

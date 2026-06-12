@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{# Parameters the route passes in:
+   competitor (slug), competitor_name, competitor_url, competitor_tagline,
+   rows (list of (label, us, them) tuples), verdict, faqs (list of (q,a)) #}
+{% block title %}Photogen vs {{ competitor_name }} — honest comparison{% endblock %}
+{% block description %}How Creative Studio compares to {{ competitor_name }} for AI product photography. Pricing, features, BYOK, self-hosting, batch generation, side-by-side.{% endblock %}
+{% block canonical %}https://photogen.ashbi.ca/compare/photogen-vs-{{ competitor }}{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="page-hero-inner">
+    <h1>Photogen vs {{ competitor_name }}</h1>
+    <p class="page-hero-sub">Both are good. Here's the honest side-by-side. Last updated {{ now.strftime('%B %Y') if now else 'June 2026' }}.</p>
+  </div>
+</section>
+
+<section class="compare-section">
+  <div class="compare-grid">
+    <div class="compare-col compare-col-us">
+      <div class="compare-col-label">Photogen</div>
+      <h2>Creative Studio</h2>
+      <p class="compare-col-tagline">BYOK-first, pay per image, self-hostable</p>
+    </div>
+    <div class="compare-col compare-col-them">
+      <div class="compare-col-label">Them</div>
+      <h2>{{ competitor_name }}</h2>
+      <p class="compare-col-tagline">{{ competitor_tagline }}</p>
+    </div>
+  </div>
+
+  <table class="compare-table">
+    <thead>
+      <tr><th>Feature</th><th>Photogen</th><th>{{ competitor_name }}</th></tr>
+    </thead>
+    <tbody>
+      {% for label, us, them in rows %}
+      <tr>
+        <th>{{ label }}</th>
+        <td>{{ us|safe }}</td>
+        <td>{{ them|safe }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="compare-verdict">
+  <h2>The verdict</h2>
+  <div class="compare-verdict-body">{{ verdict|safe }}</div>
+</section>
+
+<section class="faq">
+  <div class="faq-inner">
+    <h2>FAQ — Photogen vs {{ competitor_name }}</h2>
+    {% for q, a in faqs %}
+    <details class="faq-item">
+      <summary>{{ q }}</summary>
+      <p>{{ a|safe }}</p>
+    </details>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="cta-banner">
+  <div class="cta-inner">
+    <h2>Try Photogen against your last {{ competitor_name }} shoot</h2>
+    <p>Same prompt, same product. See the diff in 30 seconds.</p>
+    <a href="/app" class="hero-btn">Open the editor →</a>
+  </div>
+</section>
+{% endblock %}

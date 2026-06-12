@@ -1,0 +1,77 @@
+{# Base layout for marketing pages. Blocks:
+   title, description, og_image, body_class, content, extra_head, extra_scripts #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0a0a0c">
+<title>{% block title %}Creative Studio — AI product photography for CPG &amp; DTC brands{% endblock %}</title>
+
+{# SEO defaults — override per page via description / og_image blocks #}
+<meta name="description" content="{% block description %}Generate campaign-ready product photos in 30 seconds. Drop your packaging, click Generate, ship the PNG to Shopify, Klaviyo, Amazon, or Pinterest. No studio. No stock photos. $0.02–$0.24 per image.{% endblock %}">
+<meta name="keywords" content="AI product photography, CPG photo generator, DTC product images, ecommerce product photos, AI background, product mockup">
+<meta name="author" content="Creative Studio by Ashbi Design">
+<meta name="robots" content="{% block robots %}index, follow{% endblock %}">
+<link rel="canonical" href="{% block canonical %}https://photogen.ashbi.ca{{ request.path }}{% endblock %}">
+
+{# Open Graph #}
+<meta property="og:type" content="{% block og_type %}website{% endblock %}">
+<meta property="og:site_name" content="Creative Studio">
+<meta property="og:title" content="{% block og_title %}{{ self.title() }}{% endblock %}">
+<meta property="og:description" content="{% block og_description %}{{ self.description() }}{% endblock %}">
+<meta property="og:url" content="{{ self.canonical() }}">
+<meta property="og:image" content="{% block og_image %}https://photogen.ashbi.ca/static/og-default.png{% endblock %}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:locale" content="en_US">
+
+{# Twitter #}
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{ self.og_title() }}">
+<meta name="twitter:description" content="{{ self.og_description() }}">
+<meta name="twitter:image" content="{{ self.og_image() }}">
+
+{# JSON-LD structured data — Organization #}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Creative Studio",
+  "alternateName": "Photogen",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "Web",
+  "offers": {
+    "@type": "Offer",
+    "price": "0.02",
+    "priceCurrency": "USD",
+    "description": "Pay per image, $0.02–$0.24"
+  },
+  "url": "https://photogen.ashbi.ca",
+  "description": "{{ self.description() }}",
+  "creator": {
+    "@type": "Organization",
+    "name": "Ashbi Design",
+    "url": "https://ashbi.ca"
+  }
+}
+</script>
+
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/marketing.js" defer></script>
+{% block extra_head %}{% endblock %}
+</head>
+<body class="{% block body_class %}landing-body{% endblock %}">
+
+{% include "_nav.html" %}
+
+<main>
+{% block content %}{% endblock %}
+</main>
+
+{% include "_footer.html" %}
+
+{% block extra_scripts %}{% endblock %}
+</body>
+</html>

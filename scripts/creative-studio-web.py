@@ -1014,6 +1014,280 @@ def app_editor():
     return render_template(APP_TEMPLATE)
 
 
+# ── Marketing site (saas-upgrade) ────────────────────────────────────
+# These all use base.html with shared nav + footer. No auth required
+# to view; static-ish content; SEO + Open Graph + JSON-LD enabled.
+
+from datetime import datetime as _dt
+import json as _json
+import sys as _sys
+_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+if _DATA_DIR not in _sys.path:
+    _sys.path.insert(0, _DATA_DIR)
+import competitors as _competitors  # noqa: E402
+
+
+@app.route("/pricing")
+def page_pricing():
+    return render_template("pricing.html")
+
+
+@app.route("/features")
+def page_features():
+    return render_template("features.html")
+
+
+@app.route("/customers")
+def page_customers():
+    return render_template("customers.html")
+
+
+@app.route("/about")
+def page_about():
+    return render_template("about.html")
+
+
+@app.route("/roadmap")
+def page_roadmap():
+    return render_template("roadmap.html")
+
+
+@app.route("/changelog")
+def page_changelog():
+    with open(os.path.join(_DATA_DIR, "changelog.json")) as f:
+        data = _json.load(f)
+    return render_template("changelog.html", entries=data["entries"])
+
+
+@app.route("/changelog.xml")
+def page_changelog_rss():
+    """RSS feed for the changelog. Drives IFTTT/Zapier subscriptions."""
+    with open(os.path.join(_DATA_DIR, "changelog.json")) as f:
+        data = _json.load(f)
+    items = []
+    for e in data["entries"]:
+        items.append(
+            "    <item>"
+            f"<title>{e['title']}</title>"
+            f"<link>https://photogen.ashbi.ca/changelog#{e['date_iso']}</link>"
+            f"<pubDate>{e['date']}T00:00:00Z</pubDate>"
+            f"<guid isPermaLink=\"false\">{e['date_iso']}-{e['title'][:32]}</guid>"
+            "</item>"
+        )
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<rss version="2.0"><channel>'
+        '<title>Creative Studio changelog</title>'
+        '<link>https://photogen.ashbi.ca/changelog</link>'
+        '<description>Every release, every fix, every feature.</description>'
+        + "\n".join(items) +
+        '</channel></rss>'
+    )
+    return Response(body, mimetype="application/rss+xml")
+
+
+@app.route("/compare/<slug>")
+def page_compare(slug):
+    """One slug per competitor. Renders the shared compare.html template."""
+    comp = _competitors.COMPETITORS.get(slug)
+    if not comp:
+        abort(404)
+    return render_template(
+        "compare.html",
+        competitor=slug,
+        competitor_name=comp["name"],
+        competitor_tagline=comp["tagline"],
+        rows=comp["rows"],
+        verdict=comp["verdict"],
+        faqs=comp["faqs"],
+        now=_dt.utcnow(),
+    )
+
+
+# Legal
+@app.route("/legal/terms")
+def page_legal_terms():
+    return render_template("legal/terms.html")
+
+
+@app.route("/legal/privacy")
+def page_legal_privacy():
+    return render_template("legal/privacy.html")
+
+
+@app.route("/legal/security")
+def page_legal_security():
+    return render_template("legal/security.html")
+
+
+# Auth (UI only — backend logic in next pass)
+@app.route("/login")
+def page_login():
+    return render_template("login.html")
+
+
+@app.route("/signup")
+def page_signup():
+    return render_template("signup.html")
+
+
+@app.route("/forgot")
+def page_forgot():
+    return Response(
+        "<!doctype html><meta charset=utf-8><title>Reset password</title>"
+        "<body style='font-family:system-ui;max-width:480px;margin:80px auto;padding:0 24px;background:#0a0a0c;color:#f0f0f5;min-height:100vh'>"
+        "<h1>Reset password</h1>"
+        "<p>Enter your email and we'll send a reset link.</p>"
+        "<form id=resetForm><input type=email name=email required placeholder='you@example.com' "
+        "style='width:100%;padding:10px;background:#14141b;border:1px solid #222;color:#fff;border-radius:6px;margin:12px 0'>"
+        "<button type=submit style='background:#ff7a3d;color:#fff;border:0;padding:10px 20px;border-radius:6px;cursor:pointer'>Send reset link</button></form>"
+        "<p id=msg style='color:#2dd4a8;margin-top:16px'></p>"
+        "<p style='margin-top:32px'><a style='color:#ff7a3d' href='/login'>← Back to sign in</a></p>"
+        "<script>"
+        "document.getElementById('resetForm').onsubmit=async e=>{"
+        "e.preventDefault();"
+        "const r=await fetch('/api/auth/forgot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:e.target.email.value})});"
+        "document.getElementById('msg').textContent=r.ok?'Check your email for a reset link.':'Something went wrong — try again later.';"
+        "};"
+        "</script>"
+        "</body>",
+        mimetype="text/html",
+    )
+
+
+# SEO: sitemap + robots
+@app.route("/sitemap.xml")
+def sitemap():
+    base = "https://photogen.ashbi.ca"
+    static_pages = [
+        ("", 1.0, "daily"),
+        ("/features", 0.8, "monthly"),
+        ("/pricing", 0.9, "weekly"),
+        ("/customers", 0.7, "monthly"),
+        ("/about", 0.5, "monthly"),
+        ("/roadmap", 0.7, "weekly"),
+        ("/changelog", 0.6, "weekly"),
+        ("/docs", 0.8, "weekly"),
+        ("/status", 0.4, "daily"),
+        ("/legal/terms", 0.3, "yearly"),
+        ("/legal/privacy", 0.3, "yearly"),
+        ("/legal/security", 0.3, "yearly"),
+    ]
+    urls = []
+    for path, pri, freq in static_pages:
+        urls.append(
+            f"  <url><loc>{base}{path}</loc><changefreq>{freq}</changefreq><priority>{pri}</priority></url>"
+        )
+    for slug in _competitors.COMPETITORS:
+        urls.append(
+            f"  <url><loc>{base}/compare/photogen-vs-{slug}</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>"
+        )
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "\n".join(urls) +
+        "\n</urlset>"
+    )
+    return Response(body, mimetype="application/xml")
+
+
+@app.route("/robots.txt")
+def robots():
+    return Response(
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /api/\n"
+        "Disallow: /app\n"
+        "Disallow: /login\n"
+        "Disallow: /signup\n"
+        "Disallow: /forgot\n"
+        "Sitemap: https://photogen.ashbi.ca/sitemap.xml\n",
+        mimetype="text/plain",
+    )
+
+
+# Dynamic OG image — 1200x630 SVG, served as image/svg+xml.
+# Most social crawlers (Slack, Twitter, Facebook, LinkedIn) handle SVG.
+# We ship one canonical "Photogen" card; per-page overrides can come later.
+@app.route("/static/og-default.png")
+def og_default():
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">'
+        '<defs>'
+        '<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0" stop-color="#0a0a0c"/>'
+        '<stop offset="1" stop-color="#1a1a24"/>'
+        '</linearGradient>'
+        '</defs>'
+        '<rect width="1200" height="630" fill="url(#bg)"/>'
+        '<rect x="60" y="60" width="60" height="60" rx="12" fill="#ff7a3d"/>'
+        '<text x="90" y="102" text-anchor="middle" font-family="system-ui,sans-serif" font-size="32" font-weight="700" fill="#fff">CS</text>'
+        '<text x="140" y="105" font-family="system-ui,sans-serif" font-size="22" font-weight="600" fill="#fff">Creative Studio</text>'
+        '<text x="60" y="260" font-family="system-ui,sans-serif" font-size="72" font-weight="700" fill="#fff">'
+        '<tspan x="60" dy="0">AI product photography</tspan>'
+        '<tspan x="60" dy="84" fill="#ff7a3d">for CPG &amp; DTC brands</tspan>'
+        '</text>'
+        '<text x="60" y="500" font-family="system-ui,sans-serif" font-size="28" fill="#9a9aa8">'
+        '<tspan x="60" dy="0">$0.02–$0.24 per image · BYOK or shared key · No signup</tspan>'
+        '<tspan x="60" dy="40">photogen.ashbi.ca</tspan>'
+        '</text>'
+        '</svg>'
+    )
+    return Response(svg, mimetype="image/svg+xml")
+
+
+# Topnav mobile-menu JS — only loaded on marketing pages that need it
+@app.route("/static/marketing.js")
+def marketing_js():
+    js = """
+(function(){
+  const menu = document.getElementById('topnavMenu');
+  const mobile = document.getElementById('topnavMobile');
+  if (menu && mobile) {
+    menu.addEventListener('click', () => {
+      const open = !mobile.hidden;
+      mobile.hidden = open;
+      menu.setAttribute('aria-label', open ? 'Open menu' : 'Close menu');
+    });
+  }
+  // Pricing page: payg/monthly toggle (monthly shows a "coming soon" state)
+  document.querySelectorAll('.price-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.price-toggle').forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      if (btn.dataset.billing === 'monthly') {
+        const tiers = document.querySelectorAll('.tier-price');
+        tiers.forEach((t, i) => {
+          const map = {0: '$24', 1: '$48', 2: '$96', 3: '$288'};
+          t.textContent = (map[i] || t.textContent) + ' /mo';
+        });
+      } else {
+        const tiers = document.querySelectorAll('.tier-price');
+        const map = {0: '$0.02', 1: '$0.045', 2: '$0.09', 3: '$0.24'};
+        tiers.forEach((t, i) => { t.textContent = map[i] || t.textContent; });
+      }
+    });
+  });
+  // Sign in / sign up form handlers (UI only — backend auth is in next pass)
+  const signin = document.getElementById('signinForm');
+  if (signin) signin.addEventListener('submit', e => {
+    e.preventDefault();
+    const err = document.getElementById('signinError');
+    err.hidden = false;
+    err.textContent = 'Accounts ship in the next deploy. The editor still works without one — paste a Gemini key in the sidebar.';
+  });
+  const signup = document.getElementById('signupForm');
+  if (signup) signup.addEventListener('submit', e => {
+    e.preventDefault();
+    const err = document.getElementById('signupError');
+    err.hidden = false;
+    err.textContent = 'Accounts ship in the next deploy. The editor still works without one.';
+  });
+})();
+"""
+    return Response(js, mimetype="application/javascript")
+
+
 # ── API Routes ──────────────────────────────────────────────────────────
 
 

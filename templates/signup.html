@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Create an account — Creative Studio{% endblock %}
+{% block description %}Free account. Your image library, history, and API keys in one place.{% endblock %}
+{% block robots %}noindex, follow{% endblock %}
+
+{% block content %}
+<section class="auth-page">
+  <div class="auth-card">
+    <h1>Create your account</h1>
+    <p class="auth-sub">Free. No credit card. Cancel any time by deleting your account.</p>
+    <form id="signupForm" class="auth-form" autocomplete="on">
+      <label>
+        <span>Email</span>
+        <input type="email" name="email" required autofocus autocomplete="email">
+      </label>
+      <label>
+        <span>Password</span>
+        <input type="password" name="password" required autocomplete="new-password" minlength="8" aria-describedby="pwdHint">
+        <small id="pwdHint" class="auth-hint">At least 8 characters. Use a password manager.</small>
+      </label>
+      <label class="auth-checkbox">
+        <input type="checkbox" name="tos" required>
+        <span>I agree to the <a href="/legal/terms" target="_blank">Terms of Service</a> and <a href="/legal/privacy" target="_blank">Privacy Policy</a></span>
+      </label>
+      <button type="submit" class="auth-btn">Create account →</button>
+      <p class="auth-error" id="signupError" hidden></p>
+    </form>
+    <p class="auth-foot">Already have an account? <a href="/login">Sign in →</a></p>
+  </div>
+</section>
+{% endblock %}

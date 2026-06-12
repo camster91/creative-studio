@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Terms of Service — Creative Studio{% endblock %}
+{% block description %}Terms of service for using Creative Studio / Photogen. Self-hosted, BYOK, your data is yours.{% endblock %}
+{% block robots %}index, follow{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="page-hero-inner">
+    <h1>Terms of Service</h1>
+    <p class="page-hero-sub">Last updated June 11, 2026</p>
+  </div>
+</section>
+
+<section class="legal-content">
+  <div class="legal-inner">
+    <h2>1. What this is</h2>
+    <p>Creative Studio (a.k.a. Photogen) is a self-hosted AI product photography tool operated by Ashbi Design ("we", "us"). When you use photogen.ashbi.ca, you're using our hosted instance. The full source is open and you can also self-host.</p>
+
+    <h2>2. Your data</h2>
+    <p>Your product photos, prompts, and generated images stay on our infrastructure. We do not train any model on your inputs. We do not share your inputs or outputs with any third party except Google (when we call their API on your behalf in the shared-key flow).</p>
+
+    <h2>3. Your API key</h2>
+    <p>If you paste your own Gemini API key, it is stored in your browser's localStorage only. It is never sent to our server. Every generation with your key goes directly from your browser to Google's API.</p>
+
+    <h2>4. Cost</h2>
+    <p>If you use the shared key, you share a daily cost cap with other users. We may adjust the cap at any time. If you use your own key, you pay Google directly and we never see the cost.</p>
+
+    <h2>5. Acceptable use</h2>
+    <p>You agree not to use the service to generate content that:</p>
+    <ul>
+      <li>Infringes intellectual property rights of others</li>
+      <li>Depicts illegal activity, child sexual abuse material, or non-consensual intimate imagery</li>
+      <li>Misleads consumers about a real product (e.g. generating fake reviews or fake before/after images of a real medical or financial product)</li>
+      <li>Is intended to defraud or scam</li>
+    </ul>
+
+    <h2>6. Refunds</h2>
+    <p>There are no charges on our end — you pay Google directly for API usage. We don't have a billing relationship with you for the hosted instance during the public beta. If we add paid plans later, refunds will be at our discretion.</p>
+
+    <h2>7. Termination</h2>
+    <p>We may shut down or restrict the hosted instance at any time. We will give 30 days notice on the <a href="/changelog">changelog</a>. After shutdown, all your data is deleted. You should download your library before then.</p>
+
+    <h2>8. No warranty</h2>
+    <p>This service is provided "as is" without warranty of any kind. Generated images may contain errors. Always review outputs before publishing.</p>
+
+    <h2>9. Contact</h2>
+    <p>Email <a href="mailto:hello@ashbi.ca">hello@ashbi.ca</a>. We read every email.</p>
+  </div>
+</section>
+{% endblock %}

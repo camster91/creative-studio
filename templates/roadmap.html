@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Roadmap — what's coming next{% endblock %}
+{% block description %}Public roadmap for Creative Studio. What we shipped, what we're building, what's on the radar. No private Trello.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="page-hero-inner">
+    <h1>Public roadmap</h1>
+    <p class="page-hero-sub">No private Trello. Here's what we're building, in priority order, with rough dates.</p>
+  </div>
+</section>
+
+<section class="roadmap-section">
+  <div class="roadmap-lane">
+    <h2 class="roadmap-status roadmap-status-now">Now — Q2 2026</h2>
+    <ul class="roadmap-list">
+      <li>
+        <h3>Per-user image library</h3>
+        <p>Every generation saves to your account, filterable by date / scene / aspect ratio. Re-download, re-prompt, re-export. <span class="roadmap-status-tag">shipping this week</span></p>
+      </li>
+      <li>
+        <h3>Accounts (email + password, no 3rd-party)</h3>
+        <p>Sign up with email. Per-user API key storage. No Google, no GitHub, no Clerk. <span class="roadmap-status-tag">shipping this week</span></p>
+      </li>
+      <li>
+        <h3>Public share links</h3>
+        <p>Every image gets a permanent URL. Send to your team, your client, your agency. No login needed to view. <span class="roadmap-status-tag">shipping this week</span></p>
+      </li>
+      <li>
+        <h3>Marketing site + comparison pages</h3>
+        <p>Real /pricing, /features, /customers, /changelog, /compare/photogen-vs-X. The site you're on now. <span class="roadmap-status-tag">shipping this week</span></p>
+      </li>
+    </ul>
+  </div>
+
+  <div class="roadmap-lane">
+    <h2 class="roadmap-status roadmap-status-next">Next — Q3 2026</h2>
+    <ul class="roadmap-list">
+      <li>
+        <h3>On-model photography</h3>
+        <p>Generate images of your product being held by a model, on a person, in lifestyle scenes with humans. Like Flair's flagship feature. This is the single biggest request from agencies.</p>
+      </li>
+      <li>
+        <h3>Direct Shopify publish</h3>
+        <p>One-click push to a Shopify store as a new product image. OAuth + Shopify Admin API integration.</p>
+      </li>
+      <li>
+        <h3>Team workspaces</h3>
+        <p>Multiple seats under one organization. Shared brand library (logos, color tokens, scene presets). Admin console for usage and billing.</p>
+      </li>
+      <li>
+        <h3>Webhook integrations</h3>
+        <p>Subscribe to <code>image.generated</code> and <code>image.failed</code> events. Pipe outputs to S3, Drive, Dropbox, or your own CDN.</p>
+      </li>
+    </ul>
+  </div>
+
+  <div class="roadmap-lane">
+    <h2 class="roadmap-status roadmap-status-later">Later — Q4 2026 and beyond</h2>
+    <ul class="roadmap-list">
+      <li>
+        <h3>Brand-preset library</h3>
+        <p>Save your color tokens, scene presets, and product prompts as a brand kit. Apply to every new product with one click.</p>
+      </li>
+      <li>
+        <h3>Video generation</h3>
+        <p>Static images are just the start. Once the static workflow is locked in, we move to short product videos (5–10s) for paid social.</p>
+      </li>
+      <li>
+        <h3>Self-hosted Pro tier</h3>
+        <p>The current single-container deploy is fine for one team. A multi-tenant self-hosted version with org management, RBAC, and usage quotas for agencies who want to host Photogen for their clients.</p>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<section class="cta-banner">
+  <div class="cta-inner">
+    <h2>Want something on the roadmap?</h2>
+    <p>Email <a href="mailto:hello@ashbi.ca">hello@ashbi.ca</a>. We read every email and prioritize based on what users actually ask for.</p>
+  </div>
+</section>
+{% endblock %}

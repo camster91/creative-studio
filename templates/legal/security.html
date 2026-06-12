@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Security — Creative Studio{% endblock %}
+{% block description %}How we protect your data. Encryption, BYOK, self-hosting, vulnerability disclosure.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="page-hero-inner">
+    <h1>Security</h1>
+    <p class="page-hero-sub">How we protect your data and how to report vulnerabilities.</p>
+  </div>
+</section>
+
+<section class="legal-content">
+  <div class="legal-inner">
+    <h2>BYOK by default</h2>
+    <p>The most security-sensitive piece of data — your Gemini API key — never touches our server. It's stored in your browser's localStorage, scoped to the photogen.ashbi.ca origin, and used directly from your browser when calling Google's API.</p>
+
+    <h2>Encryption</h2>
+    <ul>
+      <li><strong>In transit</strong> — TLS 1.2+ on all public traffic (Let's Encrypt via Caddy)</li>
+      <li><strong>At rest</strong> — generated images are stored on the server's filesystem. Disk encryption depends on the host's infrastructure. Self-hosting users can encrypt the underlying volume.</li>
+      <li><strong>Passwords</strong> — hashed with Argon2id (memory cost 64MB, 3 iterations, 1 parallelism)</li>
+    </ul>
+
+    <h2>Access control</h2>
+    <ul>
+      <li>Rate limiting on all public endpoints (60 req/min per IP for /api/*, 10 req/min for /auth/*)</li>
+      <li>Per-user image library is accessible only with a valid session token</li>
+      <li>Public share links are unguessable 32-char tokens, not enumerable</li>
+    </ul>
+
+    <h2>Self-hosting</h2>
+    <p>The full source is at <a href="https://github.com/camster91/creative-studio">github.com/camster91/creative-studio</a>. The production deploy is a single Docker container behind Caddy. You can run it on your own infrastructure with no code changes.</p>
+
+    <h2>Vulnerability disclosure</h2>
+    <p>Found a security issue? Email <a href="mailto:security@ashbi.ca">security@ashbi.ca</a> with:</p>
+    <ul>
+      <li>Description of the issue</li>
+      <li>Steps to reproduce</li>
+      <li>Impact assessment (your best guess is fine)</li>
+    </ul>
+    <p>We respond within 48 hours and ship a fix within 7 days for critical issues. We credit reporters in the <a href="/changelog">changelog</a> unless you ask to remain anonymous.</p>
+  </div>
+</section>
+{% endblock %}

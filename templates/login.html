@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Sign in — Creative Studio{% endblock %}
+{% block description %}Sign in to Creative Studio. Access your image library, history, and API keys.{% endblock %}
+{% block robots %}noindex, follow{% endblock %}
+
+{% block content %}
+<section class="auth-page">
+  <div class="auth-card">
+    <h1>Sign in</h1>
+    <p class="auth-sub">Access your image library and saved prompts.</p>
+    <form id="signinForm" class="auth-form" autocomplete="on">
+      <label>
+        <span>Email</span>
+        <input type="email" name="email" required autofocus autocomplete="email">
+      </label>
+      <label>
+        <span>Password</span>
+        <input type="password" name="password" required autocomplete="current-password" minlength="8">
+      </label>
+      <button type="submit" class="auth-btn">Sign in →</button>
+      <p class="auth-error" id="signinError" hidden></p>
+    </form>
+    <p class="auth-foot">No account? <a href="/signup">Create one →</a></p>
+    <p class="auth-foot"><a href="/forgot">Forgot password?</a></p>
+  </div>
+</section>
+{% endblock %}

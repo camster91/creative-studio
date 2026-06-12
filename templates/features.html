@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Features — what you can do with Creative Studio{% endblock %}
+{% block description %}Composite product photography, batch 4-up variations, six aspect ratios for every channel, BYOK or shared key, API access, history, share links, ZIP export.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="page-hero-inner">
+    <h1>Everything you need to ship a campaign.</h1>
+    <p class="page-hero-sub">One product photo in. Five scene types out. Ship-ready PNGs for every channel — Amazon, Shopify, Instagram, Pinterest, email, paid social.</p>
+  </div>
+</section>
+
+<section class="features-section">
+  <div class="features-grid">
+    <article class="feature-card">
+      <div class="feature-icon">📦</div>
+      <h2>Composite product photography</h2>
+      <p>Drop in a PNG with transparent background. The AI keeps your exact packaging — flavor name, label text, color, all of it. No hallucinated SKUs, no fake competitor products, no missing logos.</p>
+      <p class="feature-link"><a href="/features/composite">How compositing works →</a></p>
+    </article>
+
+    <article class="feature-card">
+      <div class="feature-icon">🎬</div>
+      <h2>Five scene types</h2>
+      <p>In-hand, Studio, Action, Lifestyle, With-props. Each one is a real prompt that the model renders against your product — not a filter. Pick one or write your own.</p>
+      <p class="feature-link"><a href="/features/scenes">See all 5 scene types →</a></p>
+    </article>
+
+    <article class="feature-card">
+      <div class="feature-icon">📐</div>
+      <h2>Six aspect ratios</h2>
+      <p>1:1, 4:5, 9:16, 16:9, 2:3, 4:3. Every channel covered: Amazon PDP, Instagram Feed, Stories, Pinterest, email banner, blog hero.</p>
+    </article>
+
+    <article class="feature-card">
+      <div class="feature-icon">⚡</div>
+      <h2>Batch 4-up variations</h2>
+      <p>Generate four scenes in one click. Pick the strongest, regenerate the rest. ~2 minutes for a full set of campaign shots.</p>
+    </article>
+
+    <article class="feature-card">
+      <div class="feature-icon">🔑</div>
+      <h2>BYOK or shared key</h2>
+      <p>Paste your own Gemini key for unlimited generations billed directly to Google. Or use our shared key for zero setup. Switch any time.</p>
+    </article>
+
+    <article class="feature-card">
+      <div class="feature-icon">📚</div>
+      <h2>Per-user image library</h2>
+      <p>Every generation saves to your library automatically. Filter by date, scene type, aspect ratio. Re-download, re-prompt, re-export as ZIP.</p>
+    </article>
+
+    <article class="feature-card">
+      <div class="feature-icon">🔗</div>
+      <h2>Shareable public links</h2>
+      <p>Every image has a public URL. Send a link to your team, your client, your agency. No login needed to view. <a href="/share/example">See an example</a>.</p>
+    </article>
+
+    <article class="feature-card">
+      <div class="feature-icon">🔌</div>
+      <h2>REST API</h2>
+      <p>Programmatic access for Shopify apps, Zapier, Make, custom integrations. Generate from any tool that can HTTP. <a href="/docs">Full API docs →</a></p>
+    </article>
+
+    <article class="feature-card">
+      <div class="feature-icon">📤</div>
+      <h2>One-click export</h2>
+      <p>Download as PNG, export a ZIP of a whole set, or push directly to Figma as a frame. <a href="/features/export">Export options →</a></p>
+    </article>
+
+    <article class="feature-card">
+      <div class="feature-icon">🛡️</div>
+      <h2>Self-hosted</h2>
+      <p>The whole app runs on a single Docker container. Your product photos, prompts, and outputs never touch a third-party gallery or training dataset.</p>
+    </article>
+
+    <article class="feature-card">
+      <div class="feature-icon">📊</div>
+      <h2>Cost tracking</h2>
+      <p>Per-user daily and lifetime spend visible at <a href="/status">/status</a>. Per-image cost in the editor, so you always know what you're about to spend.</p>
+    </article>
+
+    <article class="feature-card">
+      <div class="feature-icon">🔍</div>
+      <h2>Auto QC</h2>
+      <p>Every generation runs through a vision-based QC pass that flags floating products, garbled labels, detached shadows, and fake products. <a href="/features/qc">How QC works →</a></p>
+    </article>
+  </div>
+</section>
+
+<section class="cta-banner">
+  <div class="cta-inner">
+    <h2>Try it free. No signup.</h2>
+    <p>The editor runs in your browser. Drop a product photo, hit Generate, ship the PNG.</p>
+    <a href="/app" class="hero-btn">Open the editor →</a>
+  </div>
+</section>
+{% endblock %}
