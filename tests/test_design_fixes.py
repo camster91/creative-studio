@@ -226,6 +226,30 @@ class TestTraefikConfigRemoved:
         assert "traefik" not in src.lower(), \
             "creative-studio-web.py should not reference traefik"
 
+    def test_figma_utils_in_gitignore(self):
+        """figma_utils.py is a real source file imported by creative-studio-web.py.
+        A previous PR added it to .gitignore on the (wrong) assumption that
+        the Dockerfile's symlink made the source unnecessary. That broke
+        production deploys because the file stopped being copied into the
+        Docker build context. Keep it tracked.
+        """
+        gi = (Path(__file__).parent.parent / ".gitignore").read_text()
+        # We test the *intent* — a plain `figma_utils.py` line in .gitignore
+        # means "ignore this file at the root". Lines that match the
+        # leading-anchor pattern are the ones that break the build.
+        for line in gi.splitlines():
+            stripped = line.strip()
+            # An ignore rule for figma_utils.py at the root. Allow lines
+            # that start with `/` (absolute path) or have no slash
+            # (matches anywhere). Disallow both.
+            if stripped == "figma_utils.py" or stripped == "/figma_utils.py":
+                pytest.fail(
+                    f".gitignore contains `{stripped}` — this stops "
+                    "`figma_utils.py` from being copied into the Docker "
+                    "build context, and the symlink points at a "
+                    "nonexistent file. The file MUST be tracked."
+                )
+
     def test_makefile_has_no_deploy_targets(self):
         """Deploy is now in RUNBOOK.md, not the Makefile. Make sure no one
         silently re-adds `make deploy-prod` (or worse, with Traefik labels)."""
