@@ -225,3 +225,27 @@ class TestTraefikConfigRemoved:
         # but assert no leftover references
         assert "traefik" not in src.lower(), \
             "creative-studio-web.py should not reference traefik"
+
+    def test_makefile_has_no_deploy_targets(self):
+        """Deploy is now in RUNBOOK.md, not the Makefile. Make sure no one
+        silently re-adds `make deploy-prod` (or worse, with Traefik labels)."""
+        makefile = (Path(__file__).parent.parent / "Makefile").read_text()
+        # Strip comments (lines starting with #) before checking — the header
+        # legitimately mentions deploy-prod / rollback when explaining why
+        # they were removed.
+        non_comment = "\n".join(
+            line for line in makefile.splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        # Phrase that should never appear in a `docker run` line
+        assert "-l traefik." not in non_comment, \
+            "Makefile contains a Traefik label — deploy lives in RUNBOOK.md, no Makefile labels"
+        # No raw SSH-to-server patterns in actual code (help text is fine)
+        for banned in ("ssh $(SERVER)", "ssh coolify", "ssh root@", "ssh ubuntu@"):
+            assert banned not in non_comment, \
+                f"Makefile ssh-es to a server: '{banned}' — deploy is RUNBOOK, no Makefile SSH"
+        # The actual deploy target names should be gone from non-comment lines.
+        # (`.PHONY: deploy-prod` declarations and `deploy-prod: build` rules.)
+        for banned in (".PHONY: deploy-prod", ".PHONY: deploy-stage", ".PHONY: rollback"):
+            assert banned not in non_comment, \
+                f"Makefile declares '{banned}' — deploy lives in RUNBOOK.md, not the Makefile"
