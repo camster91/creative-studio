@@ -782,7 +782,7 @@ def run_cli_variations(
     today = datetime.now().strftime("%Y-%m-%d")
     out_dir = OUTPUT_DIR / today / "variations"
     out_dir.mkdir(parents=True, exist_ok=True)
-    session_key = f"vars-{int(time.time())}"
+    session_key = f"vars-{int(time.time())}-{uuid.uuid4().hex[:4]}"  # unique per call — no collision
     session_dir = out_dir / session_key
     session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1102,7 +1102,19 @@ if not app.debug:
 
 # ── Simple in-memory rate limiter ───────────────────────────────────────
 _request_log: Dict[str, list] = {}
+_request_log_lock = threading.Lock()
 _RATE_LIMIT = 20  # requests per minute per IP
+
+# Cap the number of distinct IPs the rate limiter tracks. Without this,
+# a botnet with rotating IPs (or a single IPv6-rich NAT) can grow the
+# dict unbounded — each entry is ~200 bytes, so 1M IPs = 200MB held
+# in the worker for no reason. When the cap is hit, the IP with the
+# oldest activity (oldest last-timestamp) is evicted. The 60s timestamp
+# purge inside the wrapper means that, in practice, the cap also
+# drops stale entries naturally — the explicit eviction is the
+# safety net for the long-tail of IPs that touch once and never again.
+_MAX_TRACKED_IPS = 50000
+
 
 def _client_ip() -> str:
     """Return the best-available client IP. By default trust the immediate
@@ -1128,12 +1140,32 @@ def rate_limited(f):
     def wrapper(*args, **kwargs):
         ip = _client_ip()
         now = time.time()
-        _request_log.setdefault(ip, [])
-        # purge old
-        _request_log[ip] = [t for t in _request_log[ip] if now - t < 60]
-        if len(_request_log[ip]) >= _RATE_LIMIT:
-            return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
-        _request_log[ip].append(now)
+        with _request_log_lock:
+            _request_log.setdefault(ip, [])
+            # purge old
+            _request_log[ip] = [t for t in _request_log[ip] if now - t < 60]
+            # Drop empty IP entries first (came in via setdefault but
+            # the purge emptied them). Cheap — but never drop the
+            # current caller's IP (they're still active right now).
+            for stale_ip in [k for k, v in _request_log.items() if not v]:
+                if stale_ip != ip:
+                    _request_log.pop(stale_ip, None)
+            # Cap the distinct-IP cardinality. If we're over, evict the
+            # IP with the oldest most-recent activity. Pick the IP whose
+            # most-recent timestamp is the smallest — that's the IP that
+            # hasn't been active in the longest time.
+            if len(_request_log) > _MAX_TRACKED_IPS:
+                # Iterate the dict once to find the oldest-active IP.
+                oldest_ip = min(_request_log,
+                    key=lambda k: _request_log[k][-1] if _request_log[k] else 0)
+                # If the current request is from that oldest IP, fall
+                # through (don't refuse our own caller just because
+                # they're the oldest of the lot). Otherwise evict.
+                if oldest_ip != ip:
+                    _request_log.pop(oldest_ip, None)
+            if len(_request_log[ip]) >= _RATE_LIMIT:
+                return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
+            _request_log[ip].append(now)
         return f(*args, **kwargs)
     return wrapper
 
@@ -2389,7 +2421,7 @@ def docs_page():
         '<div class="endpoint">'
         '<span class="method post">POST</span><span class="path">/api/validate-key</span>'
         '<p class="desc">Test whether a Gemini API key is valid before using it.</p>'
-        '<pre>curl -X POST -H "X-API-Key: YOUR_KEY" https://photogen.ashbi.ca/api/validate-key</pre>'
+        '<pre>curl -X POST -H \"Content-Type: application/json\" -d \'{\"key\": \"YOUR_GEMINI_KEY\"}\' https://photogen.ashbi.ca/api/validate-key</pre>'
         '</div>'
 
         '<div class="endpoint">'
