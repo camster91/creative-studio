@@ -318,6 +318,13 @@ def _check_daily_limit(est_count: int = 1, tier: str = "balanced"):
 # check (no charge) still work — it now serializes on the same lock as the
 # post-generation track_cost() so the limit can't be bypassed by racing
 # requests. New code should prefer _check_daily_limit.
+#
+# IMPORTANT: this MUST be the only `def enforce_daily_limit` in the
+# module. A previous version of this fix left a duplicate (unlocked)
+# definition lower in the file, which Python silently shadowed the
+# locked one — and the TOCTOU bypass came back. The regression test
+# test_enforce_daily_limit_alias_uses_locked_version checks for the
+# absence of any second definition.
 def enforce_daily_limit(est_count: int = 1, tier: str = "balanced"):
     return _check_daily_limit(est_count, tier)
 
@@ -329,35 +336,6 @@ def cost_for_tier(tier: str) -> float:
     if isinstance(price_map, dict):
         return price_map.get(res, price_map.get("1K", 0.04))
     return float(price_map) if price_map else 0.04
-
-
-def enforce_daily_limit(est_count: int = 1, tier: str = "balanced"):
-    """Check the CREATIVE_DAILY_LIMIT and reject the request with 429 if it would push today's spend past the cap.
-
-    Returns (None, None) if allowed, or (response, status) tuple to short-circuit.
-    """
-    try:
-        daily_limit = float(os.environ.get("CREATIVE_DAILY_LIMIT", "5"))
-    except (TypeError, ValueError):
-        daily_limit = 5.0
-    if daily_limit <= 0:
-        return None
-    unit = cost_for_tier(tier)
-    est_total = unit * max(1, est_count)
-    costs_now = load_costs()
-    today = datetime.now().strftime("%Y-%m-%d")
-    spent_today = float(costs_now.get("by_date", {}).get(today, 0.0))
-    if spent_today + est_total > daily_limit:
-        return (
-            jsonify({
-                "error": f"Daily limit ${daily_limit:.2f} reached. Spent today: ${spent_today:.2f}. Request would cost ${est_total:.2f}. Set CREATIVE_DAILY_LIMIT to a higher value or wait until tomorrow.",
-                "spent_today": round(spent_today, 4),
-                "limit": daily_limit,
-                "est_cost": round(est_total, 4),
-            }),
-            429,
-        )
-    return None
 
 
 def session_cost(session_id: str) -> float:
@@ -579,11 +557,17 @@ def run_cli_generate(
 
 
 def run_cli_composite(
-    prompt: str, product_path: str, api_key: str, aspect: str, tier: str = "quality"
+    prompt: str, product_path: str, api_key: str, aspect: str, tier: str = "quality",
+    name_suffix: str = "",
 ) -> List[Dict]:
     out_dir = OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d") / "composite"
     out_dir.mkdir(parents=True, exist_ok=True)
-    fname = f"composite-{int(time.time())}.png"
+    # Include a per-call uuid suffix so 5 parallel scene-set threads
+    # (which all start within the same second) can't collide on
+    # `int(time.time())`. Without this, last writer wins and the user
+    # pays for 5 generations but receives 1-2.
+    suffix = name_suffix or uuid.uuid4().hex[:6]
+    fname = f"composite-{int(time.time())}-{suffix}.png"
     out_path = out_dir / fname
 
     args = [
@@ -1368,6 +1352,9 @@ def api_generate():
 @app.route("/api/jobs/<job_id>", methods=["GET"])
 @rate_limited
 def api_job_status(job_id):
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
     with _jobs_lock:
         job = _jobs.get(job_id)
     if not job:
@@ -1892,7 +1879,15 @@ def api_scene_set():
         prompt = _SCENE_PROMPTS[scene_key]
         aspect = _SCENE_ASPECTS[scene_key]
         try:
-            imgs = run_cli_composite(prompt, str(product_path), api_key, aspect)
+            # Pass the scene key as the name_suffix so the 5 parallel
+            # scene-set threads can't collide on the timestamp-based
+            # filename in run_cli_composite. Each scene gets a
+            # distinct filename like composite-1700000000-inhand-<hex>.png
+            # instead of all-5-writing-to-the-same composite-1700000000.png.
+            imgs = run_cli_composite(
+                prompt, str(product_path), api_key, aspect,
+                name_suffix=scene_key,
+            )
             if imgs and "error" not in imgs[0]:
                 img = imgs[0]
                 with images_lock:
@@ -2051,6 +2046,9 @@ def api_chat():
 @app.route("/api/chat/<session_key>/history", methods=["GET"])
 @rate_limited
 def api_chat_history(session_key):
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
     history = chat_session_history(session_key)
     sess = _chat_sessions.get(session_key, {})
     return jsonify(
@@ -2065,6 +2063,9 @@ def api_chat_history(session_key):
 @app.route("/api/chat/<session_key>/reset", methods=["POST"])
 @rate_limited
 def api_chat_reset(session_key):
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
     chat_reset(session_key)
     return jsonify({"message": "Chat session reset", "turn": 0})
 
@@ -2189,6 +2190,9 @@ def api_pins_clear(image_path):
 @app.route("/api/sessions", methods=["GET"])
 @rate_limited
 def api_sessions():
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
     sessions = []
     for p in sorted(
         SESSIONS_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True
@@ -2208,6 +2212,9 @@ def api_sessions():
 @app.route("/api/session/<session_id>", methods=["GET"])
 @rate_limited
 def api_session_get(session_id):
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
     data = load_session(session_id)
     entries = []
     for e in data.get("entries", []):
@@ -2222,6 +2229,9 @@ def api_session_get(session_id):
 @app.route("/api/costs", methods=["GET"])
 @rate_limited
 def api_costs():
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
     costs = load_costs()
     costs["session_count"] = len(list(SESSIONS_DIR.glob("*.json")))
     today = datetime.now().strftime("%Y-%m-%d")
