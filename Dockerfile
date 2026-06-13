@@ -41,9 +41,12 @@ ENV CREATIVE_DATA_DIR=/app/data
 # The volume for persistent outputs + data
 VOLUME ["/app/outputs", "/app/data"]
 
-# Health check
+# Health check: /api/whoami is intentionally public (reports BYOK mode).
+# /api/costs used to be the healthcheck target, but PR #43 gated it on
+# _require_api_key() which returns 402 without an X-API-Key header —
+# and curl -f treats 402 as failure.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:$PORT/api/costs > /dev/null 2>&1 || exit 1
+    CMD curl -f http://localhost:$PORT/api/whoami > /dev/null 2>&1 || exit 1
 
 EXPOSE 5173
 
