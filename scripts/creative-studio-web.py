@@ -2271,6 +2271,91 @@ def api_costs():
     return jsonify(costs)
 
 
+# ── Waitlist (WS-1 — public landing page lead capture) ───────────────────
+# Stores emails in a flat JSON file. No DB, no Stripe, no auth.
+# Lives in /app/data/waitlist.json (DATA_DIR). The format is just a list
+# of {email, source, ts} dicts — operator can grep / export as needed.
+# When WS-2 (auth) ships, we add a `user_id` field on signup and link
+# the waitlist record to the new user. When WS-6 (Stripe) ships, this
+# endpoint can also be the entry point for a free-trial claim.
+import re as _re
+
+WAITLIST_FILE = DATA_DIR / "waitlist.json"
+WAITLIST_FILE.touch(exist_ok=True)
+if not WAITLIST_FILE.read_text().strip():
+    WAITLIST_FILE.write_text("[]")
+
+# Cap the waitlist file at 50K entries to keep reads sane. Older
+# entries get rotated out (caller-visible via the 50K-1 entry being
+# the oldest kept). This is a generous cap for a waitlist.
+_WAITLIST_MAX = 50000
+
+# RFC 5322 is overkill for a waitlist; this regex matches "x@y.z" with
+# at least one dot in the domain. Good enough to catch typos and
+# obvious garbage without rejecting valid edge cases.
+_WAITLIST_RE = _re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _read_waitlist() -> list:
+    try:
+        return json.loads(WAITLIST_FILE.read_text() or "[]")
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _write_waitlist(entries: list) -> None:
+    # Keep only the most recent _WAITLIST_MAX entries (oldest dropped).
+    if len(entries) > _WAITLIST_MAX:
+        entries = entries[-_WAITLIST_MAX:]
+    tmp = WAITLIST_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(entries))
+    os.replace(tmp, WAITLIST_FILE)
+
+
+@app.route("/api/waitlist", methods=["POST"])
+@rate_limited
+def api_waitlist():
+    """Public waitlist signup. Stores email + source in a flat JSON file.
+    No auth required. No CSRF needed: the endpoint is POST + JSON only,
+    and the side-effect is a single append to a local file.
+
+    Returns:
+        201 {email, position, total_signups} on success
+        400 {error} on bad email
+        200 {email, already_signed_up: true} on duplicate (idempotent)
+    """
+    data = request.json or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email or len(email) > 320 or not _WAITLIST_RE.match(email):
+        return jsonify({"error": "Invalid email"}), 400
+    # Cap length on source to keep the file from bloating with junk.
+    source = (data.get("source") or "unknown")[:64]
+
+    with _request_log_lock:  # reuse the rate-limiter lock for FS safety
+        entries = _read_waitlist()
+        # Idempotent: if email already present, return 200 with
+        # already_signed_up=true. Don't add a duplicate row.
+        for e in entries:
+            if e.get("email") == email:
+                return jsonify({
+                    "email": email,
+                    "already_signed_up": True,
+                    "position": entries.index(e) + 1,
+                    "total_signups": len(entries),
+                })
+        entries.append({
+            "email": email,
+            "source": source,
+            "ts": now_str(),
+        })
+        _write_waitlist(entries)
+        return jsonify({
+            "email": email,
+            "position": len(entries),
+            "total_signups": len(entries),
+        }), 201
+
+
 @app.route("/api/whoami", methods=["GET"])
 @rate_limited
 def api_whoami():

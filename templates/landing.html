@@ -3,7 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Creative Studio — AI Product Photography</title>
+<title>Photogen — AI Creative for CPG &amp; DTC Brands</title>
+<meta name="description" content="Drop your product photo. Ship campaign-ready creative in 30 seconds. Built for CPG & DTC marketers who can\'t afford studio time.">
+<meta property="og:title" content="Photogen — AI Creative for CPG &amp; DTC Brands">
+<meta property="og:description" content="From product photo to ad creative in 60 seconds. Scene-set: one upload, 5 scene types (In-hand, Studio, Action, Lifestyle, With props). For CPG & DTC marketers on Shopify, Amazon, Klaviyo, Pinterest.">
+<meta property="og:type" content="product">
+<meta property="og:url" content="https://photogen.ashbi.ca">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Photogen — AI Creative for CPG &amp; DTC Brands">
+<meta name="twitter:description" content="From product photo to ad creative in 60 seconds.">
+<link rel="canonical" href="https://photogen.ashbi.ca">
 <link rel="stylesheet" href="/static/app.css"></style>
 </head>
 <body class="landing-body">
@@ -177,6 +186,22 @@
     </div>
   </div>
 
+
+
+  <!-- Waitlist -->
+  <div class="cta-banner" id="waitlist" style="background:linear-gradient(135deg, rgba(108,99,255,.15), rgba(255,107,138,.1));">
+    <div class="cta-inner">
+      <h2>Get the launch announcement + 50 free credits</h2>
+      <p>We're shipping paid plans in Q3. Join the waitlist and we'll email you when your account is ready, plus a 50-credit pack to start.</p>
+      <form id="waitlistForm" class="waitlist-form" autocomplete="off">
+        <input type="email" id="waitlistEmail" name="email" required
+               placeholder="you@yourbrand.com" aria-label="Email" />
+        <button type="submit" class="hero-btn" id="waitlistSubmit">Join the waitlist</button>
+      </form>
+      <p id="waitlistMsg" class="waitlist-msg" style="margin-top:16px;font-size:14px;opacity:0;"></p>
+    </div>
+  </div>
+
   <!-- CTA Banner -->
   <div class="cta-banner">
     <div class="cta-inner">
@@ -192,8 +217,8 @@
 <footer class="landing-footer">
   <div class="footer-inner">
     <div class="footer-brand">
-      <div class="footer-mark">CS</div>
-      <span>Creative Studio</span>
+      <div class="footer-mark">P</div>
+      <span>Photogen</span>
     </div>
     <div class="footer-links">
       <a href="/status">Status</a>
@@ -204,5 +229,50 @@
     <div class="footer-copy">Built by Ashbi Design. Self-hosted on your own infrastructure.</div>
   </div>
 </footer>
+
+<script>
+(function () {
+  var form = document.getElementById('waitlistForm');
+  if (!form) return;
+  var email = document.getElementById('waitlistEmail');
+  var msg = document.getElementById('waitlistMsg');
+  var submit = document.getElementById('waitlistSubmit');
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    submit.disabled = true;
+    submit.textContent = 'Joining…';
+    var val = (email.value || '').trim();
+    if (!val || val.indexOf('@') < 0) {
+      msg.textContent = 'Please enter a valid email.';
+      msg.style.opacity = '1';
+      submit.disabled = false;
+      submit.textContent = 'Join the waitlist';
+      return;
+    }
+    fetch('/api/waitlist', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email: val, source: 'landing-page'}),
+    }).then(function (r) { return r.json().then(function (j) { return {ok: r.ok, j: j}; }); })
+      .then(function (r) {
+        if (r.ok) {
+          msg.textContent = "You're on the list. We'll be in touch.";
+          msg.style.opacity = '1';
+          submit.textContent = 'On the list';
+        } else {
+          msg.textContent = r.j.error || 'Something went wrong. Try again?';
+          msg.style.opacity = '1';
+          submit.disabled = false;
+          submit.textContent = 'Join the waitlist';
+        }
+      }).catch(function () {
+        msg.textContent = 'Network error. Try again?';
+        msg.style.opacity = '1';
+        submit.disabled = false;
+        submit.textContent = 'Join the waitlist';
+      });
+  });
+})();
+</script>
 </body>
 </html>
