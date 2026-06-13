@@ -54,6 +54,67 @@ def _enforce_prompt_length(prompt: str):
         )
     return None
 
+
+# Max bytes for a user-supplied uploaded filename. Defense against
+# a malicious client sending `../../../etc/cron.d/evil` as the
+# Content-Disposition filename. We strip path components and cap
+# length; the actual on-disk name is `prefix_<random>.<ext>` (set by
+# each handler) so the sanitized name is just for logging.
+_MAX_UPLOAD_FILENAME_BYTES = 200
+
+# Allowed image extensions for the scene-set endpoint. Other
+# endpoints don't strictly need this — they pass the raw file to
+# the Gemini CLI which accepts any image — but we keep one allowlist
+# here so a handler that does extra mime validation can re-use it.
+_IMAGE_EXTS = ("png", "jpg", "jpeg", "webp", "gif", "bmp")
+
+
+def _safe_filename(filename: str, max_bytes: int = _MAX_UPLOAD_FILENAME_BYTES) -> str:
+    """Return a filename safe to embed in a save path.
+
+    - Strips any directory components (`/`, `\\`, `..` segments collapse to nothing)
+    - Drops NUL bytes and control chars
+    - Caps length to max_bytes (UTF-8 encoded)
+    - Rejects names that are entirely dots (`..`, `...`) so a client
+      can't bypass Path.name's single-component `..` survival
+    - Returns '' if the result is empty after sanitization
+    """
+    if not filename:
+        return ""
+    # Treat backslash the same as forward slash (Windows-style paths
+    # must be stripped even on POSIX — otherwise `..\..\..\evil` survives
+    # as a single "filename" with backslashes intact).
+    normalized = filename.replace("\\", "/")
+    # Path.name strips everything before the last separator. Works on both
+    # POSIX and Windows because both are treated the same by pathlib.
+    name = Path(normalized).name
+    # Belt-and-suspenders: remove any remaining path separators or NULs.
+    name = name.replace("\x00", "").replace("/", "").replace("\\", "")
+    # Path("..").name == ".." (single-component parent). Reject any name
+    # that is composed entirely of dots — those would cause shutil/os.path
+    # to resolve as parent dirs in some downstream code.
+    if name and set(name) <= {"."}:
+        return ""
+    # Cap length. We use bytes, not chars, because Path.name returns a
+    # str but a Unicode name could still be huge in bytes.
+    if len(name.encode("utf-8")) > max_bytes:
+        # Truncate safely on a char boundary
+        truncated = name.encode("utf-8", errors="replace")[:max_bytes]
+        name = truncated.decode("utf-8", errors="replace")
+    return name
+
+
+def _safe_pin_id(pin_id: str) -> str:
+    """Validate a pin_id from the URL. Must be the 8-hex shape produced
+    by pin_id() (uuid4 hex prefix). Reject anything else so a malicious
+    caller can't sweep pins.json with a wildcard. Returns the lowercased
+    id, or '' if invalid.
+    """
+    if not pin_id or len(pin_id) > 16:
+        return ""
+    lowered = pin_id.lower()
+    return lowered if all(c in "0123456789abcdef" for c in lowered) else ""
+
 # ─── Config ────────────────────────────────────────────────────────────
 # ── BYOK / server-fallback config ───────────────────────────────────────
 # GEMINI_API_KEY env var sets a server-side fallback key (opt-in).
@@ -1329,31 +1390,50 @@ def api_job_status(job_id):
 @app.route("/api/validate-key", methods=["POST"])
 @rate_limited
 def api_validate_key():
-    """Check if a Gemini API key is valid by attempting a tiny generation."""
+    """Check if a Gemini API key is valid.
+
+    Sends the key in the `x-goog-api-key` header (NOT as a ?key= query
+    parameter) so it doesn't appear in Google access logs, browser
+    history, or any intermediate proxy logs. Also never echoes the
+    key in error responses — the client gets a sanitized message.
+    """
     data = request.json or {}
     key = data.get("key", "").strip()
     if not key:
         return jsonify({"error": "Key required"}), 400
     if not key.startswith("AIza"):
         return jsonify({"error": "Invalid format — Gemini keys start with AIza..."}), 400
+    if len(key) > 200:
+        # Gemini keys are ~40 chars. 200 is a generous upper bound that
+        # also catches runaway clients trying to use this endpoint as
+        # an arbitrary HTTPS proxy.
+        return jsonify({"error": "Key too long"}), 400
 
-    # Quick ping: attempt to list models via curl-like subprocess
+    # Probe by listing models with the key in a header, not a query string.
     import urllib.request, urllib.error
     req = urllib.request.Request(
-        f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
-        headers={"Content-Type": "application/json"},
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            body = resp.read()
             if resp.status == 200:
                 return jsonify({"valid": True, "message": "Key is valid"})
     except urllib.error.HTTPError as e:
-        if e.code == 400:
+        if e.code == 400 or e.code == 403:
+            # 400 = "API key not valid" / 403 = "permission denied". Both
+            # mean the key is bad or the API isn't enabled. Don't echo
+            # Google's body — it can echo the key back.
             return jsonify({"valid": False, "error": "Invalid API key"}), 200
+        # 429 = rate limit, 5xx = Google down. Neither is "invalid key".
         return jsonify({"valid": False, "error": f"HTTP {e.code}"}), 200
-    except Exception as e:
-        return jsonify({"valid": False, "error": str(e)}), 200
+    except Exception:
+        # Don't include str(e) in the response — some exception classes
+        # include the URL (and therefore the key) in their string form.
+        return jsonify({"valid": False, "error": "Network error"}), 200
 
     return jsonify({"valid": True, "message": "Key looks valid"})
 
@@ -1476,7 +1556,7 @@ def api_composite():
 
     tmp_dir = DATA_DIR / "uploads"
     tmp_dir.mkdir(exist_ok=True)
-    product_path = tmp_dir / f"product_{int(time.time())}_{f.filename}"
+    product_path = tmp_dir / f"product_{int(time.time())}_{_safe_filename(f.filename)}"
     f.save(str(product_path))
 
     images = run_cli_composite(prompt, str(product_path), api_key, aspect)
@@ -1520,7 +1600,7 @@ def api_export():
         f = request.files["image"]
         tmp_dir = DATA_DIR / "uploads"
         tmp_dir.mkdir(exist_ok=True)
-        src_path = tmp_dir / f"export_{int(time.time())}_{f.filename}"
+        src_path = tmp_dir / f"export_{int(time.time())}_{_safe_filename(f.filename)}"
         f.save(str(src_path))
     else:
         return jsonify({"error": "Image required"}), 400
@@ -1592,7 +1672,7 @@ def api_qc():
         f = request.files["image"]
         tmp_dir = DATA_DIR / "uploads"
         tmp_dir.mkdir(exist_ok=True)
-        img_path = tmp_dir / f"qc_{int(time.time())}_{f.filename}"
+        img_path = tmp_dir / f"qc_{int(time.time())}_{_safe_filename(f.filename)}"
         f.save(str(img_path))
     else:
         return jsonify({"error": "Image required"}), 400
@@ -1691,7 +1771,7 @@ def api_variations():
         f = request.files["image"]
         tmp_dir = DATA_DIR / "uploads"
         tmp_dir.mkdir(exist_ok=True)
-        input_image = str(tmp_dir / f"variations_ref_{int(time.time())}_{f.filename}")
+        input_image = str(tmp_dir / f"variations_ref_{int(time.time())}_{_safe_filename(f.filename)}")
         f.save(input_image)
 
     images, session_key = run_cli_variations(api_key,
@@ -1777,9 +1857,14 @@ def api_scene_set():
         return jsonify({"error": "Empty product upload"}), 400
     # Filename-based mime sniff (works across storage backends; some
     # FileStorage wrappers raise on .type access for in-memory uploads).
-    fname = f.filename or ""
+    # Note: strip any path components first so a filename like
+    # `../../etc/passwd.png` doesn't both pass the extension check AND
+    # smuggle a path-traversal into the save path. The save path uses
+    # _safe_filename() below which strips a second time for defense in
+    # depth.
+    fname = _safe_filename(f.filename)
     ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
-    if ext not in ("png", "jpg", "jpeg", "webp", "gif", "bmp"):
+    if ext not in _IMAGE_EXTS:
         return jsonify({"error": "Product must be PNG, JPG, WEBP, GIF, or BMP"}), 400
 
     tier = request.form.get("tier", "balanced")
@@ -1795,7 +1880,7 @@ def api_scene_set():
     # Save the uploaded product once
     tmp_dir = DATA_DIR / "uploads"
     tmp_dir.mkdir(exist_ok=True)
-    product_path = tmp_dir / f"sceneset_{int(time.time())}_{f.filename}"
+    product_path = tmp_dir / f"sceneset_{int(time.time())}_{_safe_filename(f.filename)}"
     f.save(str(product_path))
 
     # Use a thread pool to run all 5 scenes in parallel
@@ -1924,7 +2009,7 @@ def api_chat():
         f = request.files["image"]
         tmp_dir = DATA_DIR / "uploads"
         tmp_dir.mkdir(exist_ok=True)
-        input_image = str(tmp_dir / f"chat_ref_{int(time.time())}_{f.filename}")
+        input_image = str(tmp_dir / f"chat_ref_{int(time.time())}_{_safe_filename(f.filename)}")
         f.save(input_image)
         # If this is a fresh session, set the initial input
         if session_key not in _chat_sessions:
@@ -2008,16 +2093,51 @@ def api_chat_save(session_key):
 # ── Pin Annotation Routes ───────────────────────────────────────────────
 
 
+# Pin image_path key is user-controlled. Cap it so a spammer can't
+# fill pins.json with arbitrarily long keys. 2KB is enough for any
+# real image_path the app uses.
+_MAX_PIN_PATH_BYTES = 2 * 1024
+
+
+def _safe_pin_path(image_path: str) -> str:
+    """Validate and normalize a pin's image_path key.
+
+    - Must be non-empty
+    - Must be < _MAX_PIN_PATH_BYTES after UTF-8 encoding
+    - Leading-slash normalization matches the existing read/write paths
+    - Return '' if invalid (caller should return 400)
+    """
+    if not image_path:
+        return ""
+    if not image_path.startswith("/"):
+        image_path = "/" + image_path
+    if len(image_path.encode("utf-8")) > _MAX_PIN_PATH_BYTES:
+        return ""
+    return image_path
+
+
 @app.route("/api/pins", methods=["POST"])
 @rate_limited
 def api_pins_add():
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
     data = request.json or {}
-    image_path = data.get("image_path", "")
-    x = float(data.get("x", 0.5))
-    y = float(data.get("y", 0.5))
+    image_path = _safe_pin_path(data.get("image_path", ""))
+    if not image_path:
+        return jsonify({"error": "image_path required (max 2KB)"}), 400
+    try:
+        x = float(data.get("x", 0.5))
+        y = float(data.get("y", 0.5))
+    except (TypeError, ValueError):
+        return jsonify({"error": "x and y must be numbers 0..1"}), 400
+    if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+        return jsonify({"error": "x and y must be in [0, 1]"}), 400
     text = data.get("text", "").strip()
-    if not image_path or not text:
-        return jsonify({"error": "image_path and text required"}), 400
+    if not text:
+        return jsonify({"error": "text required"}), 400
+    if len(text.encode("utf-8")) > 1000:
+        return jsonify({"error": "text too long (max 1000 bytes)"}), 400
     pins = load_pins(image_path)
     pins.append({"id": pin_id(), "x": x, "y": y, "text": text, "time": now_str()})
     save_pins(image_path, pins)
@@ -2027,17 +2147,28 @@ def api_pins_add():
 @app.route("/api/pins/<path:image_path>", methods=["GET"])
 @rate_limited
 def api_pins_get(image_path):
-    if image_path and not image_path.startswith("/"):
-        image_path = "/" + image_path
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
+    image_path = _safe_pin_path(image_path)
+    if not image_path:
+        return jsonify({"error": "image_path required"}), 400
     return jsonify({"pins": load_pins(image_path)})
 
 
 @app.route("/api/pins/<path:image_path>/<pin_id>", methods=["DELETE"])
 @rate_limited
 def api_pins_delete(image_path, pin_id):
-    if image_path and not image_path.startswith("/"):
-        image_path = "/" + image_path
-    pins = [p for p in load_pins(image_path) if p.get("id") != pin_id]
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
+    image_path = _safe_pin_path(image_path)
+    if not image_path:
+        return jsonify({"error": "image_path required"}), 400
+    safe_id = _safe_pin_id(pin_id)
+    if not safe_id:
+        return jsonify({"error": "pin_id must be hex (1-16 chars)"}), 400
+    pins = [p for p in load_pins(image_path) if p.get("id") != safe_id]
     save_pins(image_path, pins)
     return jsonify({"pins": pins})
 
@@ -2045,8 +2176,12 @@ def api_pins_delete(image_path, pin_id):
 @app.route("/api/pins/<path:image_path>", methods=["DELETE"])
 @rate_limited
 def api_pins_clear(image_path):
-    if image_path and not image_path.startswith("/"):
-        image_path = "/" + image_path
+    api_key, err = _require_api_key()
+    if err is not None:
+        return err
+    image_path = _safe_pin_path(image_path)
+    if not image_path:
+        return jsonify({"error": "image_path required"}), 400
     save_pins(image_path, [])
     return jsonify({"pins": []})
 
