@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — Photogen</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body { font: 16px/1.6 -apple-system, system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 24px; color: var(--text, #1a1a1a); background: var(--bg, #fafafa); }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  h2 { font-size: 18px; margin: 28px 0 8px; }
+  p, li { color: var(--text-2, #333); }
+  .meta { color: var(--text-3, #888); font-size: 13px; margin-bottom: 32px; }
+  .updated { color: var(--text-3, #888); font-size: 13px; margin-top: 32px; }
+  a { color: var(--accent, #6c63ff); }
+</style>
+</head>
+<body>
+<p><a href="/">&larr; Back to Photogen</a></p>
+<h1>Privacy Policy</h1>
+<p class="meta">Photogen — short version: we collect as little as possible, we don't train on your data, and you can ask us to delete it at any time.</p>
+
+<h2>What we collect</h2>
+<p><b>Waitlist signups:</b> your email address, the source ("landing-page", "twitter", etc.) and a timestamp. We do not collect your name, IP, browser fingerprint, or anything else.</p>
+<p><b>Generated images:</b> when you use the app, your prompts and uploaded product photos are sent to Google Gemini for image generation. Outputs are stored in <code>/app/data</code> on the host. We do not store these on a third-party service.</p>
+<p><b>API keys:</b> if you paste a Google Gemini API key, it lives in your browser's localStorage only. We never see it. (The server has its own key for the shared demo; check the &lt;title&gt; of the editor to see if the server fallback is enabled.)</p>
+<p><b>Server logs:</b> standard HTTP access logs (path, status, user agent). No body capture.</p>
+
+<h2>What we don't do</h2>
+<p>We do not train any AI model on your inputs or outputs. We do not sell, share, or rent your email. We do not run third-party analytics, ad networks, or tracking pixels.</p>
+
+<h2>Where the data lives</h2>
+<p>Photogen is self-hosted. If you signed up at <a href="https://photogen.ashbi.ca">photogen.ashbi.ca</a>, your data lives on Ashbi Design's VPS at vps.ashbi.ca (187.77.26.99). No third-party data processor is involved.</p>
+
+<h2>How long we keep it</h2>
+<p>Waitlist signups are kept until you ask us to delete them or until Photogen shuts down. Generated images and session history are kept as long as the host is running. If you want something deleted sooner, email <a href="mailto:hello@ashbi.ca">hello@ashbi.ca</a> and we will do it within 30 days.</p>
+
+<h2>Your rights</h2>
+<p>You can ask us at any time to: (a) tell you what data we have on you, (b) delete your data, (c) correct any inaccurate data. Email <a href="mailto:hello@ashbi.ca">hello@ashbi.ca</a>.</p>
+
+<h2>Cookies</h2>
+<p>Photogen does not set any cookies. (The Flask session cookie is configured but unused. See the "API key" section above for how your Gemini key is stored.)</p>
+
+<h2>Children's privacy</h2>
+<p>Photogen is not directed at children under 13 and we do not knowingly collect data from children.</p>
+
+<h2>Changes to this policy</h2>
+<p>If we change this policy, we'll update the "last updated" date below and post a note in our release notes. Material changes will be announced via email to anyone on the waitlist.</p>
+
+<h2>Contact</h2>
+<p>Ashbi Design (Bianca + Cameron Ashley) &middot; <a href="mailto:hello@ashbi.ca">hello@ashbi.ca</a> &middot; Toronto, Canada</p>
+
+<p class="updated">Last updated: 2026-06-14</p>
+</body>
+</html>

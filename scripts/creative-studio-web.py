@@ -2375,6 +2375,110 @@ def api_whoami():
     })
 
 
+# ── Admin auth + admin pages ────────────────────────────────────────────
+# Cheap shared-secret auth for the operator-only admin surface. NOT
+# security-grade — anyone with the secret can read the waitlist. Fine
+# for a single-operator side project, replace with real auth before
+# adding more operators.
+import hmac as _hmac
+
+ADMIN_SECRET = os.environ.get("PHOTOGEN_ADMIN_SECRET", "").strip()
+
+
+def _admin_authed() -> bool:
+    """Return True if the request's X-Admin-Secret header matches the
+    PHOTOGEN_ADMIN_SECRET env var. If the env var is empty, the admin
+    surface is closed (every request 401s) — fail-closed beats fail-open."""
+    if not ADMIN_SECRET:
+        return False
+    sent = request.headers.get("X-Admin-Secret", "")
+    if not sent:
+        return False
+    return _hmac.compare_digest(sent, ADMIN_SECRET)
+
+
+@app.route("/admin/waitlist")
+def admin_waitlist():
+    """Operator-only view of the waitlist JSON. Show a tiny HTML table.
+    Auth: X-Admin-Secret header matching PHOTOGEN_ADMIN_SECRET env var.
+    If the env var isn't set, this route always 401s."""
+    if not _admin_authed():
+        return (
+            "<h1>401</h1><p>Set PHOTOGEN_ADMIN_SECRET and pass it as "
+            "X-Admin-Secret to see the waitlist.</p>",
+            401,
+            {"Content-Type": "text/html; charset=utf-8"},
+        )
+    entries = _read_waitlist()
+    total = len(entries)
+    sources = {}
+    for e in entries:
+        s = e.get("source", "unknown")
+        sources[s] = sources.get(s, 0) + 1
+    rows = "\n".join(
+        "<tr><td>{ts}</td><td><code>{email}</code></td><td>{src}</td></tr>".format(
+            ts=e.get("ts", "?"), email=e.get("email", "?"),
+            src=e.get("source", "?")
+        )
+        for e in entries
+    )
+    # Sources summary
+    src_rows = "\n".join(
+        "<tr><td>{s}</td><td>{n}</td></tr>".format(s=s, n=n)
+        for s, n in sorted(sources.items(), key=lambda x: -x[1])
+    )
+    # Tiny inline HTML, no template dependency. This is an operator-only
+    # page so we're not worried about its visual design.
+    html = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Photogen — Waitlist</title>
+<style>
+body {{ font: 14px/1.5 -apple-system, sans-serif; margin: 24px; color: #1a1a1a; background: #fafafa; }}
+h1 {{ margin: 0 0 8px; font-size: 22px; }}
+h2 {{ margin: 24px 0 8px; font-size: 16px; color: #444; }}
+table {{ border-collapse: collapse; width: 100%; max-width: 1100px; background: #fff; }}
+th, td {{ padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; }}
+th {{ background: #f5f5f5; font-size: 12px; text-transform: uppercase; color: #555; }}
+code {{ font: 13px ui-monospace, SF Mono, Menlo, monospace; }}
+.meta {{ color: #666; font-size: 13px; margin-bottom: 16px; }}
+.summary {{ display: inline-block; margin-right: 32px; }}
+</style></head>
+<body>
+<h1>Photogen Waitlist</h1>
+<p class="meta">
+  <span class="summary"><b>{total}</b> total signups</span>
+  <a href="/admin/waitlist.csv?ts={int(time.time())}">Download CSV</a>
+</p>
+<h2>By source</h2>
+<table><tr><th>Source</th><th>Signups</th></tr>{src_rows}</table>
+<h2>All signups (newest first)</h2>
+<table>
+  <tr><th>Timestamp</th><th>Email</th><th>Source</th></tr>
+  {rows or '<tr><td colspan="3"><i>No signups yet.</i></td></tr>'}
+</table>
+</body></html>"""
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/admin/waitlist.csv")
+def admin_waitlist_csv():
+    """Same auth as /admin/waitlist but returns CSV for grep / Excel /
+    import-into-Mailchimp workflows. Newest first."""
+    if not _admin_authed():
+        return "401", 401, {"Content-Type": "text/plain"}
+    entries = _read_waitlist()
+    import csv as _csv
+    import io as _io
+    buf = _io.StringIO()
+    w = _csv.writer(buf, lineterminator="\n")
+    w.writerow(["timestamp", "email", "source"])
+    for e in entries:
+        w.writerow([e.get("ts", ""), e.get("email", ""), e.get("source", "")])
+    return buf.getvalue(), 200, {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="photogen-waitlist.csv"',
+    }
+
+
 @app.route("/status")
 def status_page():
     """Live status page showing container health, active jobs, cost today."""
@@ -2556,6 +2660,13 @@ def docs_page():
         '</body></html>'
     )
     return html
+
+
+@app.route("/privacy")
+def privacy_page():
+    """Static privacy policy page. We collect as little as possible;
+    see templates/privacy.html for the full text. Public — no auth."""
+    return render_template("privacy.html")
 
 
 @app.route("/history")
