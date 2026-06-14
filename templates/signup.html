@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign Up — Photogen</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body { font: 16px/1.5 -apple-system, system-ui, sans-serif; max-width: 420px; margin: 80px auto; padding: 0 24px; color: var(--text, #1a1a1a); background: var(--bg, #fafafa); }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  p { color: var(--text-2, #333); font-size: 14px; margin: 0 0 24px; }
+  input { width: 100%; padding: 12px 14px; border: 1px solid var(--border, #ccc); border-radius: 8px; font-size: 16px; margin-bottom: 16px; box-sizing: border-box; }
+  button { width: 100%; padding: 12px; background: var(--accent, #6c63ff); color: #fff; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; }
+  .result { margin-top: 24px; font-size: 14px; color: var(--text-2); padding: 16px; background: var(--surface, #f5f5f5); border-radius: 8px; word-break: break-all; }
+  .result code { font: 13px ui-monospace, SF Mono, monospace; display: block; margin-top: 8px; word-break: break-all; }
+  .back { margin-bottom: 24px; font-size: 14px; }
+  a { color: var(--accent, #6c63ff); }
+</style>
+</head>
+<body>
+<p class="back"><a href="/">&larr; Photogen</a></p>
+<h1>Sign Up</h1>
+<p>Enter your email to get a magic link. No password needed.</p>
+<form id="form">
+  <input type="email" id="email" name="email" required placeholder="you@brand.com" aria-label="Email">
+  <button type="submit">Get magic link</button>
+</form>
+<div id="result" class="result" hidden>
+  <p>Here's your magic link token. <strong>Copy it</strong>, then go to <a href="/login">/login</a> and paste it.</p>
+  <p>Your token:</p>
+  <code id="token"></code>
+  <p style="margin-top:12px;font-size:12px;color:var(--text-3);">
+    (When the email delivery system ships, this will arrive in your inbox instead of showing here.)
+  </p>
+</div>
+<script>
+document.getElementById('form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  var email = document.getElementById('email').value.trim();
+  var r = await fetch('/signup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email:email})});
+  var body = await r.json();
+  if (r.ok) {
+    document.getElementById('token').textContent = body.token;
+    document.getElementById('result').hidden = false;
+  } else {
+    alert(body.error || 'Error signing up');
+  }
+});
+</script>
+</body>
+</html>

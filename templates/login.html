@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login — Photogen</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body { font: 16px/1.5 -apple-system, system-ui, sans-serif; max-width: 420px; margin: 80px auto; padding: 0 24px; color: var(--text, #1a1a1a); background: var(--bg, #fafafa); }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  p { color: var(--text-2, #333); font-size: 14px; margin: 0 0 24px; }
+  input { width: 100%; padding: 12px 14px; border: 1px solid var(--border, #ccc); border-radius: 8px; font-size: 16px; margin-bottom: 16px; box-sizing: border-box; }
+  button { width: 100%; padding: 12px; background: var(--accent, #6c63ff); color: #fff; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; }
+  .result { margin-top: 24px; font-size: 14px; color: var(--text-2); padding: 16px; background: var(--surface, #f5f5f5); border-radius: 8px; }
+  .result code { font: 13px ui-monospace, SF Mono, monospace; display: block; margin-top: 8px; word-break: break-all; }
+  .back { margin-bottom: 24px; font-size: 14px; }
+  a { color: var(--accent, #6c63ff); }
+</style>
+</head>
+<body>
+<p class="back"><a href="/">&larr; Photogen</a></p>
+<h1>Login</h1>
+<p>Paste the magic link token you got after signing up.</p>
+<form id="form">
+  <input type="text" id="token-input" name="token" required placeholder="Paste token here" aria-label="Magic link token">
+  <button type="submit">Login</button>
+</form>
+<div id="result" class="result" hidden>
+  <p><strong>You're signed in.</strong> Your session is active for 7 days.</p>
+  <p>Session token (save this — put it in the editor sidebar as 'Session Token'):</p>
+  <code id="session-token"></code>
+  <p style="margin-top:12px;">Credits remaining: <strong id="credits"></strong></p>
+  <p style="margin-top:12px;"><a href="/app">Open the editor →</a></p>
+</div>
+<script>
+document.getElementById('form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  var token = document.getElementById('token-input').value.trim();
+  var r = await fetch('/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token:token})});
+  var body = await r.json();
+  if (r.ok) {
+    document.getElementById('session-token').textContent = body.session_token;
+    document.getElementById('credits').textContent = body.credits_remaining;
+    document.getElementById('result').hidden = false;
+    // Persist the session token in localStorage for the /app editor
+    localStorage.setItem('photogen_session', body.session_token);
+  } else {
+    alert(body.error || 'Error logging in');
+  }
+});
+</script>
+</body>
+</html>
