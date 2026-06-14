@@ -14,7 +14,7 @@ import re
 import subprocess
 import threading
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from functools import wraps
 
@@ -1099,6 +1099,200 @@ if not app.debug:
         # don't break the app boot over a logger setup failure
         logging.basicConfig(level=logging.WARNING)
         app.logger.warning("Failed to attach rotating file handler: %s", _e)
+
+# ── Auth — magic-link signup/login + session-based BYOK gate ─────────────
+# WS-2: photogen.ashbi.ca needs user accounts before any paid feature
+# can ship. This block replaces the header-only BYOK flow with a
+# session-based flow: signed-in users get a 5-credit free trial even
+# without a Gemini API key. The magic link avoids password complexity
+# and is the cheapest auth shape to ship.
+#
+# Data: users.db (SQLite) in DATA_DIR. Tables: users, sessions,
+# magic_link_tokens. Sessions last 7 days by default. Magic link
+# tokens expire in 1 hour.
+#
+# When WS-6 (Stripe) ships, the users table gets credits_remaining +
+# credits_used_per_day columns, and the trial becomes 5 credits once
+# instead of 5 per signup.
+import sqlite3 as _sqlite3
+import secrets as _secrets
+import hashlib as _hashlib
+
+AUTH_DB = DATA_DIR / "users.db"
+AUTH_DB.parent.mkdir(parents=True, exist_ok=True)
+AUTH_DB.touch(exist_ok=True)
+
+_SESSION_DAYS = 7
+_MAGIC_LINK_MINUTES = 60
+_FREE_TRIAL_CREDITS = 5
+
+
+def _auth_db() -> _sqlite3.Connection:
+    """Get a thread-local connection. SQLite threadsafety is off
+    globally (the default), but gunicorn -w 1 means we never have
+    concurrent writes on this file. We open a connection per
+    request so each call gets its own read-snapshot."""
+    conn = _sqlite3.connect(str(AUTH_DB))
+    conn.row_factory = _sqlite3.Row
+    return conn
+
+
+def _init_auth_schema():
+    """Create tables if they don't exist. Idempotent — called at module
+    import time and on every boot."""
+    with _auth_db() as db:
+        db.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            created_at TEXT NOT NULL,
+            credits_remaining INTEGER NOT NULL DEFAULT 0,
+            credits_used_today INTEGER NOT NULL DEFAULT 0,
+            last_trial_date TEXT
+        );
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            user_agent TEXT,
+            last_seen_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS magic_link_tokens (
+            token TEXT PRIMARY KEY,
+            email TEXT NOT NULL COLLATE NOCASE,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_magic_email ON magic_link_tokens(email);
+        """)
+        db.commit()
+
+
+_init_auth_schema()
+
+
+def _now_iso() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _create_magic_link_token(email: str) -> str:
+    """Generate a one-time magic link token. Returns the raw token
+    (stored hashed) — the caller must email it to the user."""
+    raw = _secrets.token_urlsafe(32)
+    token_hash = _hashlib.sha256(raw.encode()).hexdigest()
+    now = _now_iso()
+    expires_dt = datetime.now() + timedelta(minutes=_MAGIC_LINK_MINUTES)
+    expires = expires_dt.strftime("%Y-%m-%d %H:%M:%S")
+    with _auth_db() as db:
+        db.execute(
+            "INSERT INTO magic_link_tokens (token, email, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            (token_hash, email.lower().strip(), now, expires))
+        db.commit()
+    return raw
+
+
+def _consume_magic_link(token: str) -> dict | None:
+    """Validate a magic link token. If valid and unexpired, create or
+    find the user, create a session, and return the session dict.
+    Returns None if the token is invalid/expired/used.
+    The token is consumed (used=1) after this call."""
+    token_hash = _hashlib.sha256(token.encode()).hexdigest()
+    now = _now_iso()
+    with _auth_db() as db:
+        row = db.execute(
+            "SELECT * FROM magic_link_tokens WHERE token = ? AND expires_at > ? AND used = 0",
+            (token_hash, now),
+        ).fetchone()
+        if not row:
+            return None
+        # Mark token as used
+        db.execute("UPDATE magic_link_tokens SET used = 1 WHERE token = ?", (token_hash,))
+        # Create or find the user
+        email = row["email"]
+        user = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        if not user:
+            uid = _secrets.token_hex(16)
+            db.execute(
+                "INSERT INTO users (id, email, created_at, credits_remaining) VALUES (?, ?, ?, ?)",
+                (uid, email, now, _FREE_TRIAL_CREDITS))
+            user = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            assert user, "just created user not found"
+        else:
+            # Returning user. If they've run out of credits from a
+            # previous trial, don't give them more — the trial is
+            # once-per-account, not once-per-login.
+            pass
+        # Create session
+        sid = _secrets.token_hex(32)
+        expires_dt = datetime.now() + timedelta(days=_SESSION_DAYS)
+        expires = expires_dt.strftime("%Y-%m-%d %H:%M:%S")
+        db.execute(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
+            (sid, user["id"], now, expires, now))
+        db.commit()
+        return {
+            "id": sid,
+            "user_id": user["id"],
+            "email": user["email"],
+            "credits_remaining": user["credits_remaining"],
+            "expires_at": expires,
+        }
+
+
+def _session_from_cookie(cookie: str) -> dict | None:
+    """Look up the session from a client-supplied cookie value.
+    Returns the session dict or None if expired/invalid."""
+    now = _now_iso()
+    with _auth_db() as db:
+        row = db.execute(
+            "SELECT * FROM sessions WHERE id = ? AND expires_at > ?",
+            (cookie, now),
+        ).fetchone()
+        if not row:
+            return None
+        # Touch the last_seen_at
+        db.execute("UPDATE sessions SET last_seen_at = ? WHERE id = ?", (now, cookie))
+        db.commit()
+        user = db.execute("SELECT * FROM users WHERE id = ?", (row["user_id"],)).fetchone()
+        if not user:
+            return None
+        return {
+            "id": row["id"],
+            "user_id": user["id"],
+            "email": user["email"],
+            "credits_remaining": user["credits_remaining"],
+            "expires_at": row["expires_at"],
+        }
+
+
+def _current_session() -> dict | None:
+    """Return the session dict for the current request (read from the
+    X-Session-Token header), or None if none / invalid."""
+    token = request.headers.get("X-Session-Token", "").strip()
+    if not token:
+        return None
+    return _session_from_cookie(token)
+
+
+def _use_trial_credit(user_id: str) -> tuple[bool, int]:
+    """Try to deduct one trial credit from the user's balance.
+    Also increments credits_used_today. Returns (success, remaining)."""
+    with _auth_db() as db:
+        user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            return False, 0
+        remaining = user["credits_remaining"] or 0
+        if remaining <= 0:
+            return False, 0
+        db.execute(
+            "UPDATE users SET credits_remaining = ?, credits_used_today = credits_used_today + 1 WHERE id = ?",
+            (remaining - 1, user_id))
+        db.commit()
+        return True, remaining - 1
+
 
 # ── Simple in-memory rate limiter ───────────────────────────────────────
 _request_log: Dict[str, list] = {}
@@ -2667,6 +2861,70 @@ def privacy_page():
     """Static privacy policy page. We collect as little as possible;
     see templates/privacy.html for the full text. Public — no auth."""
     return render_template("privacy.html")
+
+
+# ── Auth Routes (WS-2) ────────────────────────────────────────────────
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup_page():
+    """Render the signup form. On POST, create a magic link token and
+    return it IN THE RESPONSE (no email sender yet — WS-2 doesn't ship
+    with SMTP; the operator can copy the token from the server or we
+    add Resend in a follow-up)."""
+    if request.method == "POST":
+        data = request.json or {}
+        email = (data.get("email") or "").strip().lower()
+        if not email or "@" not in email or "." not in email.split("@")[-1]:
+            return jsonify({"error": "Invalid email"}), 400
+        token = _create_magic_link_token(email)
+        # For now: return the token so the operator/developer can
+        # manually paste it into the login flow. When Resend free
+        # tier ships, this changes to send it via email.
+        return jsonify({"token": token, "email": email})
+    return render_template("signup.html")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    """Render the login form. On POST (magic link token), create or
+    find the user and return a session token."""
+    if request.method == "POST":
+        data = request.json or {}
+        token = (data.get("token") or "").strip()
+        if not token:
+            return jsonify({"error": "Token required"}), 400
+        session = _consume_magic_link(token)
+        if not session:
+            return jsonify({"error": "Invalid or expired token"}), 400
+        return jsonify({
+            "session_token": session["id"],
+            "email": session["email"],
+            "credits_remaining": session["credits_remaining"],
+            "expires_at": session["expires_at"],
+        })
+    return render_template("login.html")
+
+
+@app.route("/api/me", methods=["GET"])
+def api_me():
+    """Return the current user + account status, or 401 if not
+    signed in. This is the 'who am I' endpoint that the frontend
+    polls on boot to decide whether to show the key input or the
+    'you have N credits' badge."""
+    sess = _current_session()
+    if not sess:
+        return jsonify({"error": "Not signed in"}), 401
+    with _auth_db() as db:
+        user = db.execute("SELECT * FROM users WHERE id = ?", (sess["user_id"],)).fetchone()
+    if not user:
+        return jsonify({"error": "User not found"}), 401
+    return jsonify({
+        "email": user["email"],
+        "credits_remaining": user["credits_remaining"] or 0,
+        "credits_used_today": user["credits_used_today"] or 0,
+        "created_at": user["created_at"],
+    })
 
 
 @app.route("/history")
