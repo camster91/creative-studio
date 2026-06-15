@@ -1242,6 +1242,22 @@ def _init_auth_schema():
         );
         CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
         """)
+        # WS-6: ALTER TABLE for subscription columns. SQLite doesn't
+        # support IF NOT EXISTS for columns, so we check pragma
+        # table_info and add only what is missing. Idempotent.
+        existing_cols = {row[1] for row in db.execute("PRAGMA table_info(users)")}
+        for col, decl in [
+            ("stripe_customer_id",     "TEXT"),
+            ("stripe_subscription_id", "TEXT"),
+            ("subscription_tier",      "TEXT"),  # 'starter' | 'pro' | 'studio' | NULL
+            ("subscription_status",    "TEXT"),  # 'active' | 'past_due' | 'canceled' | 'trialing' | NULL
+            ("subscription_renews_at", "TEXT"),
+            ("credits_remaining",      "INTEGER NOT NULL DEFAULT 0"),
+            ("credits_used_today",     "INTEGER NOT NULL DEFAULT 0"),
+            ("last_trial_date",        "TEXT"),
+        ]:
+            if col not in existing_cols:
+                db.execute(f"ALTER TABLE users ADD COLUMN {col} {decl}")
         db.commit()
 
 
@@ -3221,7 +3237,373 @@ def api_me():
         "credits_remaining": user["credits_remaining"] or 0,
         "credits_used_today": user["credits_used_today"] or 0,
         "created_at": user["created_at"],
+        "subscription_tier": user["subscription_tier"],
+        "subscription_status": user["subscription_status"],
+        "subscription_renews_at": user["subscription_renews_at"],
     })
+
+
+# ── Billing (WS-6) — Stripe Checkout + webhook + credit ledger ──────────
+# Three plans: Starter $19 (100 credits/mo), Pro $49 (500/mo),
+# Studio $99 (1500/mo). The credit ledger is a single column on
+# the users row (credits_remaining) that resets each billing
+# cycle — we don't track per-cycle usage history for v1.
+#
+# The whole billing surface is "fail-closed when unconfigured": if
+# STRIPE_SECRET_KEY isn't set, the checkout / portal / webhook
+# endpoints return 503 with a clear "billing not configured" error.
+# This way, the rest of the app keeps working in BYOK mode without
+# Stripe ever being set up.
+import stripe as _stripe_lib  # noqa: E402  (after the import block above)
+
+# Plan catalog. Price IDs are looked up from env so the operator
+# can wire to the price IDs from their Stripe dashboard without
+# a code deploy. The tier label and credit count are config here.
+_BILLING_PLANS = {
+    "starter": {
+        "label": "Starter",
+        "monthly_credits": 100,
+        "price_id_env": "STRIPE_PRICE_STARTER",
+        "default_price": "$19/mo",  # shown if env var unset
+    },
+    "pro": {
+        "label": "Pro",
+        "monthly_credits": 500,
+        "price_id_env": "STRIPE_PRICE_PRO",
+        "default_price": "$49/mo",
+    },
+    "studio": {
+        "label": "Studio",
+        "monthly_credits": 1500,
+        "price_id_env": "STRIPE_PRICE_STUDIO",
+        "default_price": "$99/mo",
+    },
+}
+
+_BILLING_PORTAL_RETURN_URL = os.environ.get(
+    "PHOTOGEN_BILLING_RETURN_URL", "https://photogen.ashbi.ca/settings/billing")
+
+
+def _stripe_configured() -> bool:
+    """Return True if STRIPE_SECRET_KEY is set. Used as a fail-closed
+    gate so the rest of the app keeps working without Stripe."""
+    return bool(os.environ.get("STRIPE_SECRET_KEY", "").strip())
+
+
+def _stripe_api():
+    """Return a configured stripe module. Raises RuntimeError if
+    Stripe is not configured — callers should call _stripe_configured
+    first and return 503 if false."""
+    if not _stripe_configured():
+        raise RuntimeError("Stripe not configured (STRIPE_SECRET_KEY not set)")
+    _stripe_lib.api_key = os.environ["STRIPE_SECRET_KEY"]
+    return _stripe_lib
+
+
+def _get_or_create_stripe_customer(user: dict) -> str:
+    """Find the user's Stripe customer id, creating one if needed.
+    Stores the id on the user row so we don't re-lookup on every
+    request."""
+    if user.get("stripe_customer_id"):
+        return user["stripe_customer_id"]
+    stripe = _stripe_api()
+    customer = stripe.Customer.create(
+        email=user["email"],
+        metadata={"photogen_user_id": user["id"]},
+    )
+    cid = customer["id"]
+    with _auth_db() as db:
+        db.execute(
+            "UPDATE users SET stripe_customer_id = ? WHERE id = ?",
+            (cid, user["id"]))
+        db.commit()
+    return cid
+
+
+def _resolve_price_id(plan: str) -> str:
+    """Look up the Stripe price id for a plan from the env. Raises
+    ValueError if the plan is unknown or the price id isn't set."""
+    if plan not in _BILLING_PLANS:
+        raise ValueError(f"Unknown plan: {plan!r}")
+    price_id = os.environ.get(_BILLING_PLANS[plan]["price_id_env"], "").strip()
+    if not price_id:
+        raise RuntimeError(
+            f"Plan {plan!r} not configured: set "
+            f"{_BILLING_PLANS[plan]['price_id_env']} in /root/.env.photogen"
+        )
+    return price_id
+
+
+@app.route("/api/billing/plans", methods=["GET"])
+@rate_limited
+def api_billing_plans():
+    """Public list of available plans and their credit counts.
+    Pricing shown as a placeholder string if the env var is unset
+    (the operator can configure prices without a code deploy)."""
+    out = []
+    for plan_id, plan in _BILLING_PLANS.items():
+        price_env = plan["price_id_env"]
+        price_id = os.environ.get(price_env, "").strip()
+        out.append({
+            "id": plan_id,
+            "label": plan["label"],
+            "monthly_credits": plan["monthly_credits"],
+            "price_id_configured": bool(price_id),
+            "price_display": plan["default_price"] if not price_id else "configured",
+        })
+    return jsonify({"plans": out, "stripe_configured": _stripe_configured()})
+
+
+@app.route("/api/billing/checkout", methods=["POST"])
+@rate_limited
+def api_billing_checkout():
+    """Create a Stripe Checkout session for a plan and return the
+    URL the browser should redirect to. Body: {plan: 'starter'|'pro'|'studio'}.
+
+    Signed-in user only. Returns 503 if Stripe is not configured
+    on the host (with a clear message)."""
+    sess = _current_session()
+    if not sess:
+        return jsonify({"error": "Sign in required"}), 401
+    if not _stripe_configured():
+        return jsonify({
+            "error": "Billing not configured",
+            "message": "Set STRIPE_SECRET_KEY on the host to enable paid plans.",
+        }), 503
+    data = request.json or {}
+    plan = (data.get("plan") or "").strip()
+    if plan not in _BILLING_PLANS:
+        return jsonify({
+            "error": "Invalid plan",
+            "valid_plans": list(_BILLING_PLANS.keys()),
+        }), 400
+    try:
+        price_id = _resolve_price_id(plan)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
+    with _auth_db() as db:
+        user = db.execute("SELECT * FROM users WHERE id = ?",
+                          (sess["user_id"],)).fetchone()
+    if not user:
+        return jsonify({"error": "User not found"}), 401
+    # Convert sqlite3.Row to dict so the rest of the helpers (which
+    # are typed as dict) work without .get() errors.
+    user = dict(user)
+    try:
+        customer_id = _get_or_create_stripe_customer(user)
+        stripe = _stripe_api()
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            customer=customer_id,
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url=_BILLING_PORTAL_RETURN_URL + "?checkout=success",
+            cancel_url=_BILLING_PORTAL_RETURN_URL + "?checkout=canceled",
+            metadata={"photogen_user_id": user["id"], "plan": plan},
+        )
+    except Exception as e:
+        return jsonify({"error": "Checkout creation failed", "message": str(e)}), 500
+    return jsonify({
+        "url": session["url"],
+        "session_id": session["id"],
+        "plan": plan,
+    })
+
+
+@app.route("/api/billing/portal", methods=["POST"])
+@rate_limited
+def api_billing_portal():
+    """Return a Stripe Customer Portal URL for managing the
+    subscription (cancel, change card, view invoices)."""
+    sess = _current_session()
+    if not sess:
+        return jsonify({"error": "Sign in required"}), 401
+    if not _stripe_configured():
+        return jsonify({"error": "Billing not configured"}), 503
+    with _auth_db() as db:
+        user = db.execute("SELECT * FROM users WHERE id = ?",
+                          (sess["user_id"],)).fetchone()
+    if not user or not user["stripe_customer_id"]:
+        return jsonify({"error": "No billing account yet"}), 400
+    try:
+        stripe = _stripe_api()
+        session = stripe.billing_portal.Session.create(
+            customer=user["stripe_customer_id"],
+            return_url=_BILLING_PORTAL_RETURN_URL,
+        )
+    except Exception as e:
+        return jsonify({"error": "Portal creation failed", "message": str(e)}), 500
+    return jsonify({"url": session["url"]})
+
+
+@app.route("/api/billing/webhook", methods=["POST"])
+def api_billing_webhook():
+    """Stripe webhook receiver. Verifies the signature, then handles
+    the events we care about: checkout.session.completed,
+    customer.subscription.{created,updated,deleted},
+    invoice.payment_{succeeded,failed}.
+
+    No auth required — auth is via the Stripe signature header
+    instead (STRIPE_WEBHOOK_SECRET env var)."""
+    if not _stripe_configured():
+        return "Stripe not configured", 503
+    webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
+    if not webhook_secret:
+        return "Webhook secret not configured", 503
+    payload = request.get_data()
+    sig_header = request.headers.get("Stripe-Signature", "")
+    try:
+        stripe = _stripe_api()
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, webhook_secret)
+    except Exception as e:
+        return f"Invalid signature: {e}", 400
+
+    etype = event.get("type", "")
+    data = event.get("data", {}).get("object", {})
+    user_id = (data.get("metadata") or {}).get("photogen_user_id") or None
+
+    # Map subscription status strings to ours
+    if etype == "checkout.session.completed":
+        # User just paid; record subscription
+        sub_id = data.get("subscription")
+        customer_id = data.get("customer")
+        # Resolve user from customer_id (more reliable than metadata)
+        if not user_id and customer_id:
+            with _auth_db() as db:
+                row = db.execute(
+                    "SELECT id FROM users WHERE stripe_customer_id = ?",
+                    (customer_id,)).fetchone()
+                if row:
+                    user_id = row["id"]
+        if user_id and sub_id:
+            try:
+                sub = stripe.Subscription.retrieve(sub_id)
+                _record_subscription(user_id, sub)
+            except Exception:
+                # Will be updated by the subscription.* event anyway
+                pass
+    elif etype in ("customer.subscription.created",
+                   "customer.subscription.updated"):
+        if user_id:
+            _record_subscription(user_id, data)
+    elif etype == "customer.subscription.deleted":
+        if user_id:
+            _cancel_subscription(user_id)
+    elif etype == "invoice.payment_succeeded":
+        # New billing cycle: reset credits_used_today, top up
+        # credits_remaining to the plan's monthly_credits. The plan
+        # comes from the subscription's price → tier mapping.
+        if user_id:
+            _top_up_credits(user_id)
+    elif etype == "invoice.payment_failed":
+        # Mark the user as past_due but don't take credits away yet.
+        # Stripe will retry. After enough failures the subscription
+        # is canceled automatically.
+        if user_id:
+            with _auth_db() as db:
+                db.execute(
+                    "UPDATE users SET subscription_status = 'past_due' WHERE id = ?",
+                    (user_id,))
+                db.commit()
+    return "", 200
+
+
+def _tier_from_price_id(price_id: str) -> str | None:
+    """Map a Stripe price id back to our tier slug. Returns None if
+    the price id doesn't match any configured plan."""
+    for plan_id, plan in _BILLING_PLANS.items():
+        env_price = os.environ.get(plan["price_id_env"], "").strip()
+        if env_price and env_price == price_id:
+            return plan_id
+    return None
+
+
+def _record_subscription(user_id: str, sub: dict) -> None:
+    """Update the user's subscription state from a Stripe
+    subscription object. Adds the monthly credits the first time
+    the user upgrades (sub.status becomes 'active' or 'trialing')."""
+    status = sub.get("status", "active")
+    price_id = (sub.get("items", {}).get("data") or [{}])[0].get("price", {}).get("id")
+    tier = _tier_from_price_id(price_id) if price_id else None
+    renews_at = (sub.get("current_period_end")
+                 if sub.get("current_period_end") is not None else None)
+    renews_iso = (datetime.fromtimestamp(renews_at).strftime("%Y-%m-%d %H:%M:%S")
+                  if renews_at else None)
+    with _auth_db() as db:
+        # If the user just upgraded, top up credits. We always
+        # add the monthly_credits on subscription created/updated
+        # to "active"/"trialing"; for renewals the invoice
+        # event handles the top-up.
+        previous = db.execute(
+            "SELECT subscription_tier, credits_remaining FROM users WHERE id = ?",
+            (user_id,)).fetchone()
+        previous_dict = dict(previous) if previous else {}
+        is_new_active = (status in ("active", "trialing")
+                         and not previous_dict.get("subscription_tier"))
+        if is_new_active and tier:
+            plan = _BILLING_PLANS[tier]
+            db.execute(
+                """UPDATE users SET stripe_subscription_id = ?,
+                                      subscription_tier = ?,
+                                      subscription_status = ?,
+                                      subscription_renews_at = ?,
+                                      credits_remaining = ?
+                   WHERE id = ?""",
+                (sub.get("id"), tier, status, renews_iso,
+                 plan["monthly_credits"], user_id))
+        else:
+            db.execute(
+                """UPDATE users SET stripe_subscription_id = ?,
+                                      subscription_tier = ?,
+                                      subscription_status = ?,
+                                      subscription_renews_at = ?
+                   WHERE id = ?""",
+                (sub.get("id"), tier, status, renews_iso, user_id))
+        db.commit()
+
+
+def _cancel_subscription(user_id: str) -> None:
+    """Subscription deleted (Stripe sends customer.subscription.deleted
+    when a user cancels + their period ends). Set tier to NULL,
+    status to canceled, leave credits_remaining as-is so the
+    user can keep using whatever they have until the period ends."""
+    with _auth_db() as db:
+        db.execute(
+            """UPDATE users SET subscription_tier = NULL,
+                                  subscription_status = 'canceled'
+               WHERE id = ?""", (user_id,))
+        db.commit()
+
+
+def _top_up_credits(user_id: str) -> None:
+    """Called on invoice.payment_succeeded. Resets credits_used_today
+    and tops up credits_remaining to the plan's monthly_credits.
+    We do an absolute set rather than a +delta so re-running the
+    same webhook doesn't double-credit."""
+    with _auth_db() as db:
+        user = db.execute(
+            "SELECT subscription_tier FROM users WHERE id = ?",
+            (user_id,)).fetchone()
+        if not user or not user["subscription_tier"]:
+            return
+        plan = _BILLING_PLANS.get(user["subscription_tier"])
+        if not plan:
+            return
+        db.execute(
+            """UPDATE users SET credits_remaining = ?,
+                                  credits_used_today = 0,
+                                  subscription_status = 'active'
+               WHERE id = ?""",
+            (plan["monthly_credits"], user_id))
+        db.commit()
+
+
+@app.route("/settings/billing", methods=["GET"])
+def settings_billing():
+    """Public page that shows the current user's plan + credit
+    balance + upgrade options. Redirects to /login if not signed
+    in (the frontend JS reads X-Session-Token from localStorage)."""
+    return render_template("billing.html")
 
 
 # ── Project routes (WS-4) ────────────────────────────────────────────
