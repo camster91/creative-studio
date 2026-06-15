@@ -68,6 +68,28 @@
       <div class="projects-list" id="projectsList"></div>
     </section>
 
+    <!-- WS-7: Library (every generation the user has ever made) -->
+    <section class="library-block" id="libraryPanel" hidden>
+      <div class="library-header">
+        <span class="library-label">Library</span>
+        <span class="library-hint" id="libraryHint"></span>
+      </div>
+      <div class="library-search-row">
+        <input type="search" id="librarySearch" placeholder="Search by prompt…" aria-label="Search library">
+        <select id="libraryAspectFilter" aria-label="Filter by aspect">
+          <option value="">All aspects</option>
+          <option value="1:1">1:1</option>
+          <option value="4:5">4:5</option>
+          <option value="9:16">9:16</option>
+          <option value="16:9">16:9</option>
+          <option value="2:3">2:3</option>
+          <option value="4:3">4:3</option>
+        </select>
+      </div>
+      <div class="library-grid" id="libraryGrid"></div>
+      <div class="library-footer" id="libraryFooter"></div>
+    </section>
+
     <!-- Product — single file input, no badges -->
     <section class="field-group">
       <label class="field-label">Product photo <span class="field-optional">optional</span></label>

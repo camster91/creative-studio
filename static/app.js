@@ -263,6 +263,111 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btn) btn.addEventListener('click', createNewProject);
 });
 
+// ── Library (WS-7) — every generation the user has ever made ──────────────────
+// The Library tab shows the user's full history. Search by prompt
+// text, filter by aspect ratio, paginated. Click an item to drop
+// it into the gallery (for re-use) or open the full-size version.
+let libraryOffset = 0;
+const LIBRARY_PAGE = 60;
+async function loadLibrary() {
+  const panel = document.getElementById('libraryPanel');
+  const grid = document.getElementById('libraryGrid');
+  const hint = document.getElementById('libraryHint');
+  const footer = document.getElementById('libraryFooter');
+  if (!panel || !grid) return;
+  // Only show for signed-in users
+  try {
+    const r = await fetch('/api/me');
+    if (r.status === 401) { panel.hidden = true; return; }
+  } catch (e) { return; }
+  panel.hidden = false;
+  await refreshLibrary();
+}
+async function refreshLibrary() {
+  const grid = document.getElementById('libraryGrid');
+  const hint = document.getElementById('libraryHint');
+  const footer = document.getElementById('libraryFooter');
+  const search = (document.getElementById('librarySearch') || {}).value || '';
+  const aspect = (document.getElementById('libraryAspectFilter') || {}).value || '';
+  const params = new URLSearchParams({limit: LIBRARY_PAGE, offset: libraryOffset});
+  if (search) params.set('search', search);
+  if (aspect) params.set('aspect', aspect);
+  try {
+    const r = await fetch('/api/library?' + params.toString());
+    if (!r.ok) { grid.innerHTML = '<span class="library-empty">Couldn\'t load library</span>'; return; }
+    const data = await r.json();
+    const items = data.items || [];
+    if (libraryOffset === 0) {
+      grid.innerHTML = '';
+    }
+    if (items.length === 0 && libraryOffset === 0) {
+      grid.innerHTML = '<span class="library-empty">No generations yet — make your first one in the editor</span>';
+    } else {
+      const frag = document.createDocumentFragment();
+      items.forEach(it => frag.appendChild(buildLibraryCard(it)));
+      grid.appendChild(frag);
+    }
+    hint.textContent = data.total ? (data.total + ' image' + (data.total === 1 ? '' : 's')) : '';
+    footer.innerHTML = (libraryOffset + items.length) < data.total
+      ? '<button class="link-btn" id="libraryMoreBtn" type="button">Load more</button>'
+      : '';
+    const moreBtn = document.getElementById('libraryMoreBtn');
+    if (moreBtn) moreBtn.onclick = () => { libraryOffset += LIBRARY_PAGE; refreshLibrary(); };
+  } catch (e) {
+    grid.innerHTML = '<span class="library-empty">Couldn\'t load library</span>';
+  }
+}
+function buildLibraryCard(it) {
+  const card = document.createElement('div');
+  card.className = 'library-card';
+  card.innerHTML =
+    '<div class="library-card-img"><img src="' + escapeHtml(it.url) + '" alt="" loading="lazy"></div>' +
+    '<div class="library-card-meta">' +
+      '<span class="library-card-name">' + escapeHtml(it.name) + '</span>' +
+      (it.aspect ? '<span class="library-card-aspect">' + escapeHtml(it.aspect) + '</span>' : '') +
+      (it.prompt ? '<span class="library-card-prompt" title="' + escapeHtml(it.prompt) + '">' + escapeHtml(it.prompt.slice(0, 80)) + (it.prompt.length > 80 ? '…' : '') + '</span>' : '') +
+    '</div>' +
+    '<div class="library-card-actions">' +
+      '<button class="link-btn" data-action="library-load" aria-label="Use in editor">Use</button>' +
+      '<a class="link-btn" href="' + escapeHtml(it.url) + '" download aria-label="Download">Download</a>' +
+      '<button class="link-btn link-btn-danger" data-action="library-delete" aria-label="Delete">×</button>' +
+    '</div>';
+  card.querySelector('[data-action="library-load"]').onclick = () => {
+    // Drop into the gallery for the current session
+    if (!state.gallery.find(g => g.url === it.url)) {
+      state.gallery.push({ url: it.url, name: it.name, cost: 0, model: '', ratio: it.aspect || state.aspect });
+      renderGallery();
+      showToast('Added to gallery', 'ok');
+    } else {
+      showToast('Already in gallery', 'ok');
+    }
+  };
+  card.querySelector('[data-action="library-delete"]').onclick = async () => {
+    if (!confirm('Delete this image from the library? (This is permanent.)')) return;
+    const r = await fetch('/api/library/' + encodeURIComponent(it.path) + '/delete',
+      { method: 'POST', headers: { 'X-Session-Token': localStorage.getItem('photogen_session') || '' } });
+    if (r.ok) { showToast('Deleted', 'ok'); libraryOffset = 0; refreshLibrary(); }
+    else { showToast('Delete failed', 'err'); }
+  };
+  return card;
+}
+loadLibrary();
+// Library search/filter (debounced)
+let librarySearchTimer = null;
+document.addEventListener('DOMContentLoaded', () => {
+  const search = document.getElementById('librarySearch');
+  const aspect = document.getElementById('libraryAspectFilter');
+  if (search) {
+    search.addEventListener('input', () => {
+      clearTimeout(librarySearchTimer);
+      librarySearchTimer = setTimeout(() => { libraryOffset = 0; refreshLibrary(); }, 300);
+    });
+  }
+  if (aspect) {
+    aspect.addEventListener('change', () => { libraryOffset = 0; refreshLibrary(); });
+  }
+});
+
 // ── Scene types (work for any product) ────────────────────────────
 // Each scene type has a prompt template that describes the *scene* but leaves
 // the product generic ("the product"). When the user uploads a product photo,
@@ -524,6 +629,9 @@ function buildCellHTML(img) {
         <button class="cell-action" data-action="save" data-url="${safeAttr(img.url)}" data-name="${safeAttr(img.name)}" data-cost="${safeAttr(img.cost||0)}" data-model="${safeAttr(img.model||'')}" aria-label="Save to gallery">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
         </button>
+        <button class="cell-action" data-action="more-like-this" data-prompt="${safeAttr(encodeURIComponent(img.prompt || state.lastPrompt || ''))}" data-aspect="${safeAttr(img.ratio || state.aspect)}" data-name="${safeAttr(img.name)}" aria-label="More like this (4 variations)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        </button>
         <button class="cell-action" data-action="copy" data-prompt="${safeAttr(prompt)}" aria-label="Copy prompt">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
@@ -550,6 +658,53 @@ outputGrid.addEventListener('click', e => {
     } else {
       showToast('Already in gallery', 'ok');
     }
+    return;
+  }
+  // "More like this" — re-run the same prompt with 4 variations.
+  // Reuses the existing /api/generate `variations` param. The output
+  // is dropped into the same output grid so the user can compare.
+  const more = e.target.closest('[data-action="more-like-this"]');
+  if (more) {
+    if (state.generating) { showToast('Already generating', 'err'); return; }
+    const prompt = decodeURIComponent(more.dataset.prompt || '');
+    if (!prompt) { showToast('No prompt to re-use', 'err'); return; }
+    showToast('Generating 4 variations…', 'ok');
+    state.generating = true;
+    state.lastPrompt = prompt;
+    // Switch the aspect chip to match the source image (so the new
+    // 4 cells are the right shape).
+    const aspect = more.dataset.aspect || state.aspect;
+    document.querySelectorAll('#aspectRow .chip').forEach(c => {
+      c.classList.toggle('active', c.dataset.ratio === aspect);
+    });
+    state.aspect = aspect;
+    outputEmpty.hidden = true;
+    outputGrid.hidden = false;
+    outputGrid.innerHTML = '';
+    for (let i = 0; i < 4; i++) {
+      const sk = document.createElement('div');
+      sk.className = 'skeleton-cell ' + ratioClass(aspect);
+      outputGrid.appendChild(sk);
+    }
+    outputGrid.className = 'output-grid count-4';
+    fetch('/api/generate', updateFetchOptions({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, mode: 'direct', tier: state.tier, aspect_ratio: aspect, variations: 4 })
+    })).then(r => r.json()).then(data => {
+      state.generating = false;
+      if (data.error) { showToast(data.error, 'err'); return; }
+      if (data.job_id && data.status === 'running') {
+        return pollJob(data.job_id, 4).then(result => {
+          if (result.error) { showToast(result.error, 'err'); return; }
+          showOutput(result.images || []);
+        });
+      }
+      showOutput(data.images || []);
+    }).catch(e => {
+      state.generating = false;
+      showToast('Variation request failed: ' + (e.message || e), 'err');
+    });
     return;
   }
   const copy = e.target.closest('[data-action="copy"]');

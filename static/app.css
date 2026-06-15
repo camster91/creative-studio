@@ -1151,6 +1151,38 @@ a:hover { text-decoration: underline; }
   display: flex; align-items: center; justify-content: center; }
 .project-card-hero img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .project-card-hero-empty { font-size: 9px; color: var(--text-3); text-align: center; padding: 4px; line-height: 1.2; }
+
+/* Library (WS-7) */
+.图书馆-block { margin-top: 16px; }
+.图书馆-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+.图书馆-label { font-size: var(--t-caption); font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.04em; }
+.图书馆-hint { font-size: 11px; color: var(--text-3); }
+.图书馆-search-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.图书馆-search-row input,
+.图书馆-search-row select {
+  flex: 1; min-width: 0; padding: 6px 10px;
+  border: 1px solid var(--border, rgba(255,255,255,.12));
+  border-radius: 6px; background: var(--surface, rgba(255,255,255,.04));
+  color: var(--text); font: 13px -apple-system, system-ui, sans-serif;
+}
+.图书馆-search-row input::placeholder { color: var(--text-3); }
+.图书馆-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+@media (max-width: 720px) { .图书馆-grid { grid-template-columns: repeat(2, 1fr); } }
+.图书馆-card { display: flex; flex-direction: column; gap: 4px;
+  padding: 4px; border-radius: 6px; background: var(--surface, rgba(255,255,255,.04));
+  border: 1px solid var(--border, rgba(255,255,255,.06)); }
+.图书馆-card-img { aspect-ratio: 1 / 1; border-radius: 4px; overflow: hidden; background: rgba(0,0,0,.05); }
+.图书馆-card-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.图书馆-card-meta { display: flex; flex-direction: column; gap: 2px; padding: 0 2px; }
+.图书馆-card-name { font-size: 10px; color: var(--text-3); font-family: ui-monospace, SF Mono, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.图书馆-card-aspect { font-size: 9px; color: var(--accent, #6c63ff); text-transform: uppercase; font-weight: 600; }
+.图书馆-card-prompt { font-size: 10px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.图书馆-card-actions { display: flex; gap: 4px; padding: 2px 2px 0; justify-content: space-between; }
+.图书馆-card-actions .link-btn { font-size: 10px; padding: 2px 6px; }
+.link-btn-danger { color: var(--text-3); }
+.link-btn-danger:hover { color: #cc0000; }
+.图书馆-empty { font-size: 12px; color: var(--text-3); padding: 12px; font-style: italic; text-align: center; }
+.图书馆-footer { text-align: center; padding: 8px 0; }
 .project-card-name { font-size: 12px; font-weight: 600; color: var(--text); line-height: 1.3; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projects-empty { font-size: 12px; color: var(--text-3); padding: 8px; font-style: italic; }
 @media (max-width: 720px) {

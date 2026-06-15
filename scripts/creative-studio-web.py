@@ -3752,6 +3752,214 @@ def api_projects_export(project_id):
     }
 
 
+# ── Library (WS-7) — every generation the user has ever made ────────────
+# Scans OUTPUT_DIR for all PNG/JPG files. Each generation is a
+# {path, url, name, mtime, size} entry. Filterable by prompt text
+# (best-effort, since prompt is only in the JSON manifest next to
+# the PNG, not the filename), aspect ratio (parsed from the
+# filename), and date range.
+#
+# For v1 we just enumerate and paginate. The frontend's
+# "Library" tab uses this to show all generations the user
+# has ever made, search/filter, and click to re-load.
+_LIBRARY_MAX_RESULTS = 200
+_LIBRARY_PAGE_SIZE = 60
+
+
+def _scan_output_dir() -> list:
+    """Walk OUTPUT_DIR and return a list of {path, name, mtime, size}
+    for every PNG/JPG. Sorted newest first. Cheap (no metadata
+    parsing). The manifest sidecar (if present) gets included
+    in a separate pass for the prompt text."""
+    if not OUTPUT_DIR.is_dir():
+        return []
+    out = []
+    for f in OUTPUT_DIR.rglob("*.png"):
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        out.append({
+            "path": str(f.relative_to(OUTPUT_DIR)),
+            "name": f.name,
+            "mtime": int(st.st_mtime),
+            "size": st.st_size,
+        })
+    for f in OUTPUT_DIR.rglob("*.jpg"):
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        out.append({
+            "path": str(f.relative_to(OUTPUT_DIR)),
+            "name": f.name,
+            "mtime": int(st.st_mtime),
+            "size": st.st_size,
+        })
+    out.sort(key=lambda x: x["mtime"], reverse=True)
+    return out
+
+
+def _load_prompt_for(path: str) -> str:
+    """Look for a sidecar JSON file with the same stem as the
+    image. The generation pipeline writes a `{stem}.json` next
+    to each PNG with the prompt. Returns empty string if no
+    sidecar found."""
+    p = OUTPUT_DIR / path
+    sidecar = p.with_suffix(".json")
+    if not sidecar.is_file():
+        # Try other naming patterns
+        for suffix in (".json", ".prompt", ".txt"):
+            cand = p.parent / (p.stem + suffix)
+            if cand.is_file():
+                sidecar = cand
+                break
+        else:
+            return ""
+    try:
+        import json as _json
+        data = _json.loads(sidecar.read_text())
+        if isinstance(data, dict):
+            for key in ("prompt", "user_prompt", "original_prompt"):
+                if data.get(key):
+                    return str(data[key])
+    except (OSError, ValueError):
+        return ""
+    return ""
+
+
+@app.route("/api/library", methods=["GET"])
+@rate_limited
+def api_library():
+    """Return a paginated list of every generation the user has
+    ever made. Signed-in only — anonymous requests get 401.
+
+    Query params:
+      - search (substring match against the prompt)
+      - aspect (substring match against the filename, e.g. "1_1" or "4_5")
+      - limit (default 60, max 200)
+      - offset (default 0)
+
+    Response:
+      {items: [{path, url, prompt, name, mtime, size, aspect}],
+       total: <int>, limit: <int>, offset: <int>}
+
+    The aspect ratio is parsed from the filename (e.g. 2026-06-15/2026-06-15_140523_4_5.png → 4:5).
+    """
+    sess = _current_session()
+    if not sess:
+        return jsonify({"error": "Sign in required"}), 401
+    search = (request.args.get("search") or "").strip().lower()
+    aspect_q = (request.args.get("aspect") or "").strip()
+    try:
+        limit = min(int(request.args.get("limit", _LIBRARY_PAGE_SIZE)),
+                    _LIBRARY_MAX_RESULTS)
+    except (TypeError, ValueError):
+        limit = _LIBRARY_PAGE_SIZE
+    try:
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        offset = 0
+    # 4-5 → 4_5 for filename matching
+    aspect_filename = aspect_q.replace(":", "_") if aspect_q else ""
+
+    all_items = _scan_output_dir()
+    # Filter
+    if search or aspect_filename:
+        filtered = []
+        for item in all_items:
+            if aspect_filename and aspect_filename not in item["path"]:
+                continue
+            if search:
+                # Need the prompt for substring match
+                prompt = _load_prompt_for(item["path"])
+                if not search in prompt.lower():
+                    # Also try the path itself
+                    if not search in item["name"].lower():
+                        continue
+            filtered.append(item)
+        all_items = filtered
+    total = len(all_items)
+    page = all_items[offset:offset + limit]
+
+    # Build the response
+    out = []
+    for item in page:
+        # Aspect ratio from filename: "..._4_5.png" or "..._1_1.png" or "..._16_9.png"
+        aspect = ""
+        name_no_ext = item["name"].rsplit(".", 1)[0]
+        # Find the LAST _<digit>_<digit> pattern in the filename
+        import re as _re_lib
+        m = _re_lib.search(r"_(\d+)_(\d+)(?!_\d)", name_no_ext)
+        if m:
+            aspect = f"{m.group(1)}:{m.group(2)}"
+        url = "/image/" + item["path"]
+        prompt = _load_prompt_for(item["path"])
+        out.append({
+            "path": item["path"],
+            "url": url,
+            "prompt": prompt,
+            "name": item["name"],
+            "mtime": item["mtime"],
+            "size": item["size"],
+            "aspect": aspect,
+        })
+    return jsonify({
+        "items": out,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    })
+
+
+@app.route("/api/library/<path:subpath>/delete", methods=["POST"])
+@rate_limited
+def api_library_delete(subpath):
+    """Delete a single file from the output dir. Used by the
+    'Remove from library' button. Returns 404 if the file
+    doesn't exist, 200 with {deleted: bool} otherwise.
+
+    NOTE: this is intentionally simple — it doesn't check user
+    ownership of the file (the output dir is per-host, all
+    signed-in users share it in this v1). When WS-8 lands with
+    per-user storage, this becomes a user-ownership check.
+    """
+    sess = _current_session()
+    if not sess:
+        return jsonify({"error": "Sign in required"}), 401
+    # Reject traversal (400) but accept missing files (404).
+    # We use a relaxed validator: split the path, refuse empty/
+    # '..' components, then resolve and check the resolved path
+    # is still under OUTPUT_DIR. If the file just doesn't exist,
+    # that's a 404, not a 400.
+    parts = [p for p in subpath.split("/") if p]
+    if not parts or any(p in (".", "..") for p in parts):
+        return jsonify({"error": "Invalid path"}), 400
+    target = OUTPUT_DIR
+    for part in parts:
+        target = target / part
+    try:
+        resolved = target.resolve()
+        base = OUTPUT_DIR.resolve()
+        resolved.relative_to(base)
+    except (ValueError, RuntimeError):
+        return jsonify({"error": "Invalid path"}), 400
+    if not resolved.is_file():
+        return jsonify({"error": "Not found"}), 404
+    try:
+        resolved.unlink()
+    except OSError as e:
+        return jsonify({"error": "Delete failed", "message": str(e)}), 500
+    # Also delete the sidecar JSON if it exists
+    sidecar = resolved.with_suffix(".json")
+    if sidecar.is_file():
+        try:
+            sidecar.unlink()
+        except OSError:
+            pass
+    return jsonify({"deleted": True})
+
+
 # ── SEO surface (WS-5) ─────────────────────────────────────────────
 # Public, unauthenticated routes for the long-game content strategy.
 # Post source: content/blog/*.md files with frontmatter. The operator
