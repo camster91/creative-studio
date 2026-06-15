@@ -206,7 +206,7 @@ class TestByokGate:
             )
             assert r.status_code == 402
             body = r.get_json()
-            assert body["error"] == "BYOK required"
+            assert body["error"] == "BYOK or sign-in required"
             assert "Gemini API key" in body["message"]
 
     def test_user_key_passes_gate(self, monkeypatch):
@@ -390,7 +390,7 @@ class TestPageRoutes:
                 r = c.post("/api/scene-set", data=data, content_type="multipart/form-data")
                 assert r.status_code == 402
                 body = r.get_json()
-                assert body["error"] == "BYOK required"
+                assert body["error"] == "BYOK or sign-in required"
         finally:
             cs.SERVER_API_KEY = "test-key"  # restore
             cs.ALLOW_SERVER_FALLBACK = True
