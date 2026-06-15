@@ -1,0 +1,205 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "amazon-hero-coffee",
+      "name": "Amazon main image · Coffee",
+      "category": "Amazon",
+      "preset": "studio",
+      "aspect": "1:1",
+      "tier": "quality",
+      "prompt": "Artisan coffee bag on a clean wooden shelf, warm overhead track lighting, soft shadow underneath, Amazon main image aesthetic",
+      "use_case": "Amazon PDP — the first image customers see"
+    },
+    {
+      "id": "amazon-hero-skincare",
+      "name": "Amazon main image · Skincare",
+      "category": "Amazon",
+      "preset": "studio",
+      "aspect": "1:1",
+      "tier": "quality",
+      "prompt": "Skincare bottle on a soft pastel surface, diffused lighting, clean and minimal, Amazon main image aesthetic",
+      "use_case": "Amazon PDP — 1:1 white-bg alternative"
+    },
+    {
+      "id": "amazon-sponsor-bd",
+      "name": "Amazon Sponsored Display 1200x628",
+      "category": "Amazon Ads",
+      "preset": "lifestyle",
+      "aspect": "16:9",
+      "tier": "balanced",
+      "prompt": "Product on a clean surface with subtle lifestyle props, wide editorial composition, banner-friendly framing",
+      "use_case": "Amazon Sponsored Display ad — 1200x628 banner"
+    },
+    {
+      "id": "instagram-feed-skincare",
+      "name": "Instagram feed · Skincare",
+      "category": "Instagram",
+      "preset": "lifestyle",
+      "aspect": "4:5",
+      "tier": "balanced",
+      "prompt": "Skincare bottle on a wet stone slab, natural light, soft steam rising, editorial vertical composition",
+      "use_case": "Instagram feed post — 4:5 aspect, vertical scroll-friendly"
+    },
+    {
+      "id": "instagram-feed-protein",
+      "name": "Instagram feed · Protein tub",
+      "category": "Instagram",
+      "preset": "inhand",
+      "aspect": "4:5",
+      "tier": "balanced",
+      "prompt": "Hand holding a protein tub, natural daylight, shallow depth of field, soft background blur",
+      "use_case": "Instagram feed — handheld hero shot, lifestyle"
+    },
+    {
+      "id": "instagram-feed-sneaker",
+      "name": "Instagram feed · Sneaker",
+      "category": "Instagram",
+      "preset": "action",
+      "aspect": "4:5",
+      "tier": "balanced",
+      "prompt": "Sneaker mid-stride on wet concrete, dramatic side lighting, frozen motion, editorial vertical composition",
+      "use_case": "Instagram feed — action shot, motion"
+    },
+    {
+      "id": "instagram-story-food",
+      "name": "Instagram Story · Food/snack",
+      "category": "Instagram",
+      "preset": "withprops",
+      "aspect": "9:16",
+      "tier": "balanced",
+      "prompt": "Snack package on a kitchen counter with cutting board and fresh ingredients, vertical story composition",
+      "use_case": "Instagram Story — 9:16 full-screen, contextual"
+    },
+    {
+      "id": "pinterest-pin-skincare",
+      "name": "Pinterest pin · Skincare",
+      "category": "Pinterest",
+      "preset": "lifestyle",
+      "aspect": "9:16",
+      "tier": "balanced",
+      "prompt": "Skincare bottle on a wet stone slab, natural light, soft steam rising, editorial vertical composition",
+      "use_case": "Pinterest pin — 9:16 tall, discovery"
+    },
+    {
+      "id": "pinterest-pin-decor",
+      "name": "Pinterest pin · Home decor",
+      "category": "Pinterest",
+      "preset": "studio",
+      "aspect": "9:16",
+      "tier": "balanced",
+      "prompt": "Home decor item on a soft fabric surface, warm natural light, vertical editorial composition",
+      "use_case": "Pinterest pin — discovery traffic"
+    },
+    {
+      "id": "email-header-launch",
+      "name": "Email header · Launch announcement",
+      "category": "Email",
+      "preset": "studio",
+      "aspect": "16:9",
+      "tier": "balanced",
+      "prompt": "Product hero on a clean gradient background, bright and optimistic, banner framing",
+      "use_case": "Klaviyo/ConvertKit launch email header — 16:9 banner"
+    },
+    {
+      "id": "etsy-listing-handmade",
+      "name": "Etsy listing · Handmade",
+      "category": "Etsy",
+      "preset": "inhand",
+      "aspect": "1:1",
+      "tier": "quality",
+      "prompt": "Hand holding a small handmade product, workshop background softly out of focus, warm natural light, Etsy shop aesthetic",
+      "use_case": "Etsy listing — 1:1 thumbnail, personable"
+    },
+    {
+      "id": "facebook-ad-coffee",
+      "name": "Facebook ad · Coffee brand",
+      "category": "Meta Ads",
+      "preset": "lifestyle",
+      "aspect": "4:5",
+      "tier": "balanced",
+      "prompt": "Coffee bag on a rustic café table, steam rising, warm morning light, friend pointing, lifestyle hero",
+      "use_case": "Facebook/Instagram paid social — 4:5 vertical"
+    },
+    {
+      "id": "tiktok-thumbnail",
+      "name": "TikTok thumbnail · 9:16",
+      "category": "TikTok",
+      "preset": "action",
+      "aspect": "9:16",
+      "tier": "fast",
+      "prompt": "Product in motion, splash or pour effect, bright high-contrast, vertical 9:16 thumbnail, scroll-stopping",
+      "use_case": "TikTok video thumbnail — 9:16, scroll-stopping"
+    },
+    {
+      "id": "shopify-pdp-beauty",
+      "name": "Shopify PDP · Beauty",
+      "category": "Shopify",
+      "preset": "studio",
+      "aspect": "1:1",
+      "tier": "quality",
+      "prompt": "Beauty product on a soft marbled surface, soft shadows, light and airy, premium Shopify aesthetic",
+      "use_case": "Shopify PDP main image — 1:1, premium feel"
+    },
+    {
+      "id": "shopify-pdp-apparel",
+      "name": "Shopify PDP · Apparel",
+      "category": "Shopify",
+      "preset": "studio",
+      "aspect": "1:1",
+      "tier": "quality",
+      "prompt": "Apparel item on a clean mannequin or hanger, bright and even, soft shadow, Shopify PDP main image",
+      "use_case": "Shopify PDP — apparel 1:1"
+    },
+    {
+      "id": "shopify-lifestyle-apparel",
+      "name": "Shopify lifestyle · Apparel in use",
+      "category": "Shopify",
+      "preset": "lifestyle",
+      "aspect": "4:5",
+      "tier": "balanced",
+      "prompt": "Person wearing apparel, street or home setting, natural light, candid feel, lifestyle hero for Shopify",
+      "use_case": "Shopify collection page — lifestyle 4:5"
+    },
+    {
+      "id": "email-banner-flash-sale",
+      "name": "Email banner · Flash sale",
+      "category": "Email",
+      "preset": "withprops",
+      "aspect": "16:9",
+      "tier": "balanced",
+      "prompt": "Product surrounded by sale props (price tag, discount stickers), energetic composition, banner friendly",
+      "use_case": "Klaviyo/ConvertKit flash-sale banner"
+    },
+    {
+      "id": "pdp-zoom",
+      "name": "PDP zoom · Detail shot",
+      "category": "Ecommerce",
+      "preset": "studio",
+      "aspect": "1:1",
+      "tier": "quality",
+      "prompt": "Macro detail shot of product label or texture, soft directional light, premium e-commerce aesthetic",
+      "use_case": "Ecommerce PDP — zoom/detail thumbnail"
+    },
+    {
+      "id": "kitchen-context-food",
+      "name": "Kitchen context · Food/bev",
+      "category": "Contextual",
+      "preset": "lifestyle",
+      "aspect": "4:5",
+      "tier": "balanced",
+      "prompt": "Food or beverage product in a kitchen scene, on a counter next to ingredients, warm light, contextual lifestyle",
+      "use_case": "Brand site or blog — contextual kitchen scene"
+    },
+    {
+      "id": "studio-callout",
+      "name": "Studio callout · Comparison",
+      "category": "Contextual",
+      "preset": "studio",
+      "aspect": "16:9",
+      "tier": "quality",
+      "prompt": "Product on a clean studio surface with comparison callouts (size, color variants), wide editorial framing",
+      "use_case": "Brand site — comparison/callout wide banner"
+    }
+  ]
+}
