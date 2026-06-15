@@ -519,7 +519,8 @@ def build_pin_prompt(pins: List[Dict]) -> str:
 
 # ─── Image generation wrappers ────────────────────────────────────────
 
-SCRIPT_PATH = str(Path(__file__).parent / "creative_studio.py")
+SCRIPT_DIR = Path(__file__).parent
+SCRIPT_PATH = str(SCRIPT_DIR / "creative_studio.py")
 
 # NOTE: _TIER_MODEL is defined earlier in the file (line ~89) as a (model, resolution) tuple map.
 # Don't redefine it here — old duplicates caused a critical bug where the second definition
@@ -2610,6 +2611,60 @@ def api_waitlist():
             "position": len(entries),
             "total_signups": len(entries),
         }), 201
+
+
+# ── Templates (WS-3) ────────────────────────────────────────────────
+# Curated presets that map to common CPG/DTC ad placements: Amazon main
+# image, Instagram 4:5, Pinterest 9:16, email header, etc. The
+# operator can edit templates.json (and the running container picks up
+# changes on restart) without a code deploy. Each template is a
+# self-contained (prompt, preset, aspect, tier, category) tuple.
+#
+# Storage: /app/data/templates.json (DATA_DIR). Ships with a default
+# file at scripts/templates.json that gets seeded on first boot if
+# the user-editable file doesn't exist.
+import json as _json_templates
+
+_TEMPLATES_DEFAULT_PATH = SCRIPT_DIR / "templates.json"
+_TEMPLATES_USER_PATH = DATA_DIR / "templates.json"
+
+# Seed the user-editable file from the default if it doesn't exist
+if not _TEMPLATES_USER_PATH.exists() and _TEMPLATES_DEFAULT_PATH.exists():
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        _TEMPLATES_USER_PATH.write_text(_TEMPLATES_DEFAULT_PATH.read_text())
+    except OSError:
+        pass
+
+
+def _read_templates() -> list:
+    """Read templates from the user-editable file. Falls back to
+    the default if the user file is missing/corrupt. Returns a
+    list of dicts (always the .templates array, never the wrapper)."""
+    for path in (_TEMPLATES_USER_PATH, _TEMPLATES_DEFAULT_PATH):
+        if not path.exists():
+            continue
+        try:
+            data = _json_templates.loads(path.read_text())
+            t = data.get("templates", [])
+            if isinstance(t, list) and t:
+                return t
+        except (OSError, _json_templates.JSONDecodeError, ValueError):
+            continue
+    return []
+
+
+@app.route("/api/templates", methods=["GET"])
+@rate_limited
+def api_templates():
+    """Return the curated template list. Public — no auth. The
+    frontend fetches this on boot to populate the Templates panel.
+    Templates are a discovery surface, not a security boundary.
+    """
+    return jsonify({"templates": _read_templates(), "version": 1})
+
+
+# ── Whoami / BYOK status (existing) ────────────────────────────────
 
 
 @app.route("/api/whoami", methods=["GET"])

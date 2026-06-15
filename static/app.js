@@ -119,6 +119,67 @@ async function initKeyState() {
 }
 initKeyState();
 
+// ── Templates (WS-3) — fetch + render + click-to-apply ────────────────
+// Each template is a curated preset that fills in (prompt, preset,
+// aspect, tier). Fetches /api/templates on boot, renders as clickable
+// cards in #templatesRow. Click → applies the template to the form.
+async function loadTemplates() {
+  const row = document.getElementById('templatesRow');
+  if (!row) return;
+  try {
+    const r = await fetch('/api/templates');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const list = data.templates || [];
+    if (!list.length) { row.innerHTML = '<span class="templates-empty">No templates yet</span>'; return; }
+    // Group by category so the strip shows section headers
+    const byCat = {};
+    list.forEach(t => { (byCat[t.category] = byCat[t.category] || []).push(t); });
+    row.innerHTML = Object.keys(byCat).sort().map(cat =>
+      '<div class="templates-group"><div class="templates-group-label">' + escapeHtml(cat) + '</div>' +
+      byCat[cat].map(t =>
+        '<button class="template-card" data-template-id="' + escapeHtml(t.id) + '" type="button" ' +
+        'title="' + escapeHtml(t.use_case || t.name) + '">' +
+        '<div class="template-card-name">' + escapeHtml(t.name) + '</div>' +
+        '<div class="template-card-meta">' + escapeHtml(t.aspect) + ' · ' + escapeHtml(t.tier) + ' · ' + escapeHtml(t.preset) + '</div>' +
+        '</button>'
+      ).join('') + '</div>'
+    ).join('');
+    // Wire up clicks
+    row.querySelectorAll('.template-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const t = list.find(x => x.id === card.dataset.templateId);
+        if (t) applyTemplate(t);
+      });
+    });
+  } catch (e) {
+    row.innerHTML = '<span class="templates-empty">Couldn\'t load templates</span>';
+  }
+}
+function applyTemplate(t) {
+  // Fill the prompt + select the preset / aspect / tier chips
+  const promptEl = document.getElementById('prompt');
+  if (promptEl) promptEl.value = t.prompt || '';
+  // Highlight the matching preset chip
+  document.querySelectorAll('#presetRow .chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.preset === t.preset);
+  });
+  state.preset = t.preset;
+  // Aspect
+  document.querySelectorAll('#aspectRow .chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.ratio === t.aspect);
+  });
+  state.aspect = t.aspect;
+  // Tier (quality)
+  document.querySelectorAll('#qualityRow .chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.tier === t.tier);
+  });
+  state.tier = t.tier;
+  if (typeof updateGenLabel === 'function') updateGenLabel();
+  if (typeof showToast === 'function') showToast('Loaded: ' + t.name, 'ok');
+}
+loadTemplates();
+
 // ── Scene types (work for any product) ────────────────────────────
 // Each scene type has a prompt template that describes the *scene* but leaves
 // the product generic ("the product"). When the user uploads a product photo,
