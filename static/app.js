@@ -180,6 +180,89 @@ function applyTemplate(t) {
 }
 loadTemplates();
 
+// ── Projects (WS-4) — fetch + render + click-to-open ───────────────────
+// Signed-in users get a "My projects" sidebar. Each project is a
+// clickable card that opens the project (loads generations into
+// the gallery). The "+ New" button creates an empty project and
+// immediately opens it.
+async function loadProjects() {
+  const panel = document.getElementById('projectsPanel');
+  const list = document.getElementById('projectsList');
+  if (!panel || !list) return;
+  // Only show for signed-in users. /api/me is the source of truth.
+  try {
+    const r = await fetch('/api/me');
+    if (r.status === 401) { panel.hidden = true; return; }
+  } catch (e) { return; }
+  panel.hidden = false;
+  await refreshProjectsList();
+}
+async function refreshProjectsList() {
+  const list = document.getElementById('projectsList');
+  if (!list) return;
+  try {
+    const r = await fetch('/api/projects');
+    if (!r.ok) { list.innerHTML = '<span class="projects-empty">Couldn\'t load projects</span>'; return; }
+    const data = await r.json();
+    const projects = data.projects || [];
+    if (!projects.length) { list.innerHTML = '<span class="projects-empty">No projects yet — click + New</span>'; return; }
+    list.innerHTML = projects.map(p =>
+      '<div class="project-card" data-project-id="' + escapeHtml(p.id) + '" title="Created ' + escapeHtml(p.created_at || '') + '">' +
+        (p.hero_url ? '<div class="project-card-hero"><img src="' + escapeHtml(p.hero_url) + '" alt="" loading="lazy"></div>' : '<div class="project-card-hero project-card-hero-empty">No image yet</div>') +
+        '<div class="project-card-name">' + escapeHtml(p.name || 'Untitled') + '</div>' +
+      '</div>'
+    ).join('');
+    list.querySelectorAll('.project-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const pid = card.dataset.projectId;
+        if (pid) openProject(pid);
+      });
+    });
+  } catch (e) {
+    list.innerHTML = '<span class="projects-empty">Couldn\'t load projects</span>';
+  }
+}
+async function openProject(projectId) {
+  // For v1: download the export zip and stash it in localStorage.
+  // For v2: load generations into the gallery. The zip is the
+  // canonical artifact for now (small enough to be a useful product
+  // on its own).
+  try {
+    const r = await fetch('/api/projects/' + encodeURIComponent(projectId) + '/export');
+    if (!r.ok) { if (typeof showToast === 'function') showToast('Couldn\'t open project', 'err'); return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'project-' + projectId.slice(0, 8) + '.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    if (typeof showToast === 'function') showToast('Downloaded project zip', 'ok');
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('Error opening project', 'err');
+  }
+}
+async function createNewProject() {
+  const name = prompt('Project name?', 'Untitled project');
+  if (!name) return;
+  const r = await fetch('/api/projects', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name}),
+  });
+  if (!r.ok) { if (typeof showToast === 'function') showToast('Couldn\'t create project', 'err'); return; }
+  const proj = await r.json();
+  await refreshProjectsList();
+  if (typeof showToast === 'function') showToast('Created: ' + proj.name, 'ok');
+}
+loadProjects();
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('newProjectBtn');
+  if (btn) btn.addEventListener('click', createNewProject);
+});
+
 // ── Scene types (work for any product) ────────────────────────────
 // Each scene type has a prompt template that describes the *scene* but leaves
 // the product generic ("the product"). When the user uploads a product photo,

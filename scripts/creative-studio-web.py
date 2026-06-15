@@ -1222,6 +1222,25 @@ def _init_auth_schema():
         );
         CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
         CREATE INDEX IF NOT EXISTS idx_magic_email ON magic_link_tokens(email);
+
+        -- WS-4: projects table. Each project is a user-owned "workspace"
+        -- that bundles a hero image + a JSON list of generations
+        -- (urls + prompts + costs). Lazy by design: a project exists
+        -- as soon as the user creates it; generations are added as
+        -- the user runs them. The frontend can hit /api/projects/<id>
+        -- to get the full project data, or /api/projects/<id>/export
+        -- to download a zip.
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL DEFAULT 'Untitled project',
+            hero_url TEXT,
+            generations_json TEXT NOT NULL DEFAULT '[]',
+            source_session_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
         """)
         db.commit()
 
@@ -1347,6 +1366,167 @@ def _use_trial_credit(user_id: str) -> tuple[bool, int]:
             (remaining - 1, user_id))
         db.commit()
         return True, remaining - 1
+
+
+# ── Projects (WS-4) — user-owned workspaces with generations ────────────
+# Each project is a JSON-backed record of (name, hero image, list of
+# generations). Auto-saved when the user clicks "save to project" in
+# the editor. Lazy: a project exists as soon as POST /api/projects
+# is called; generations get added one at a time. The killer feature
+# is /api/projects/<id>/export which zips up the project for download.
+import zipfile as _zipfile
+import io as _io
+import json as _json_projects
+
+_PROJECTS_MAX_PER_USER = 200
+_PROJECT_NAME_MAX = 200
+_GENERATION_URL_MAX = 2000
+_GENERATION_PROMPT_MAX = 4000
+
+
+def _parse_generations_json(raw: str) -> list:
+    """The generations column is a JSON string. Parse defensively
+    (corrupt row → empty list) so a single bad row doesn't take
+    down the whole sidebar."""
+    if not raw:
+        return []
+    try:
+        v = _json_projects.loads(raw)
+        return v if isinstance(v, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def _serialize_project_row(row, include_generations: bool = True) -> dict:
+    """Build the public-facing project dict. Defaults to
+    include_generations=True; pass False for sidebar list views
+    where you only need metadata (faster)."""
+    out = {
+        "id": row["id"],
+        "name": row["name"],
+        "hero_url": row["hero_url"],
+        "source_session_id": row["source_session_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+    if include_generations:
+        out["generations"] = _parse_generations_json(row["generations_json"])
+    return out
+
+
+def _create_project(user_id: str, name: str, source_session_id: str = None) -> dict:
+    """Create a new project for the user. Caps at _PROJECTS_MAX_PER_USER
+    (oldest by created_at get deleted to make room)."""
+    name = (name or "Untitled project").strip()[:_PROJECT_NAME_MAX]
+    pid = _secrets.token_hex(16)
+    now = _now_iso()
+    with _auth_db() as db:
+        # Cap: if user is at limit, delete the oldest
+        count = db.execute(
+            "SELECT COUNT(*) AS n FROM projects WHERE user_id = ?", (user_id,)
+        ).fetchone()["n"]
+        if count >= _PROJECTS_MAX_PER_USER:
+            oldest = db.execute(
+                "SELECT id FROM projects WHERE user_id = ? ORDER BY created_at ASC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            if oldest:
+                db.execute("DELETE FROM projects WHERE id = ?", (oldest["id"],))
+        db.execute(
+            """INSERT INTO projects (id, user_id, name, hero_url, generations_json,
+                                     source_session_id, created_at, updated_at)
+               VALUES (?, ?, ?, NULL, '[]', ?, ?, ?)""",
+            (pid, user_id, name, source_session_id, now, now))
+        db.commit()
+    return {"id": pid, "name": name, "hero_url": None,
+            "source_session_id": source_session_id,
+            "created_at": now, "updated_at": now, "generations": []}
+
+
+def _get_project(project_id: str) -> dict:
+    """Get a project by id (no user check). Returns None if not found."""
+    with _auth_db() as db:
+        row = db.execute(
+            "SELECT * FROM projects WHERE id = ?", (project_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return _serialize_project_row(row)
+
+
+def _get_project_for_user(project_id: str, user_id: str) -> dict:
+    """Get a project but verify the user owns it. Returns None if
+    not found OR if the user doesn't own it. Used for /api/projects
+    reads to avoid leaking another user's data."""
+    with _auth_db() as db:
+        row = db.execute(
+            "SELECT * FROM projects WHERE id = ? AND user_id = ?",
+            (project_id, user_id),
+        ).fetchone()
+    if not row:
+        return None
+    return _serialize_project_row(row)
+
+
+def _list_projects_for_user(user_id: str, include_generations: bool = False) -> list:
+    """List the user's projects, newest first. Skips generations
+    for the sidebar list view (faster)."""
+    with _auth_db() as db:
+        rows = db.execute(
+            """SELECT * FROM projects WHERE user_id = ?
+                  ORDER BY updated_at DESC, id DESC LIMIT 200""",
+            (user_id,),
+        ).fetchall()
+    return [_serialize_project_row(r, include_generations=include_generations)
+            for r in rows]
+
+
+def _add_generation_to_project(project_id: str, user_id: str,
+                              url: str, prompt: str, cost: float = 0,
+                              model: str = "", ratio: str = "") -> dict:
+    """Append a generation to a project's generations list. Returns
+    the updated project, or None if the project doesn't exist or
+    the user doesn't own it."""
+    url = (url or "").strip()[:_GENERATION_URL_MAX]
+    prompt = (prompt or "").strip()[:_GENERATION_PROMPT_MAX]
+    if not url:
+        return None
+    with _auth_db() as db:
+        row = db.execute(
+            "SELECT * FROM projects WHERE id = ? AND user_id = ?",
+            (project_id, user_id),
+        ).fetchone()
+        if not row:
+            return None
+        generations = _parse_generations_json(row["generations_json"])
+        generations.append({
+            "url": url,
+            "prompt": prompt,
+            "cost": float(cost) if cost else 0,
+            "model": model,
+            "ratio": ratio,
+            "added_at": _now_iso(),
+        })
+        # Set the project's hero_url to the first generation if not set
+        new_hero = row["hero_url"] or url
+        db.execute(
+            "UPDATE projects SET generations_json = ?, hero_url = ?, updated_at = ? WHERE id = ?",
+            (_json_projects.dumps(generations), new_hero, _now_iso(), project_id))
+        db.commit()
+    return _get_project(project_id)
+
+
+def _delete_project(project_id: str, user_id: str) -> bool:
+    with _auth_db() as db:
+        row = db.execute(
+            "SELECT id FROM projects WHERE id = ? AND user_id = ?",
+            (project_id, user_id),
+        ).fetchone()
+        if not row:
+            return False
+        db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        db.commit()
+    return True
 
 
 # ── Simple in-memory rate limiter ───────────────────────────────────────
@@ -3042,6 +3222,152 @@ def api_me():
         "credits_used_today": user["credits_used_today"] or 0,
         "created_at": user["created_at"],
     })
+
+
+# ── Project routes (WS-4) ────────────────────────────────────────────
+# All routes here require a signed-in session. A user can only
+# see/operate on their own projects (filtered by user_id at the
+# SQL layer). Anonymous /api/projects/* requests return 401.
+
+@app.route("/api/projects", methods=["POST"])
+@rate_limited
+def api_projects_create():
+    """Create a new project. Body: {name?, source_session_id?}.
+    Returns the new project (with empty generations)."""
+    sess = _current_session()
+    if not sess:
+        return jsonify({"error": "Sign in required"}), 401
+    data = request.json or {}
+    name = (data.get("name") or "Untitled project").strip()[:_PROJECT_NAME_MAX]
+    source_session_id = (data.get("source_session_id") or "").strip()[:64] or None
+    proj = _create_project(sess["user_id"], name, source_session_id)
+    return jsonify(proj), 201
+
+
+@app.route("/api/projects", methods=["GET"])
+@rate_limited
+def api_projects_list():
+    """List the signed-in user's projects, newest first.
+    Skips generations on the list view (faster) — use
+    /api/projects/<id> to get full data."""
+    sess = _current_session()
+    if not sess:
+        return jsonify({"error": "Sign in required"}), 401
+    return jsonify({"projects": _list_projects_for_user(sess["user_id"])})
+
+
+@app.route("/api/projects/<project_id>", methods=["GET"])
+@rate_limited
+def api_projects_get(project_id):
+    """Get a single project. Returns 404 if the project doesn't
+    exist OR if the user doesn't own it (don't leak existence)."""
+    sess = _current_session()
+    if not sess:
+        return jsonify({"error": "Sign in required"}), 401
+    proj = _get_project_for_user(project_id, sess["user_id"])
+    if not proj:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(proj)
+
+
+@app.route("/api/projects/<project_id>", methods=["DELETE"])
+@rate_limited
+def api_projects_delete(project_id):
+    """Delete a project. Idempotent: returns 200 even if already gone."""
+    sess = _current_session()
+    if not sess:
+        return jsonify({"error": "Sign in required"}), 401
+    ok = _delete_project(project_id, sess["user_id"])
+    return jsonify({"deleted": ok})
+
+
+@app.route("/api/projects/<project_id>/generations", methods=["POST"])
+@rate_limited
+def api_projects_add_generation(project_id):
+    """Append a generation to a project. Body: {url, prompt, cost?, model?, ratio?}.
+    Called by the editor after a successful /api/generate response
+    to record the image against the active project."""
+    sess = _current_session()
+    if not sess:
+        return jsonify({"error": "Sign in required"}), 401
+    data = request.json or {}
+    url = (data.get("url") or "").strip()[:_GENERATION_URL_MAX]
+    if not url:
+        return jsonify({"error": "url required"}), 400
+    proj = _add_generation_to_project(
+        project_id, sess["user_id"],
+        url=url,
+        prompt=(data.get("prompt") or "").strip()[:_GENERATION_PROMPT_MAX],
+        cost=float(data.get("cost") or 0),
+        model=str(data.get("model") or "")[:120],
+        ratio=str(data.get("ratio") or "")[:16],
+    )
+    if not proj:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(proj)
+
+
+@app.route("/api/projects/<project_id>/export", methods=["GET"])
+@rate_limited
+def api_projects_export(project_id):
+    """Export a project as a zip with a JSON manifest + the image files.
+
+    Zip structure:
+      manifest.json     — {id, name, hero_url, created_at, updated_at, generations}
+      images/<n>.<ext>   — the generated image, downloaded server-side
+                          from the local file system. (Skipped for
+                          external URLs that the server can't reach —
+                          we still record the URL in the manifest.)
+    The manifest is canonical — the image filenames match the
+    'url' field in each generation. If the URL is local (/image/...)
+    we resolve it under OUTPUT_DIR and add the file. Otherwise the
+    image is referenced by URL only.
+    """
+    sess = _current_session()
+    if not sess:
+        return jsonify({"error": "Sign in required"}), 401
+    proj = _get_project_for_user(project_id, sess["user_id"])
+    if not proj:
+        return jsonify({"error": "Not found"}), 404
+
+    buf = _io.BytesIO()
+    with _zipfile.ZipFile(buf, "w", _zipfile.ZIP_DEFLATED) as zf:
+        # Manifest
+        zf.writestr("manifest.json",
+                    _json_projects.dumps({
+                        "id": proj["id"],
+                        "name": proj["name"],
+                        "hero_url": proj["hero_url"],
+                        "created_at": proj["created_at"],
+                        "updated_at": proj["updated_at"],
+                        "generations": proj["generations"],
+                    }, indent=2))
+        # Embed local images
+        for idx, gen in enumerate(proj["generations"], start=1):
+            url = gen.get("url") or ""
+            if url.startswith("/image/"):
+                # local file. Serve_image does the same
+                # path-validity check; reuse it.
+                safe_rel = _safe_output_relpath(url[len("/image/"):])
+                if safe_rel is not None:
+                    full = OUTPUT_DIR / safe_rel
+                    if full.is_file():
+                        arcname = f"images/{idx}_{safe_rel.name}"
+                        zf.write(str(full), arcname)
+            elif url.startswith("http://") or url.startswith("https://"):
+                # External URL: don't try to fetch it (could be slow or
+                # blocked). Just record the URL in the manifest (which
+                # we already did above). The user can download manually.
+                pass
+
+    data = buf.getvalue()
+    safe_name = (proj["name"] or "project").strip().replace(" ", "_")
+    safe_name = "".join(c for c in safe_name if c.isalnum() or c in "_-")
+    filename = f"photogen-{safe_name[:50]}-{proj['id'][:8]}.zip"
+    return data, 200, {
+        "Content-Type": "application/zip",
+        "Content-Disposition": f'attachment; filename="{filename}"',
+    }
 
 
 @app.route("/history")
