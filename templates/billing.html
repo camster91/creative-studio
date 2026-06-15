@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Billing — Photogen</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body { font: 16px/1.6 -apple-system, system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 24px; color: var(--text, #1a1a1a); background: var(--bg, #fafafa); }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  h2 { font-size: 20px; margin: 32px 0 12px; }
+  p { color: var(--text-2, #333); }
+  .plan-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 16px 0; }
+  @media (max-width: 640px) { .plan-grid { grid-template-columns: 1fr; } }
+  .plan-card { background: var(--surface, #f5f5f5); border: 1px solid var(--border, #ccc); border-radius: 8px; padding: 20px; }
+  .plan-card h3 { margin: 0 0 8px; font-size: 18px; }
+  .plan-card .price { font-size: 24px; font-weight: 700; margin: 8px 0; color: var(--text); }
+  .plan-card .credits { font-size: 14px; color: var(--text-3, #666); margin: 4px 0 16px; }
+  .plan-card button { display: block; width: 100%; padding: 10px; background: var(--accent, #6c63ff); color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; }
+  .plan-card button:disabled { background: var(--text-3, #888); cursor: not-allowed; }
+  .status-bar { background: var(--surface, #f5f5f5); border: 1px solid var(--border, #ccc); border-radius: 8px; padding: 16px; margin: 16px 0; }
+  .status-bar .label { font-size: 12px; color: var(--text-3, #666); text-transform: uppercase; letter-spacing: 0.04em; }
+  .status-bar .value { font-size: 20px; font-weight: 700; color: var(--text); }
+  .msg { padding: 12px 16px; border-radius: 6px; margin: 16px 0; font-size: 14px; }
+  .msg.ok { background: rgba(0, 200, 100, 0.1); color: #006633; }
+  .msg.err { background: rgba(220, 0, 0, 0.1); color: #cc0000; }
+  .back { margin-bottom: 24px; font-size: 14px; }
+  a { color: var(--accent, #6c63ff); }
+  .small { font-size: 12px; color: var(--text-3, #666); margin-top: 8px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<p class="back"><a href="/app">&larr; Back to editor</a></p>
+<h1>Billing</h1>
+<div id="statusArea"></div>
+<div id="msgArea"></div>
+
+<h2 id="choosePlanHeader">Choose a plan</h2>
+<div class="plan-grid" id="planGrid"></div>
+
+<p class="small">Photogen uses Stripe for payments. We never see your card — Stripe handles it. Cancel anytime via the <a href="#" id="portalLink">Customer Portal</a>.</p>
+
+<script>
+const sq = String.fromCharCode(34);
+const status = document.getElementById('statusArea');
+const msgArea = document.getElementById('msgArea');
+const planGrid = document.getElementById('planGrid');
+const portalLink = document.getElementById('portalLink');
+
+async function loadMe() {
+  const r = await fetch('/api/me', { headers: { 'X-Session-Token': localStorage.getItem('photogen_session') || '' } });
+  if (r.status === 401) {
+    window.location.href = '/login?next=/settings/billing';
+    return null;
+  }
+  return r.json();
+}
+
+async function loadPlans() {
+  const r = await fetch('/api/billing/plans');
+  return r.json();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+function showMsg(text, kind) {
+  msgArea.innerHTML = '<div class="msg ' + (kind || 'ok') + '">' + escapeHtml(text) + '</div>';
+}
+
+function clearMsg() { msgArea.innerHTML = ''; }
+
+function renderStatus(me) {
+  if (!me) return;
+  if (me.subscription_tier) {
+    const renew = me.subscription_renews_at ? ' · renews ' + escapeHtml(me.subscription_renews_at.split(' ')[0]) : '';
+    status.innerHTML = '<div class="status-bar">' +
+      '<div class="label">Current plan</div>' +
+      '<div class="value">' + escapeHtml(me.subscription_tier) +
+        ' (' + escapeHtml(me.subscription_status || 'active') + ')' + escapeHtml(renew) + '</div>' +
+      '<div class="label" style="margin-top:8px;">Credits</div>' +
+      '<div class="value">' + (me.credits_remaining || 0) + ' remaining</div>' +
+      '</div>';
+  } else {
+    status.innerHTML = '<div class="status-bar">' +
+      '<div class="label">Current plan</div>' +
+      '<div class="value">Free tier</div>' +
+      '<div class="label" style="margin-top:8px;">Credits</div>' +
+      '<div class="value">' + (me.credits_remaining || 0) + ' remaining</div>' +
+      '</div>';
+  }
+}
+
+function renderPlans(me, plansData) {
+  const plans = plansData.plans || [];
+  if (me && me.subscription_tier) {
+    // User already has a plan — show the manage button
+    planGrid.innerHTML = '<div class="plan-card" style="grid-column: 1/-1; text-align: center;">' +
+      '<h3>Manage your subscription</h3>' +
+      '<p class="credits">Change plans, update card, or cancel via the Customer Portal.</p>' +
+      '<button id="openPortalBtn">Open Customer Portal</button>' +
+      '</div>';
+    document.getElementById('openPortalBtn').onclick = openPortal;
+  } else {
+    planGrid.innerHTML = plans.map(p => {
+      const disabled = !p.price_id_configured;
+      return '<div class="plan-card">' +
+        '<h3>' + escapeHtml(p.label) + '</h3>' +
+        '<div class="price">' + escapeHtml(p.price_display) + '</div>' +
+        '<div class="credits">' + p.monthly_credits + ' credits / month</div>' +
+        '<button data-plan="' + p.id + '"' + (disabled ? ' disabled title="Not configured on host"' : '') + '>' +
+        (disabled ? 'Not configured' : 'Choose ' + p.label) +
+        '</button>' +
+        '</div>';
+    }).join('');
+    planGrid.querySelectorAll('button[data-plan]').forEach(btn => {
+      btn.onclick = () => startCheckout(btn.dataset.plan);
+    });
+  }
+}
+
+async function startCheckout(plan) {
+  clearMsg();
+  if (!plansData.stripe_configured) {
+    showMsg('Billing is not configured on this host. Set STRIPE_SECRET_KEY on the server.', 'err');
+    return;
+  }
+  const r = await fetch('/api/billing/checkout', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Session-Token': localStorage.getItem('photogen_session') || '',
+    },
+    body: JSON.stringify({plan: plan}),
+  });
+  const body = await r.json();
+  if (r.ok && body.url) {
+    window.location.href = body.url;
+  } else {
+    showMsg(body.error || 'Checkout failed', 'err');
+  }
+}
+
+async function openPortal() {
+  clearMsg();
+  const r = await fetch('/api/billing/portal', {
+    method: 'POST',
+    headers: { 'X-Session-Token': localStorage.getItem('photogen_session') || '' },
+  });
+  const body = await r.json();
+  if (r.ok && body.url) {
+    window.location.href = body.url;
+  } else {
+    showMsg(body.error || 'Could not open portal', 'err');
+  }
+}
+
+portalLink.onclick = (e) => { e.preventDefault(); openPortal(); };
+
+// Handle ?checkout=success / ?checkout=canceled query params
+const url = new URL(window.location.href);
+if (url.searchParams.get('checkout') === 'success') {
+  showMsg('Subscription started! Your credits will appear in a few seconds after the webhook fires.', 'ok');
+} else if (url.searchParams.get('checkout') === 'canceled') {
+  showMsg('Checkout canceled — no charge made.', 'err');
+}
+
+let plansData = {};
+(async function init() {
+  const me = await loadMe();
+  if (!me) return;
+  plansData = await loadPlans();
+  renderStatus(me);
+  renderPlans(me, plansData);
+})();
+</script>
+</body>
+</html>
