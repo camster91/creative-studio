@@ -3370,6 +3370,279 @@ def api_projects_export(project_id):
     }
 
 
+# ── SEO surface (WS-5) ─────────────────────────────────────────────
+# Public, unauthenticated routes for the long-game content strategy.
+# Post source: content/blog/*.md files with frontmatter. The operator
+# adds a new .md file and restarts the container — no code deploy.
+# Each post can link to a Photogen template (template id in frontmatter)
+# for the SEO-to-product funnel.
+import re as _re_seo
+import html as _html_seo
+import xml.etree.ElementTree as _ET
+
+BLOG_CONTENT_DIR = APP_ROOT / "content" / "blog"
+BLOG_CONTENT_DIR.mkdir(parents=True, exist_ok=True)
+_BLOG_FRONTMATTER_RE = _re_seo.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", _re_seo.DOTALL)
+
+
+def _parse_blog_post(path: Path) -> dict:
+    """Parse a single blog post .md file. Returns {slug, title, description,
+    date, tags, body_md, body_html, template_id} or {} if invalid."""
+    try:
+        raw = path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return {}
+    m = _BLOG_FRONTMATTER_RE.match(raw)
+    if not m:
+        return {}
+    front, body_md = m.group(1), m.group(2)
+    meta = {}
+    for line in front.splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            meta[k.strip().lower()] = v.strip().strip('"').strip("'")
+    # Convert markdown to HTML (minimal: headings, paragraphs, lists, links, code)
+    body_html = _markdown_to_html(body_md)
+    slug = path.stem  # e.g. "photoroom-vs-photogen.md" -> "photoroom-vs-photogen"
+    return {
+        "slug": slug,
+        "title": meta.get("title", slug.replace("-", " ").title()),
+        "description": meta.get("description", ""),
+        "date": meta.get("date", ""),
+        "tags": [t.strip() for t in meta.get("tags", "").split(",") if t.strip()],
+        "template_id": meta.get("template_id", "").strip(),
+        "body_md": body_md,
+        "body_html": body_html,
+    }
+
+
+def _markdown_to_html(md: str) -> str:
+    """Very small markdown → HTML converter. Just enough for blog
+    posts: # h1, ## h2, ### h3, **bold**, *italic*, [text](url),
+    lists (lines starting with -), fenced code blocks. NOT a full
+    CommonMark implementation; the operator should keep posts simple."""
+    out_lines = []
+    in_code = False
+    in_list = False
+    for line in md.splitlines():
+        if line.startswith("```"):
+            if in_code:
+                out_lines.append("</code></pre>")
+                in_code = False
+            else:
+                out_lines.append("<pre><code>")
+                in_code = True
+            continue
+        if in_code:
+            out_lines.append(_html_seo.escape(line))
+            continue
+        if line.startswith("### "):
+            if in_list: out_lines.append("</ul>"); in_list = False
+            out_lines.append(f"<h3>{_html_seo.escape(line[4:].strip())}</h3>")
+        elif line.startswith("## "):
+            if in_list: out_lines.append("</ul>"); in_list = False
+            out_lines.append(f"<h2>{_html_seo.escape(line[3:].strip())}</h2>")
+        elif line.startswith("# "):
+            if in_list: out_lines.append("</ul>"); in_list = False
+            out_lines.append(f"<h1>{_html_seo.escape(line[2:].strip())}</h1>")
+        elif line.startswith("- "):
+            if not in_list: out_lines.append("<ul>"); in_list = True
+            out_lines.append(f"<li>{_inline_md(line[2:].strip())}</li>")
+        elif line.strip() == "":
+            if in_list: out_lines.append("</ul>"); in_list = False
+            out_lines.append("")
+        else:
+            if in_list: out_lines.append("</ul>"); in_list = False
+            out_lines.append(f"<p>{_inline_md(line)}</p>")
+    if in_list: out_lines.append("</ul>")
+    if in_code: out_lines.append("</code></pre>")
+    return "\n".join(out_lines)
+
+
+def _inline_md(s: str) -> str:
+    """Inline: **bold**, *italic*, [text](url), `code`."""
+    s = _html_seo.escape(s)
+    # [text](url) — url is already escaped above, but we want raw url
+    # Re-do: match the escaped form, leave url alone
+    s = _re_seo.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', s)
+    s = _re_seo.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
+    s = _re_seo.sub(r"\*([^*]+)\*", r"<em>\1</em>", s)
+    s = _re_seo.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+    return s
+
+
+def _load_all_blog_posts() -> list:
+    """Return all blog posts, newest first."""
+    if not BLOG_CONTENT_DIR.is_dir():
+        return []
+    posts = []
+    for f in BLOG_CONTENT_DIR.glob("*.md"):
+        p = _parse_blog_post(f)
+        if p:
+            posts.append(p)
+    posts.sort(key=lambda p: p.get("date") or "", reverse=True)
+    return posts
+
+
+def _canonical_url(path: str) -> str:
+    """Build the canonical URL for a public page. Sitemap uses
+    these to tell search engines about the page."""
+    return "https://photogen.ashbi.ca" + path
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    """Public robots.txt. Allow all + point at sitemap."""
+    return (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /admin/\n"
+        "Disallow: /api/\n"
+        f"Sitemap: {_canonical_url('/sitemap.xml')}\n"
+    ), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    """Public sitemap.xml. Lists the static pages + all blog posts.
+    Search engines read this to find all indexable URLs."""
+    base = _canonical_url("")
+    urls = [
+        ("/", "weekly", "1.0"),
+        ("/blog", "weekly", "0.9"),
+        ("/privacy", "monthly", "0.3"),
+    ]
+    for post in _load_all_blog_posts():
+        urls.append((f"/blog/{post['slug']}", "monthly", "0.7"))
+    root = _ET.Element("urlset", xmlns="http://www.sitemaps.org/schemas/sitemap/0.9")
+    for path, freq, prio in urls:
+        url = _ET.SubElement(root, "url")
+        _ET.SubElement(url, "loc").text = base + path
+        _ET.SubElement(url, "changefreq").text = freq
+        _ET.SubElement(url, "priority").text = prio
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + _ET.tostring(root, encoding="unicode")
+    return xml, 200, {"Content-Type": "application/xml; charset=utf-8"}
+
+
+@app.route("/blog")
+def blog_index():
+    """Public blog list. Renders a simple HTML page with each post's
+    title, description, and date."""
+    posts = _load_all_blog_posts()
+    items_html = "".join(
+        f'<li class="blog-list-item">'
+        f'<a href="/blog/{_html_seo.escape(p["slug"])}">'
+        f'{_html_seo.escape(p["title"])}</a>'
+        f'<p class="blog-list-meta">{_html_seo.escape(p["date"])} &middot; '
+        f'{_html_seo.escape(p["description"])}</p>'
+        f'</li>'
+        for p in posts
+    )
+    if not items_html:
+        items_html = '<li class="blog-list-item"><i>No posts yet. Check back soon.</i></li>'
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blog — Photogen</title>
+<meta name="description" content="Practical guides on AI product photography, CPG/DTC creative, and shipping ad campaigns faster.">
+<link rel="canonical" href="{_canonical_url('/blog')}">
+<meta property="og:title" content="Photogen Blog">
+<meta property="og:description" content="Practical guides on AI product photography and CPG/DTC creative.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{_canonical_url('/blog')}">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+body {{ max-width: 720px; margin: 40px auto; padding: 0 24px; color: var(--text, #1a1a1a); background: var(--bg, #fafafa); font: 16px/1.6 -apple-system, system-ui, sans-serif; }}
+h1 {{ font-size: 32px; margin: 0 0 8px; }}
+.lede {{ color: var(--text-2, #333); font-size: 18px; margin: 0 0 24px; }}
+.blog-list {{ list-style: none; padding: 0; }}
+.blog-list-item {{ padding: 20px 0; border-bottom: 1px solid var(--border, #eee); }}
+.blog-list-item:last-child {{ border-bottom: none; }}
+.blog-list-item a {{ color: var(--text, #1a1a1a); font-weight: 600; font-size: 20px; text-decoration: none; }}
+.blog-list-item a:hover {{ color: var(--accent, #6c63ff); }}
+.blog-list-meta {{ color: var(--text-3, #666); font-size: 14px; margin: 4px 0 0; }}
+.back {{ font-size: 14px; color: var(--accent, #6c63ff); }}
+</style>
+</head>
+<body>
+<p class="back"><a href="/">&larr; Photogen</a></p>
+<h1>Blog</h1>
+<p class="lede">Practical guides on AI product photography, CPG/DTC creative, and shipping ad campaigns faster.</p>
+<ul class="blog-list">{items_html}</ul>
+</body>
+</html>"""
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/blog/<slug>")
+def blog_post(slug):
+    """A single blog post. Renders with the same minimal style as
+    the index, plus JSON-LD structured data for SEO (Article schema
+    so Google can show the post with rich snippet metadata)."""
+    path = BLOG_CONTENT_DIR / f"{slug}.md"
+    post = _parse_blog_post(path)
+    if not post:
+        return f"<h1>Not found</h1><p>No post named {slug!r}.</p>", 404, {"Content-Type": "text/html; charset=utf-8"}
+    # Optional CTA: if the post has a template_id, link to the editor with
+    # that template pre-loaded. This is the SEO-to-product funnel.
+    cta_html = ""
+    if post.get("template_id"):
+        cta_html = (
+            f'<p class="cta"><a class="cta-btn" href="/app?template='
+            f'{_html_seo.escape(post["template_id"])}">Try this template in Photogen →</a></p>'
+        )
+    # JSON-LD structured data
+    jsonld = jsonify({
+        "@context": "https://schema.org",
+        "@type": "Article",
+        "headline": post["title"],
+        "description": post["description"],
+        "datePublished": post["date"],
+        "author": {"@type": "Organization", "name": "Photogen"},
+        "publisher": {"@type": "Organization", "name": "Photogen"},
+    }).get_data(as_text=True)
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{_html_seo.escape(post['title'])} — Photogen Blog</title>
+<meta name="description" content="{_html_seo.escape(post['description'])}">
+<link rel="canonical" href="{_canonical_url('/blog/' + post['slug'])}">
+<meta property="og:title" content="{_html_seo.escape(post['title'])}">
+<meta property="og:description" content="{_html_seo.escape(post['description'])}">
+<meta property="og:type" content="article">
+<meta property="og:url" content="{_canonical_url('/blog/' + post['slug'])}">
+<script type="application/ld+json">{jsonld}</script>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+body {{ max-width: 720px; margin: 40px auto; padding: 0 24px; color: var(--text, #1a1a1a); background: var(--bg, #fafafa); font: 16px/1.7 -apple-system, system-ui, sans-serif; }}
+h1 {{ font-size: 32px; margin: 16px 0 8px; line-height: 1.2; }}
+.meta {{ color: var(--text-3, #666); font-size: 14px; margin-bottom: 32px; }}
+.post-body h1, .post-body h2 {{ margin-top: 32px; }}
+.post-body p, .post-body ul {{ margin: 0 0 16px; }}
+.post-body code {{ background: var(--surface, #f5f5f5); padding: 2px 6px; border-radius: 4px; font: 14px ui-monospace, monospace; }}
+.back {{ font-size: 14px; color: var(--accent, #6c63ff); }}
+.tags {{ margin: 32px 0; }}
+.tag {{ display: inline-block; padding: 2px 10px; background: var(--surface, #f5f5f5); border-radius: 12px; font-size: 12px; color: var(--text-2, #555); margin-right: 6px; }}
+.cta {{ margin: 32px 0; padding: 20px; background: var(--surface, rgba(108,99,255,.08)); border-radius: 8px; text-align: center; }}
+.cta-btn {{ display: inline-block; padding: 10px 20px; background: var(--accent, #6c63ff); color: #fff; border-radius: 6px; text-decoration: none; font-weight: 600; }}
+</style>
+</head>
+<body>
+<p class="back"><a href="/blog">&larr; All posts</a></p>
+<h1>{_html_seo.escape(post['title'])}</h1>
+<p class="meta">{_html_seo.escape(post['date'])}</p>
+<div class="post-body">{post['body_html']}</div>
+{cta_html}
+{"<p class='tags'>" + "".join(f'<span class="tag">{_html_seo.escape(t)}</span>' for t in post['tags']) + "</p>" if post['tags'] else ""}
+</body>
+</html>"""
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 @app.route("/history")
 def history_page():
     """Show all past sessions from persistent data dir."""

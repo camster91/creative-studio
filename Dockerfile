@@ -16,6 +16,7 @@ COPY pyproject.toml uv.lock ./
 COPY scripts/ ./scripts/
 COPY templates/ ./templates/
 COPY static/ ./static/
+COPY content/ ./content/  # WS-5: SEO blog posts
 COPY launch.sh refine.sh ./
 COPY recipes/ ./recipes/
 
