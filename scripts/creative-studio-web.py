@@ -145,23 +145,77 @@ def _require_api_key() -> tuple:
     """Return (key, None) if a key is available, else (None, error_response).
 
     Returns a tuple of (Optional[str], Optional[Response]) so callers can do
-    `api_key, err = _require_api_key(); if err: return err`.
+    `api_key, err, used_trial_credit = _require_api_key(); if err: return err`.
+
+    Auth resolution order (WS-2):
+    1. X-API-Key header (per-request BYOK) — preferred, cost billed to user
+    2. Server fallback key (CREATIVE_ALLOW_SERVER_FALLBACK=true +
+       GEMINI_API_KEY env) — for the public demo
+    3. Signed-in user without a key → consume a trial credit
+       (`_use_trial_credit`). Returns the SERVER_API_KEY so the
+       generation still works, but with a flag the caller can use
+       to surface "you used 1 of 5 trial credits" in the response.
+       If credits are exhausted, returns 402 with the trial-expired
+       message.
+
+    Returns: (key, err, used_trial_credit) where used_trial_credit
+    is True if we burned a credit on this call. The third value
+    is None if err is not None.
     """
     key: Optional[str] = _get_api_key()
-    if not key:
-        return None, (
-            jsonify(
-                {
-                    "error": "BYOK required",
-                    "message": (
-                        "Add your Gemini API key in the editor sidebar. "
-                        "We don't store or train on your key — cost is billed directly to your Google account."
-                    ),
-                }
-            ),
-            402,
+    if key:
+        return key, None, False
+
+    # Try the trial-credit fallback
+    sess = _current_session()
+    if sess and sess.get("credits_remaining", 0) > 0:
+        ok, remaining = _use_trial_credit(sess["user_id"])
+        if ok:
+            # Use the server fallback key for the actual generation
+            if SERVER_API_KEY:
+                return SERVER_API_KEY, None, True
+            # Server has no fallback key but user is signed in
+            # with credits — weird state, but we should still
+            # surface a helpful error rather than silently 402.
+            return None, (
+                jsonify({
+                    "error": "Trial credit burned but no server-side API key configured",
+                    "message": "Set CREATIVE_ALLOW_SERVER_FALLBACK=true and GEMINI_API_KEY on the host.",
+                }),
+                500,
+            ), None
+
+    # No key, no credits — return 402
+    message = (
+        "Add your Gemini API key in the editor sidebar, "
+        "or sign up for a free Photogen account and use one of your 5 trial credits. "
+        "We don't store or train on your key — cost is billed directly to your Google account."
+    )
+    if sess and sess.get("credits_remaining", 0) == 0:
+        message = (
+            "Your 5 free trial credits are used up. "
+            "Add your own Gemini API key in the editor sidebar to keep going. "
+            "We don't store or train on your key — cost is billed directly to your Google account."
         )
-    return key, None
+    return None, (
+        jsonify({
+            "error": "BYOK or sign-in required",
+            "message": message,
+        }),
+        402,
+    ), None
+
+
+def _trial_credit_response_meta(user_email: str, remaining: int) -> dict:
+    """Return a small dict that callers can splat into their response to
+    tell the frontend that a trial credit was burned. The frontend
+    can update the credits badge without a refresh."""
+    return {
+        "trial_credit_used": True,
+        "credits_remaining": remaining,
+        "user_email": user_email,
+    }
+
 
 
 # Session / cost / output dirs
@@ -1479,7 +1533,7 @@ def api_generate():
         return cap
 
     # ── BYOK gate (applies to both sync and async paths) ──
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
 
@@ -1566,19 +1620,27 @@ def api_generate():
     costs["session_count"] = len(list(SESSIONS_DIR.glob("*.json")))
     save_costs(costs)
 
-    return jsonify(
-        {
-            "message": f"Generated {len(images)} image(s)",
-            "images": images,
-            "session_id": session_id,
-        }
-    )
+    response_payload = {
+        "message": f"Generated {len(images)} image(s)",
+        "images": images,
+        "session_id": session_id,
+    }
+    if used_trial_credit:
+        # Surface the credit burn so the frontend can update the badge
+        # without a refresh. Look up the user's current remaining count.
+        sess = _current_session()
+        if sess:
+            response_payload.update({
+                "trial_credit_used": True,
+                "credits_remaining": sess["credits_remaining"],
+            })
+    return jsonify(response_payload)
 
 
 @app.route("/api/jobs/<job_id>", methods=["GET"])
 @rate_limited
 def api_job_status(job_id):
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     with _jobs_lock:
@@ -1757,7 +1819,7 @@ def api_composite():
     cap = _enforce_prompt_length(prompt)
     if cap is not None:
         return cap
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
 
@@ -1897,7 +1959,7 @@ def api_qc():
 @app.route("/api/figma", methods=["POST"])
 @rate_limited
 def api_figma():
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     url = request.json.get("url")
@@ -1913,7 +1975,7 @@ def api_figma():
 @app.route("/api/refine", methods=["POST"])
 @rate_limited
 def api_refine():
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     data = request.json or {}
@@ -1956,7 +2018,7 @@ def api_refine():
 @app.route("/api/variations", methods=["POST"])
 @rate_limited
 def api_variations():
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     data = request.json or {}
@@ -2058,7 +2120,7 @@ def api_scene_set():
     Returns JSON {images: [...], message, session_id} where each image has
     scene (inhand|studio|action|lifestyle|withprops), label, url, cost, model.
     """
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
 
@@ -2164,7 +2226,7 @@ def api_scene_set():
 @app.route("/api/variations/<session_key>/refine", methods=["POST"])
 @rate_limited
 def api_variations_refine(session_key):
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     data = request.json or {}
@@ -2208,7 +2270,7 @@ def api_variations_refine(session_key):
 @app.route("/api/chat", methods=["POST"])
 @rate_limited
 def api_chat():
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     data = request.json or {}
@@ -2272,7 +2334,7 @@ def api_chat():
 @app.route("/api/chat/<session_key>/history", methods=["GET"])
 @rate_limited
 def api_chat_history(session_key):
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     history = chat_session_history(session_key)
@@ -2289,7 +2351,7 @@ def api_chat_history(session_key):
 @app.route("/api/chat/<session_key>/reset", methods=["POST"])
 @rate_limited
 def api_chat_reset(session_key):
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     chat_reset(session_key)
@@ -2346,7 +2408,7 @@ def _safe_pin_path(image_path: str) -> str:
 @app.route("/api/pins", methods=["POST"])
 @rate_limited
 def api_pins_add():
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     data = request.json or {}
@@ -2374,7 +2436,7 @@ def api_pins_add():
 @app.route("/api/pins/<path:image_path>", methods=["GET"])
 @rate_limited
 def api_pins_get(image_path):
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     image_path = _safe_pin_path(image_path)
@@ -2386,7 +2448,7 @@ def api_pins_get(image_path):
 @app.route("/api/pins/<path:image_path>/<pin_id>", methods=["DELETE"])
 @rate_limited
 def api_pins_delete(image_path, pin_id):
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     image_path = _safe_pin_path(image_path)
@@ -2403,7 +2465,7 @@ def api_pins_delete(image_path, pin_id):
 @app.route("/api/pins/<path:image_path>", methods=["DELETE"])
 @rate_limited
 def api_pins_clear(image_path):
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     image_path = _safe_pin_path(image_path)
@@ -2416,7 +2478,7 @@ def api_pins_clear(image_path):
 @app.route("/api/sessions", methods=["GET"])
 @rate_limited
 def api_sessions():
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     sessions = []
@@ -2438,7 +2500,7 @@ def api_sessions():
 @app.route("/api/session/<session_id>", methods=["GET"])
 @rate_limited
 def api_session_get(session_id):
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     data = load_session(session_id)
@@ -2455,7 +2517,7 @@ def api_session_get(session_id):
 @app.route("/api/costs", methods=["GET"])
 @rate_limited
 def api_costs():
-    api_key, err = _require_api_key()
+    api_key, err, used_trial_credit = _require_api_key()
     if err is not None:
         return err
     costs = load_costs()
