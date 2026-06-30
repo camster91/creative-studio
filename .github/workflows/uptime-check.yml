@@ -15,15 +15,19 @@ jobs:
           URL: https://photogen.ashbi.ca
         run: |
           set -e
-          code=$(curl -s -o /tmp/whoami.json -w "%{http_code}" "$URL/api/whoami")
+          # 90s timeout per request — the previous no-timeout curl could hang
+          # up to the job-level 5min limit and exit 28 (curl timeout default
+          # for `--connect-timeout` only, not total). --max-time caps total.
+          code=$(curl -s --max-time 90 -o /tmp/whoami.json -w "%{http_code}" "$URL/api/whoami")
           if [ "$code" != "200" ]; then
             echo "FAIL: $URL/api/whoami returned HTTP $code"
             cat /tmp/whoami.json 2>/dev/null || true
             exit 1
           fi
           # Verify the editor still renders (catches the bug class where
-          # /api/whoami works but the editor JS is broken)
-          html=$(curl -sf "$URL/app")
+          # /api/whoami works but the editor JS is broken). 90s timeout
+          # matches the /api/whoami check.
+          html=$(curl -sf --max-time 90 "$URL/app")
           for marker in "dropzone" "Generate" "scene"; do
             echo "$html" | grep -q "$marker" || (echo "FAIL: /app missing '$marker'"; exit 1)
           done
