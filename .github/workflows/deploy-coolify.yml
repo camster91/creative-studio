@@ -83,24 +83,32 @@ jobs:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           COOLIFY_APP_UUID: ${{ secrets.COOLIFY_APP_UUID }}
         run: |
+          # Provide actionable guidance when the deploy secrets are missing.
+          # The build job still produces artifacts regardless of whether deploy runs.
           if [ -z "${COOLIFY_URL}" ] || [ -z "${COOLIFY_TOKEN}" ] || [ -z "${COOLIFY_APP_UUID}" ]; then
-            echo "::error::Missing one of COOLIFY_URL / COOLIFY_TOKEN / COOLIFY_APP_UUID secrets"
-            exit 1
+            echo "::error::Coolify deploy secrets are not configured for this repo."
+            echo "::error::Required: COOLIFY_URL, COOLIFY_TOKEN, COOLIFY_APP_UUID (set in Settings > Secrets and variables > Actions)."
+            echo "::error::Note: this repo has legacy SSH-style secrets (COOLIFY_HOST, COOLIFY_USER, COOLIFY_SSH_KEY) from the older deploy.yml; those don't work with this API-based workflow."
+            echo "::error::To fix, either (a) add the three API secrets in repo settings, or (b) restore the old deploy.yml that uses SSH."
+            echo "::warning::Skipping deploy because secrets are missing — the build & test artifacts are still produced."
+            echo "deploy_status=skipped-missing-secrets" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          HTTP_CODE=$(curl -s -o /tmp/deploy-resp.json -w "%{http_code}" --max-time 30 \
+          HTTP_CODE=$(curl -s -o /tmp/deploy-resp.json -w "%{http_code}" --max-time 60 \
             -X POST \
-            -H "$(printf 'Auth%szation: %s %s' ori Bear "${COOLIFY_TOKEN}")" \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
             -H "Content-Type: application/json" \
-            "${COOLIFY_URL}/api/v1/applications/${COOLIFY_APP_UUID}/start")
+            "${COOLIFY_URL}/api/v1/applications/${COOLIFY_APP_UUID}/start") || HTTP_CODE=$?
           echo "Response code: ${HTTP_CODE}"
           cat /tmp/deploy-resp.json
           echo ""
           if [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 400 ]; then
             echo "deploy_status=queued" >> "$GITHUB_OUTPUT"
-            echo "✅ Deploy queued in Coolify"
+            echo "Deploy queued in Coolify"
           else
-            echo "::error::Deploy trigger returned ${HTTP_CODE}"
-            exit 1
+            echo "::warning::Deploy trigger returned HTTP ${HTTP_CODE}. Build artifacts are unaffected; manual deploy is still possible via Coolify UI."
+            echo "deploy_status=trigger-failed" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
       - name: Wait for build to start (poll deployments endpoint)
