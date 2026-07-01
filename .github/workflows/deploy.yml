@@ -86,10 +86,6 @@ jobs:
     name: Smoke test the new image
     runs-on: ubuntu-latest
     needs: build
-    services:
-      # We can't actually hit Gemini from CI without a real key, so we
-      # only test the parts of the app that don't require an upstream API:
-      # container boots, /api/whoami works, /api/costs works, / serves HTML.
     steps:
       - uses: actions/checkout@v4
 
