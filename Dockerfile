@@ -25,12 +25,11 @@ COPY recipes/ ./recipes/
 # so the import works regardless of the worker's cwd.
 RUN ln -s scripts/figma_utils.py figma_utils.py
 
-# Install dependencies as root first (uv needs write), then fix ownership
+# Install dependencies as root first (uv needs write), then create runtime
+# directories and hand the complete application tree to the unprivileged user.
 RUN uv sync --frozen --no-dev
-RUN chown -R appuser:appuser /app
-
-# Create writable directories for output
-RUN mkdir -p /app/data/sessions /app/outputs /app/data/uploads
+RUN mkdir -p /app/data/sessions /app/outputs /app/data/uploads \
+    && chown -R appuser:appuser /app
 
 # Environment
 ENV PYTHONUNBUFFERED=1
@@ -38,6 +37,9 @@ ENV FLASK_APP=scripts.creative-studio-web
 ENV PORT=5173
 ENV CREATIVE_OUTPUT_DIR=/app/outputs
 ENV CREATIVE_DATA_DIR=/app/data
+
+# Drop root privileges before serving user-supplied files or running helpers.
+USER appuser
 
 # The volume for persistent outputs + data
 VOLUME ["/app/outputs", "/app/data"]
