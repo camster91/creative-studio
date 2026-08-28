@@ -192,6 +192,11 @@ def test_informational_blueprint_preserves_public_routes(tmp_path):
     assert {"/status", "/docs", "/privacy", "/history"} <= routes
 
 
+def test_legacy_entrypoint_does_not_own_flask_routes():
+    source = (Path(__file__).parent.parent / "scripts" / "creative-studio-web.py").read_text()
+    assert "@app.route" not in source
+
+
 def test_magic_link_is_single_use_under_concurrency(tmp_path):
     database = tmp_path / "users.db"
     auth_service.init_schema(database)
