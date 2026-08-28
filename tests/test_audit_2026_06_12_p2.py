@@ -290,16 +290,16 @@ class TestSceneSetExtensionCheck:
         before extracting the extension — otherwise a path-traversal
         filename like `../../etc/passwd.png` would pass the check.
         """
-        src = (SCRIPT_DIR / "creative-studio-web.py").read_text()
-        # Find the api_scene_set function
-        idx = src.find("def api_scene_set():")
+        src = (SCRIPT_DIR.parent / "creative_studio_app" / "iteration_routes.py").read_text()
+        # Find the scene-set route in its owning blueprint.
+        idx = src.find("def scene_set():")
         assert idx != -1
         next_def = src.find("\ndef ", idx + 1)
         body = src[idx:next_def]
-        # The line that extracts the extension must use _safe_filename
+        # The line that extracts the extension must use the injected safe_filename
         # (not raw f.filename) on the path being inspected
-        assert "_safe_filename" in body, \
-            "scene-set extension check must use _safe_filename before ext extraction"
+        assert "safe_filename" in body, \
+            "scene-set extension check must use safe_filename before ext extraction"
         # And the unsafe `fname = f.filename or ""` pattern must be gone
         assert 'fname = f.filename or ""' not in body, \
             "scene-set still uses raw f.filename for extension check"
