@@ -49,6 +49,7 @@ from creative_studio_app.account_routes import create_blueprint as _create_accou
 from creative_studio_app.billing_routes import create_blueprint as _create_billing_blueprint
 from creative_studio_app.project_routes import create_blueprint as _create_project_blueprint
 from creative_studio_app.library_routes import create_blueprint as _create_library_blueprint
+from creative_studio_app.state_routes import create_blueprint as _create_state_blueprint
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -1778,128 +1779,6 @@ def _safe_pin_path(image_path: str) -> str:
     return image_path
 
 
-@app.route("/api/pins", methods=["POST"])
-@rate_limited
-def api_pins_add():
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    data = request.json or {}
-    image_path = _safe_pin_path(data.get("image_path", ""))
-    if not image_path:
-        return jsonify({"error": "image_path required (max 2KB)"}), 400
-    try:
-        x = float(data.get("x", 0.5))
-        y = float(data.get("y", 0.5))
-    except (TypeError, ValueError):
-        return jsonify({"error": "x and y must be numbers 0..1"}), 400
-    if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
-        return jsonify({"error": "x and y must be in [0, 1]"}), 400
-    text = data.get("text", "").strip()
-    if not text:
-        return jsonify({"error": "text required"}), 400
-    if len(text.encode("utf-8")) > 1000:
-        return jsonify({"error": "text too long (max 1000 bytes)"}), 400
-    pins = load_pins(image_path)
-    pins.append({"id": pin_id(), "x": x, "y": y, "text": text, "time": now_str()})
-    save_pins(image_path, pins)
-    return jsonify({"pins": pins})
-
-
-@app.route("/api/pins/<path:image_path>", methods=["GET"])
-@rate_limited
-def api_pins_get(image_path):
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    image_path = _safe_pin_path(image_path)
-    if not image_path:
-        return jsonify({"error": "image_path required"}), 400
-    return jsonify({"pins": load_pins(image_path)})
-
-
-@app.route("/api/pins/<path:image_path>/<pin_id>", methods=["DELETE"])
-@rate_limited
-def api_pins_delete(image_path, pin_id):
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    image_path = _safe_pin_path(image_path)
-    if not image_path:
-        return jsonify({"error": "image_path required"}), 400
-    safe_id = _safe_pin_id(pin_id)
-    if not safe_id:
-        return jsonify({"error": "pin_id must be hex (1-16 chars)"}), 400
-    pins = [p for p in load_pins(image_path) if p.get("id") != safe_id]
-    save_pins(image_path, pins)
-    return jsonify({"pins": pins})
-
-
-@app.route("/api/pins/<path:image_path>", methods=["DELETE"])
-@rate_limited
-def api_pins_clear(image_path):
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    image_path = _safe_pin_path(image_path)
-    if not image_path:
-        return jsonify({"error": "image_path required"}), 400
-    save_pins(image_path, [])
-    return jsonify({"pins": []})
-
-
-@app.route("/api/sessions", methods=["GET"])
-@rate_limited
-def api_sessions():
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    sessions = []
-    for p in sorted(
-        SESSIONS_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True
-    ):
-        data = load_json(p)
-        sessions.append(
-            {
-                "id": data.get("id", p.stem),
-                "created_at": data.get("created_at", ""),
-                "entries": data.get("entries", []),
-                "cost": sum(e.get("cost", 0) for e in data.get("entries", [])),
-            }
-        )
-    return jsonify({"sessions": sessions})
-
-
-@app.route("/api/session/<session_id>", methods=["GET"])
-@rate_limited
-def api_session_get(session_id):
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    data = load_session(session_id)
-    entries = []
-    for e in data.get("entries", []):
-        e2 = dict(e)
-        e2["image_url"] = e.get("image_url", "")
-        entries.append(e2)
-    return jsonify(
-        {"id": session_id, "entries": entries, "created_at": data.get("created_at", "")}
-    )
-
-
-@app.route("/api/costs", methods=["GET"])
-@rate_limited
-def api_costs():
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    costs = load_costs()
-    costs["session_count"] = len(list(SESSIONS_DIR.glob("*.json")))
-    today = datetime.now().strftime("%Y-%m-%d")
-    costs["today"] = costs.get("by_date", {}).get(today, 0.0)
-    return jsonify(costs)
-
-
 # ── Waitlist (WS-1 — public landing page lead capture) ───────────────────
 # Stores emails in a flat JSON file. No DB, no Stripe, no auth.
 # Lives in /app/data/waitlist.json (DATA_DIR). The format is just a list
@@ -2342,6 +2221,22 @@ app.register_blueprint(
     _create_library_blueprint(
         get_output_dir=lambda: OUTPUT_DIR,
         current_session=_current_session,
+        rate_limited=rate_limited,
+    )
+)
+app.register_blueprint(
+    _create_state_blueprint(
+        require_api_key=_require_api_key,
+        safe_pin_path=_safe_pin_path,
+        safe_pin_id=_safe_pin_id,
+        load_pins=load_pins,
+        save_pins=save_pins,
+        new_pin_id=pin_id,
+        now=now_str,
+        get_sessions_dir=lambda: SESSIONS_DIR,
+        load_json=load_json,
+        load_session=load_session,
+        load_costs=load_costs,
         rate_limited=rate_limited,
     )
 )
