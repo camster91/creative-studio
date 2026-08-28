@@ -39,6 +39,8 @@ from creative_studio_app.informational import (
     render_history as _render_history,
     render_status as _render_status,
 )
+from creative_studio_app import auth as _auth_service
+from creative_studio_app import projects as _project_service
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -1086,244 +1088,15 @@ if not app.debug:
         logging.basicConfig(level=logging.WARNING)
         app.logger.warning("Failed to attach rotating file handler: %s", _e)
 
-# ── Auth — magic-link signup/login + session-based BYOK gate ─────────────
-# WS-2: photogen.ashbi.ca needs user accounts before any paid feature
-# can ship. This block replaces the header-only BYOK flow with a
-# session-based flow: signed-in users get a 5-credit free trial even
-# without a Gemini API key. The magic link avoids password complexity
-# and is the cheapest auth shape to ship.
-#
-# Data: users.db (SQLite) in DATA_DIR. Tables: users, sessions,
-# magic_link_tokens. Sessions last 7 days by default. Magic link
-# tokens expire in 1 hour.
-#
-# When WS-6 (Stripe) ships, the users table gets credits_remaining +
-# credits_used_per_day columns, and the trial becomes 5 credits once
-# instead of 5 per signup.
-import sqlite3 as _sqlite3
-import secrets as _secrets
-import hashlib as _hashlib
-
-AUTH_DB = DATA_DIR / "users.db"
-AUTH_DB.parent.mkdir(parents=True, exist_ok=True)
-AUTH_DB.touch(exist_ok=True)
-
-_SESSION_DAYS = 7
-_MAGIC_LINK_MINUTES = 60
-_FREE_TRIAL_CREDITS = 5
-
-
-def _auth_db() -> _sqlite3.Connection:
-    """Get a thread-local connection. SQLite threadsafety is off
-    globally (the default), but gunicorn -w 1 means we never have
-    concurrent writes on this file. We open a connection per
-    request so each call gets its own read-snapshot."""
-    conn = _sqlite3.connect(str(AUTH_DB))
-    conn.row_factory = _sqlite3.Row
-    return conn
-
-
-def _init_auth_schema():
-    """Create tables if they don't exist. Idempotent — called at module
-    import time and on every boot."""
-    with _auth_db() as db:
-        db.executescript("""
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            created_at TEXT NOT NULL,
-            credits_remaining INTEGER NOT NULL DEFAULT 0,
-            credits_used_today INTEGER NOT NULL DEFAULT 0,
-            last_trial_date TEXT
-        );
-        CREATE TABLE IF NOT EXISTS sessions (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            created_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            user_agent TEXT,
-            last_seen_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS magic_link_tokens (
-            token TEXT PRIMARY KEY,
-            email TEXT NOT NULL COLLATE NOCASE,
-            created_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            used INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-        CREATE INDEX IF NOT EXISTS idx_magic_email ON magic_link_tokens(email);
-
-        -- WS-4: projects table. Each project is a user-owned "workspace"
-        -- that bundles a hero image + a JSON list of generations
-        -- (urls + prompts + costs). Lazy by design: a project exists
-        -- as soon as the user creates it; generations are added as
-        -- the user runs them. The frontend can hit /api/projects/<id>
-        -- to get the full project data, or /api/projects/<id>/export
-        -- to download a zip.
-        CREATE TABLE IF NOT EXISTS projects (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            name TEXT NOT NULL DEFAULT 'Untitled project',
-            hero_url TEXT,
-            generations_json TEXT NOT NULL DEFAULT '[]',
-            source_session_id TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
-        """)
-        # WS-6: ALTER TABLE for subscription columns. SQLite doesn't
-        # support IF NOT EXISTS for columns, so we check pragma
-        # table_info and add only what is missing. Idempotent.
-        existing_cols = {row[1] for row in db.execute("PRAGMA table_info(users)")}
-        for col, decl in [
-            ("stripe_customer_id",     "TEXT"),
-            ("stripe_subscription_id", "TEXT"),
-            ("subscription_tier",      "TEXT"),  # 'starter' | 'pro' | 'studio' | NULL
-            ("subscription_status",    "TEXT"),  # 'active' | 'past_due' | 'canceled' | 'trialing' | NULL
-            ("subscription_renews_at", "TEXT"),
-            ("credits_remaining",      "INTEGER NOT NULL DEFAULT 0"),
-            ("credits_used_today",     "INTEGER NOT NULL DEFAULT 0"),
-            ("last_trial_date",        "TEXT"),
-        ]:
-            if col not in existing_cols:
-                db.execute(f"ALTER TABLE users ADD COLUMN {col} {decl}")
-        db.commit()
-
-
-_init_auth_schema()
-
-
-def _now_iso() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _create_magic_link_token(email: str) -> str:
-    """Generate a one-time magic link token. Returns the raw token
-    (stored hashed) — the caller must email it to the user."""
-    raw = _secrets.token_urlsafe(32)
-    token_hash = _hashlib.sha256(raw.encode()).hexdigest()
-    now = _now_iso()
-    expires_dt = datetime.now() + timedelta(minutes=_MAGIC_LINK_MINUTES)
-    expires = expires_dt.strftime("%Y-%m-%d %H:%M:%S")
-    with _auth_db() as db:
-        db.execute(
-            "INSERT INTO magic_link_tokens (token, email, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (token_hash, email.lower().strip(), now, expires))
-        db.commit()
-    return raw
-
-
-def _consume_magic_link(token: str) -> dict | None:
-    """Validate a magic link token. If valid and unexpired, create or
-    find the user, create a session, and return the session dict.
-    Returns None if the token is invalid/expired/used.
-    The token is consumed (used=1) after this call."""
-    token_hash = _hashlib.sha256(token.encode()).hexdigest()
-    now = _now_iso()
-    with _auth_db() as db:
-        row = db.execute(
-            "SELECT * FROM magic_link_tokens WHERE token = ? AND expires_at > ? AND used = 0",
-            (token_hash, now),
-        ).fetchone()
-        if not row:
-            return None
-        # Mark token as used
-        db.execute("UPDATE magic_link_tokens SET used = 1 WHERE token = ?", (token_hash,))
-        # Create or find the user
-        email = row["email"]
-        user = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-        if not user:
-            uid = _secrets.token_hex(16)
-            db.execute(
-                "INSERT INTO users (id, email, created_at, credits_remaining) VALUES (?, ?, ?, ?)",
-                (uid, email, now, _FREE_TRIAL_CREDITS))
-            user = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-            assert user, "just created user not found"
-        else:
-            # Returning user. If they've run out of credits from a
-            # previous trial, don't give them more — the trial is
-            # once-per-account, not once-per-login.
-            pass
-        # Create session
-        sid = _secrets.token_hex(32)
-        expires_dt = datetime.now() + timedelta(days=_SESSION_DAYS)
-        expires = expires_dt.strftime("%Y-%m-%d %H:%M:%S")
-        db.execute(
-            "INSERT INTO sessions (id, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
-            (sid, user["id"], now, expires, now))
-        db.commit()
-        return {
-            "id": sid,
-            "user_id": user["id"],
-            "email": user["email"],
-            "credits_remaining": user["credits_remaining"],
-            "expires_at": expires,
-        }
-
-
-def _session_from_cookie(cookie: str) -> dict | None:
-    """Look up the session from a client-supplied cookie value.
-    Returns the session dict or None if expired/invalid."""
-    now = _now_iso()
-    with _auth_db() as db:
-        row = db.execute(
-            "SELECT * FROM sessions WHERE id = ? AND expires_at > ?",
-            (cookie, now),
-        ).fetchone()
-        if not row:
-            return None
-        # Touch the last_seen_at
-        db.execute("UPDATE sessions SET last_seen_at = ? WHERE id = ?", (now, cookie))
-        db.commit()
-        user = db.execute("SELECT * FROM users WHERE id = ?", (row["user_id"],)).fetchone()
-        if not user:
-            return None
-        return {
-            "id": row["id"],
-            "user_id": user["id"],
-            "email": user["email"],
-            "credits_remaining": user["credits_remaining"],
-            "expires_at": row["expires_at"],
-        }
-
-
-def _current_session() -> dict | None:
-    """Return the session dict for the current request (read from the
-    X-Session-Token header), or None if none / invalid."""
-    token = request.headers.get("X-Session-Token", "").strip()
-    if not token:
-        return None
-    return _session_from_cookie(token)
-
-
-def _use_trial_credit(user_id: str) -> tuple[bool, int]:
-    """Try to deduct one trial credit from the user's balance.
-    Also increments credits_used_today. Returns (success, remaining)."""
-    with _auth_db() as db:
-        user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-        if not user:
-            return False, 0
-        remaining = user["credits_remaining"] or 0
-        if remaining <= 0:
-            return False, 0
-        db.execute(
-            "UPDATE users SET credits_remaining = ?, credits_used_today = credits_used_today + 1 WHERE id = ?",
-            (remaining - 1, user_id))
-        db.commit()
-        return True, remaining - 1
-
-
-# ── Projects (WS-4) — user-owned workspaces with generations ────────────
-# Each project is a JSON-backed record of (name, hero image, list of
-# generations). Auto-saved when the user clicks "save to project" in
-# the editor. Lazy: a project exists as soon as POST /api/projects
-# is called; generations get added one at a time. The killer feature
-# is /api/projects/<id>/export which zips up the project for download.
+# ── Auth and project persistence services ───────────────────────────────
 import zipfile as _zipfile
 import io as _io
 import json as _json_projects
+
+AUTH_DB = DATA_DIR / "users.db"
+_SESSION_DAYS = 7
+_MAGIC_LINK_MINUTES = 60
+_FREE_TRIAL_CREDITS = 5
 
 _PROJECTS_MAX_PER_USER = 200
 _PROJECT_NAME_MAX = 200
@@ -1331,149 +1104,104 @@ _GENERATION_URL_MAX = 2000
 _GENERATION_PROMPT_MAX = 4000
 
 
+def _auth_db():
+    return _auth_service.connect(AUTH_DB)
+
+
+def _init_auth_schema():
+    _auth_service.init_schema(AUTH_DB)
+
+
+_init_auth_schema()
+
+
+def _now_iso() -> str:
+    return _auth_service.now_iso()
+
+
+def _create_magic_link_token(email: str) -> str:
+    return _auth_service.create_magic_link(AUTH_DB, email, _MAGIC_LINK_MINUTES)
+
+
+def _consume_magic_link(token: str) -> dict | None:
+    return _auth_service.consume_magic_link(
+        AUTH_DB,
+        token,
+        session_days=_SESSION_DAYS,
+        free_trial_credits=_FREE_TRIAL_CREDITS,
+    )
+
+
+def _session_from_cookie(cookie: str) -> dict | None:
+    return _auth_service.session_from_token(AUTH_DB, cookie)
+
+
+def _current_session() -> dict | None:
+    token = request.headers.get("X-Session-Token", "").strip()
+    return _session_from_cookie(token) if token else None
+
+
+def _use_trial_credit(user_id: str) -> tuple[bool, int]:
+    return _auth_service.use_trial_credit(AUTH_DB, user_id)
+
+
 def _parse_generations_json(raw: str) -> list:
-    """The generations column is a JSON string. Parse defensively
-    (corrupt row → empty list) so a single bad row doesn't take
-    down the whole sidebar."""
-    if not raw:
-        return []
-    try:
-        v = _json_projects.loads(raw)
-        return v if isinstance(v, list) else []
-    except (ValueError, TypeError):
-        return []
+    return _project_service.parse_generations(raw)
 
 
 def _serialize_project_row(row, include_generations: bool = True) -> dict:
-    """Build the public-facing project dict. Defaults to
-    include_generations=True; pass False for sidebar list views
-    where you only need metadata (faster)."""
-    out = {
-        "id": row["id"],
-        "name": row["name"],
-        "hero_url": row["hero_url"],
-        "source_session_id": row["source_session_id"],
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
-    }
-    if include_generations:
-        out["generations"] = _parse_generations_json(row["generations_json"])
-    return out
+    return _project_service.serialize(row, include_generations)
 
 
 def _create_project(user_id: str, name: str, source_session_id: str = None) -> dict:
-    """Create a new project for the user. Caps at _PROJECTS_MAX_PER_USER
-    (oldest by created_at get deleted to make room)."""
-    name = (name or "Untitled project").strip()[:_PROJECT_NAME_MAX]
-    pid = _secrets.token_hex(16)
-    now = _now_iso()
-    with _auth_db() as db:
-        # Cap: if user is at limit, delete the oldest
-        count = db.execute(
-            "SELECT COUNT(*) AS n FROM projects WHERE user_id = ?", (user_id,)
-        ).fetchone()["n"]
-        if count >= _PROJECTS_MAX_PER_USER:
-            oldest = db.execute(
-                "SELECT id FROM projects WHERE user_id = ? ORDER BY created_at ASC LIMIT 1",
-                (user_id,),
-            ).fetchone()
-            if oldest:
-                db.execute("DELETE FROM projects WHERE id = ?", (oldest["id"],))
-        db.execute(
-            """INSERT INTO projects (id, user_id, name, hero_url, generations_json,
-                                     source_session_id, created_at, updated_at)
-               VALUES (?, ?, ?, NULL, '[]', ?, ?, ?)""",
-            (pid, user_id, name, source_session_id, now, now))
-        db.commit()
-    return {"id": pid, "name": name, "hero_url": None,
-            "source_session_id": source_session_id,
-            "created_at": now, "updated_at": now, "generations": []}
+    return _project_service.create(
+        AUTH_DB,
+        user_id,
+        name,
+        source_session_id,
+        max_projects=_PROJECTS_MAX_PER_USER,
+        name_max=_PROJECT_NAME_MAX,
+    )
 
 
 def _get_project(project_id: str) -> dict:
-    """Get a project by id (no user check). Returns None if not found."""
-    with _auth_db() as db:
-        row = db.execute(
-            "SELECT * FROM projects WHERE id = ?", (project_id,),
-        ).fetchone()
-    if not row:
-        return None
-    return _serialize_project_row(row)
+    return _project_service.get(AUTH_DB, project_id)
 
 
 def _get_project_for_user(project_id: str, user_id: str) -> dict:
-    """Get a project but verify the user owns it. Returns None if
-    not found OR if the user doesn't own it. Used for /api/projects
-    reads to avoid leaking another user's data."""
-    with _auth_db() as db:
-        row = db.execute(
-            "SELECT * FROM projects WHERE id = ? AND user_id = ?",
-            (project_id, user_id),
-        ).fetchone()
-    if not row:
-        return None
-    return _serialize_project_row(row)
+    return _project_service.get(AUTH_DB, project_id, user_id)
 
 
 def _list_projects_for_user(user_id: str, include_generations: bool = False) -> list:
-    """List the user's projects, newest first. Skips generations
-    for the sidebar list view (faster)."""
-    with _auth_db() as db:
-        rows = db.execute(
-            """SELECT * FROM projects WHERE user_id = ?
-                  ORDER BY updated_at DESC, id DESC LIMIT 200""",
-            (user_id,),
-        ).fetchall()
-    return [_serialize_project_row(r, include_generations=include_generations)
-            for r in rows]
+    return _project_service.list_for_user(AUTH_DB, user_id, include_generations)
 
 
-def _add_generation_to_project(project_id: str, user_id: str,
-                              url: str, prompt: str, cost: float = 0,
-                              model: str = "", ratio: str = "") -> dict:
-    """Append a generation to a project's generations list. Returns
-    the updated project, or None if the project doesn't exist or
-    the user doesn't own it."""
-    url = (url or "").strip()[:_GENERATION_URL_MAX]
-    prompt = (prompt or "").strip()[:_GENERATION_PROMPT_MAX]
-    if not url:
-        return None
-    with _auth_db() as db:
-        row = db.execute(
-            "SELECT * FROM projects WHERE id = ? AND user_id = ?",
-            (project_id, user_id),
-        ).fetchone()
-        if not row:
-            return None
-        generations = _parse_generations_json(row["generations_json"])
-        generations.append({
-            "url": url,
-            "prompt": prompt,
-            "cost": float(cost) if cost else 0,
-            "model": model,
-            "ratio": ratio,
-            "added_at": _now_iso(),
-        })
-        # Set the project's hero_url to the first generation if not set
-        new_hero = row["hero_url"] or url
-        db.execute(
-            "UPDATE projects SET generations_json = ?, hero_url = ?, updated_at = ? WHERE id = ?",
-            (_json_projects.dumps(generations), new_hero, _now_iso(), project_id))
-        db.commit()
-    return _get_project(project_id)
+def _add_generation_to_project(
+    project_id: str,
+    user_id: str,
+    url: str,
+    prompt: str,
+    cost: float = 0,
+    model: str = "",
+    ratio: str = "",
+) -> dict:
+    return _project_service.add_generation(
+        AUTH_DB,
+        project_id,
+        user_id,
+        url=url,
+        prompt=prompt,
+        cost=cost,
+        model=model,
+        ratio=ratio,
+        url_max=_GENERATION_URL_MAX,
+        prompt_max=_GENERATION_PROMPT_MAX,
+    )
 
 
 def _delete_project(project_id: str, user_id: str) -> bool:
-    with _auth_db() as db:
-        row = db.execute(
-            "SELECT id FROM projects WHERE id = ? AND user_id = ?",
-            (project_id, user_id),
-        ).fetchone()
-        if not row:
-            return False
-        db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
-        db.commit()
-    return True
+    return _project_service.delete(AUTH_DB, project_id, user_id)
+
 
 
 # ── Simple in-memory rate limiter ───────────────────────────────────────

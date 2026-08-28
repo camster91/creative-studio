@@ -21,6 +21,8 @@ from creative_studio_app.costs import (
 )
 from creative_studio_app.seo import markdown_to_html, parse_blog_post
 from creative_studio_app.informational import render_docs, render_history, render_status
+from creative_studio_app import auth as auth_service
+from creative_studio_app import projects as project_service
 
 
 def test_job_ids_are_unique_and_prefixed():
@@ -175,3 +177,80 @@ def test_legacy_informational_routes_remain_available():
     source = (Path(__file__).parent.parent / "scripts" / "creative-studio-web.py").read_text()
     for route in ('/status', '/docs', '/history'):
         assert f'@app.route("{route}")' in source
+
+
+def test_magic_link_is_single_use_under_concurrency(tmp_path):
+    database = tmp_path / "users.db"
+    auth_service.init_schema(database)
+    token = auth_service.create_magic_link(database, "person@example.com", 60)
+    results = []
+    result_lock = threading.Lock()
+
+    def consume():
+        result = auth_service.consume_magic_link(
+            database, token, session_days=7, free_trial_credits=2
+        )
+        with result_lock:
+            results.append(result)
+
+    threads = [threading.Thread(target=consume) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sum(result is not None for result in results) == 1
+
+
+def test_trial_credits_cannot_be_overspent_concurrently(tmp_path):
+    database = tmp_path / "users.db"
+    auth_service.init_schema(database)
+    token = auth_service.create_magic_link(database, "person@example.com", 60)
+    session = auth_service.consume_magic_link(
+        database, token, session_days=7, free_trial_credits=2
+    )
+    results = []
+    threads = [
+        threading.Thread(
+            target=lambda: results.append(
+                auth_service.use_trial_credit(database, session["user_id"])
+            )
+        )
+        for _ in range(5)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sum(ok for ok, _ in results) == 2
+    assert auth_service.use_trial_credit(database, session["user_id"]) == (False, 0)
+
+
+def test_project_service_enforces_ownership(tmp_path):
+    database = tmp_path / "users.db"
+    auth_service.init_schema(database)
+    with auth_service.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO users (id,email,created_at) VALUES ('owner','o@example.com','now')"
+        )
+        connection.commit()
+    project = project_service.create(
+        database, "owner", "Campaign", None, max_projects=10, name_max=200
+    )
+    updated = project_service.add_generation(
+        database,
+        project["id"],
+        "owner",
+        url="/image/one.png",
+        prompt="prompt",
+        cost=0.1,
+        model="model",
+        ratio="1:1",
+        url_max=2000,
+        prompt_max=4000,
+    )
+
+    assert updated["generations"][0]["url"] == "/image/one.png"
+    assert project_service.get(database, project["id"], "intruder") is None
+    assert project_service.delete(database, project["id"], "intruder") is False
