@@ -122,7 +122,7 @@
     <section class="field-group">
       <label class="field-label" for="prompt">Scene</label>
       <textarea id="prompt" class="prompt-input" rows="4" placeholder="Premium protein tub on a clean oak shelf, warm overhead lighting, shallow depth of field"></textarea>
-      <div class="preset-row preset-row-scenes" id="presetRow" role="tablist" aria-label="Scene types">
+      <div class="preset-row preset-row-scenes" id="presetRow" role="group" aria-label="Scene types">
         <button class="chip chip-scene" data-preset="inhand" type="button">In-hand</button>
         <button class="chip chip-scene" data-preset="studio" type="button">Studio</button>
         <button class="chip chip-scene" data-preset="action" type="button">Action</button>
@@ -137,7 +137,7 @@
           <span class="templates-label">Templates</span>
           <span class="templates-hint">Curated presets for common placements — click to load</span>
         </div>
-        <div class="templates-row" id="templatesRow" role="tablist"></div>
+        <div class="templates-row" id="templatesRow" role="group"></div>
       </div>
     </section>
 
@@ -178,6 +178,7 @@
         <span class="btn-label" id="genLabel">Generate</span>
         <span class="btn-meta" id="genMeta"></span>
       </button>
+      <p class="generation-status" id="generationStatus" role="status" aria-live="polite"></p>
       <button class="btn-scene-set" id="sceneSetBtn" type="button" hidden>
         <span class="scene-set-label">Generate all 5 scenes</span>
         <span class="scene-set-meta" id="sceneSetMeta">~$0.25 · ~2 min</span>
@@ -200,7 +201,7 @@
     </section>
 
     <!-- Output -->
-    <div class="output-stage" id="outputStage">
+    <div class="output-stage" id="outputStage" aria-busy="false">
       <div class="output-empty" id="outputEmpty">
         <div class="output-empty-frame">
           <div class="frame-grid"></div>
@@ -238,14 +239,14 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <!-- Lightbox (reused for output + gallery) -->
-<div class="lightbox" id="lightbox" hidden>
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Generated image preview" hidden>
   <button class="lightbox-close" id="lightboxClose" aria-label="Close">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
   </button>
   <button class="lightbox-nav lightbox-prev" id="lightboxPrev" aria-label="Previous">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
   </button>
-  <img class="lightbox-img" id="lightboxImg" alt="">
+  <img class="lightbox-img" id="lightboxImg" alt="Generated image preview">
   <button class="lightbox-nav lightbox-next" id="lightboxNext" aria-label="Next">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
   </button>

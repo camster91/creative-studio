@@ -123,6 +123,21 @@ prompt sent to Gemini; tokens, file keys, and file content are never written to
 request logs. Provider 429 responses are surfaced without automatic retry so
 the caller can respect Figma's plan- and endpoint-specific limits.
 
+## Browser release gate
+
+`npm test` runs a bounded Chromium release gate covering WCAG 2.2 AA automated
+checks, keyboard operation, minimum target size, reduced motion, phone/tablet/
+desktop layouts, 200%/400%-equivalent reflow, and horizontal workflow overflow.
+It also compares a reviewed desktop screenshot and enforces local deterministic
+budgets: DOMContentLoaded under 1.5 seconds, JavaScript under 180 KB, CSS under
+120 KB, fewer than 900 initial DOM nodes, and insertion of 200 synthetic
+session cards under 100 ms. Fixtures contain no customer content.
+
+The baseline may be updated with `npm run test:ui` only when the visual change
+is intentional and the resulting image is reviewed in the pull request. Do not
+bulk-regenerate or accept a baseline solely to make CI green. The CI browser job
+is capped at ten minutes and installs only Chromium.
+
 Creative lineage is stored separately in `versions.db`. Existing JSON sessions
 remain the rollback source and are imported only after their recorded owner
 authenticates; migration never rewrites them. `CREATIVE_VERSION_GRAPH_ENABLED`

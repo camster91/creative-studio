@@ -48,3 +48,21 @@ jobs:
         run: python -m pytest tests/ -q
       - name: Validate browser JavaScript
         run: node --check static/app.js
+
+  browser:
+    name: Browser release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - run: python -m venv .venv && .venv/bin/python -m pip install -e '.[test]'
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
