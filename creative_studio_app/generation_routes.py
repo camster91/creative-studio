@@ -32,11 +32,13 @@ def create_blueprint(
     max_job_cost: float,
     rate_limited: Callable,
     durable_jobs_enabled: bool = True,
+    validate_version_parent: Callable = lambda *_args: True,
+    current_version_node: Callable = lambda *_args: None,
 ) -> Blueprint:
     blueprint = Blueprint("generation_routes", __name__)
 
-    def record(session_id: str, mode: str, prompt: str, aspect: str, image: dict, owner_id: str):
-        add_entry(
+    def record(session_id: str, mode: str, prompt: str, aspect: str, image: dict, owner_id: str, parent_node_id=None):
+        node_id = add_entry(
             session_id,
             {
                 "type": mode,
@@ -46,9 +48,11 @@ def create_blueprint(
                 "model": image.get("model", ""),
                 "ratio": image.get("ratio", aspect),
                 "note": f"{image.get('name', '')} ({image.get('model', '')})",
+                "parent_node_id": parent_node_id,
             },
             owner_id,
         )
+        image["version_node_id"] = node_id
 
     def persist_session_count():
         costs = load_costs()
@@ -69,6 +73,7 @@ def create_blueprint(
         if error is not None:
             return error
         owner_id = current_actor_id()
+        parent_node_id = data.get("parent_node_id") or None
         try:
             variations = int(data.get("variations", 1))
         except (TypeError, ValueError):
@@ -79,6 +84,9 @@ def create_blueprint(
         tier = data.get("tier", "balanced")
         aspect = data.get("aspect_ratio", "16:9")
         session_id = data.get("session_id", new_session_id())
+        parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
+        if not validate_version_parent(session_id, owner_id, parent_node_id):
+            return jsonify({"error": "Parent version not found"}), 404
         limit_error = enforce_daily_limit(variations, tier)
         if limit_error is not None:
             return limit_error
@@ -153,7 +161,10 @@ def create_blueprint(
                             "message": "Image provider failed before the batch completed",
                         }
                     image = batch[0]
-                    record(session_id, mode, prompt, aspect, image, owner_id)
+                    record(
+                        session_id, mode, prompt, aspect, image, owner_id,
+                        parent_node_id,
+                    )
                     images.append(image)
                     partial = {
                         "images": images.copy(),
@@ -202,7 +213,10 @@ def create_blueprint(
         )
         for image in images:
             if "error" not in image:
-                record(session_id, mode, prompt, aspect, image, owner_id)
+                record(
+                    session_id, mode, prompt, aspect, image, owner_id,
+                    parent_node_id,
+                )
         persist_session_count()
         payload = {
             "message": f"Generated {len(images)} image(s)",

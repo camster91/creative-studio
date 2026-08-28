@@ -26,6 +26,8 @@ def create_blueprint(
     add_entry: Callable[[str, dict], None],
     image_url: Callable[[str], str],
     rate_limited: Callable,
+    validate_version_parent: Callable = lambda *_args: True,
+    current_version_node: Callable = lambda *_args: None,
 ) -> Blueprint:
     blueprint = Blueprint("chat_routes", __name__)
 
@@ -58,6 +60,10 @@ def create_blueprint(
         if owned_chat(session_key, actor_id) is None and session_key in get_chat_sessions():
             return jsonify({"error": "Chat session not found"}), 404
         session_id = data.get("session_id", new_session_id())
+        parent_node_id = data.get("parent_node_id") or None
+        parent_node_id = parent_node_id or current_version_node(session_id, actor_id)
+        if not validate_version_parent(session_id, actor_id, parent_node_id):
+            return jsonify({"error": "Parent version not found"}), 404
         input_image = None
         if "image" in request.files:
             try:
@@ -75,7 +81,7 @@ def create_blueprint(
         session["_owner_id"] = actor_id
         for image in images:
             if "error" not in image:
-                add_entry(
+                node_id = add_entry(
                     session_id,
                     {
                         "type": "chat",
@@ -84,8 +90,11 @@ def create_blueprint(
                         "image_url": image.get("url", ""),
                         "model": image.get("model", ""),
                         "note": f"Turn {image.get('turn', '?')}",
+                        "parent_node_id": parent_node_id,
                     },
+                    actor_id,
                 )
+                image["version_node_id"] = node_id
         return jsonify(
             {
                 "message": "Turn complete",

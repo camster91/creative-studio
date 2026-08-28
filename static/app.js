@@ -16,7 +16,17 @@ const state = {
   lastPrompt: '',
   apiKey: '',
   costToday: 0,
+  sessionId: localStorage.getItem('cs_session_id') || '',
+  currentVersionNode: null,
 };
+
+if (!state.sessionId) {
+  const bytes = new Uint8Array(4);
+  if (globalThis.crypto && crypto.getRandomValues) crypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  state.sessionId = 'sess_' + Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+  localStorage.setItem('cs_session_id', state.sessionId);
+}
 
 // ── API Key (BYOK) ──────────────────────────────────────────────
 const API_KEY_STORAGE = 'cs_api_key';
@@ -25,10 +35,12 @@ const saveApiKey = (key) => localStorage.setItem(API_KEY_STORAGE, key);
 
 function updateFetchOptions(opts = {}) {
   const key = loadApiKey();
+  const sessionToken = localStorage.getItem('photogen_session') || '';
+  opts.headers = opts.headers || {};
   if (key) {
-    opts.headers = opts.headers || {};
     opts.headers['X-API-Key'] = key;
   }
+  if (sessionToken) opts.headers['X-Session-Token'] = sessionToken;
   return opts;
 }
 
@@ -123,7 +135,57 @@ async function initKeyState() {
     else setKeyState('required');
   } catch (e) { setKeyState('required'); }
 }
-initKeyState();
+initKeyState().then(() => refreshVersionGraph({ recover: true }));
+
+const versionBar = $('versionBar');
+const versionLabel = $('versionLabel');
+const versionCost = $('versionCost');
+const versionUndo = $('versionUndo');
+const versionFavorite = $('versionFavorite');
+
+async function refreshVersionGraph({ recover = false } = {}) {
+  if (!loadApiKey() && !localStorage.getItem('photogen_session')) return;
+  try {
+    const response = await fetch(`/api/session/${state.sessionId}/versions`, updateFetchOptions());
+    if (!response.ok) return;
+    const graph = await response.json();
+    state.currentVersionNode = graph.current_node_id;
+    versionBar.hidden = false;
+    const current = graph.nodes.find(node => node.id === graph.current_node_id);
+    versionLabel.textContent = `${graph.nodes.length} version${graph.nodes.length === 1 ? '' : 's'}`;
+    versionCost.textContent = `Branch $${Number(graph.branch_cost || 0).toFixed(2)} · Total $${Number(graph.cumulative_cost || 0).toFixed(2)}`;
+    versionUndo.disabled = !current || !current.parent_id;
+    versionFavorite.disabled = !current;
+    versionFavorite.textContent = current && current.favorite ? 'Favorited' : 'Favorite';
+    if (recover && current && current.asset_available && current.asset_url) {
+      showOutput([{ url: current.asset_url, version_node_id: current.id, cost: current.cost, model: current.model }]);
+    }
+  } catch (_) { /* Version history must not block the editor. */ }
+}
+
+async function versionAction(suffix, method = 'POST') {
+  const response = await fetch(
+    `/api/session/${state.sessionId}/versions${suffix}`,
+    updateFetchOptions({ method })
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    showToast(error.error || 'Version action failed', 'err');
+    return;
+  }
+  await refreshVersionGraph({ recover: true });
+}
+
+versionUndo.addEventListener('click', () => versionAction('/undo'));
+versionFavorite.addEventListener('click', () => {
+  if (state.currentVersionNode) versionAction(`/${state.currentVersionNode}/favorite`);
+});
+
+function acceptVersionImages(images) {
+  const versions = (images || []).filter(image => image.version_node_id);
+  if (versions.length) state.currentVersionNode = versions[versions.length - 1].version_node_id;
+  refreshVersionGraph();
+}
 
 // ── Templates (WS-3) — fetch + render + click-to-apply ────────────────
 // Each template is a curated preset that fills in (prompt, preset,
@@ -635,7 +697,7 @@ function buildCellHTML(img) {
         <button class="cell-action" data-action="save" data-url="${safeAttr(img.url)}" data-name="${safeAttr(img.name)}" data-cost="${safeAttr(img.cost||0)}" data-model="${safeAttr(img.model||'')}" aria-label="Save to gallery">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
         </button>
-        <button class="cell-action" data-action="more-like-this" data-prompt="${safeAttr(encodeURIComponent(img.prompt || state.lastPrompt || ''))}" data-aspect="${safeAttr(img.ratio || state.aspect)}" data-name="${safeAttr(img.name)}" aria-label="More like this (4 variations)">
+        <button class="cell-action" data-action="more-like-this" data-prompt="${safeAttr(encodeURIComponent(img.prompt || state.lastPrompt || ''))}" data-aspect="${safeAttr(img.ratio || state.aspect)}" data-name="${safeAttr(img.name)}" data-parent-node-id="${safeAttr(img.version_node_id || '')}" aria-label="More like this (4 variations)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         </button>
         <button class="cell-action" data-action="copy" data-prompt="${safeAttr(prompt)}" aria-label="Copy prompt">
@@ -673,6 +735,7 @@ outputGrid.addEventListener('click', e => {
   if (more) {
     if (state.generating) { showToast('Already generating', 'err'); return; }
     const prompt = decodeURIComponent(more.dataset.prompt || '');
+    const parentNodeId = more.dataset.parentNodeId || state.currentVersionNode;
     if (!prompt) { showToast('No prompt to re-use', 'err'); return; }
     showToast('Generating 4 variations…', 'ok');
     state.generating = true;
@@ -696,7 +759,7 @@ outputGrid.addEventListener('click', e => {
     fetch('/api/generate', updateFetchOptions({
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newIdempotencyKey() },
-      body: JSON.stringify({ prompt, mode: 'direct', tier: state.tier, aspect_ratio: aspect, variations: 4 })
+      body: JSON.stringify({ prompt, mode: 'direct', tier: state.tier, aspect_ratio: aspect, variations: 4, session_id: state.sessionId, parent_node_id: parentNodeId })
     })).then(r => r.json()).then(data => {
       state.generating = false;
       if (data.error) { showToast(data.error, 'err'); return; }
@@ -704,9 +767,11 @@ outputGrid.addEventListener('click', e => {
         return pollJob(data.job_id, 4).then(result => {
           if (result.error) { showToast(result.error, 'err'); return; }
           showOutput(result.images || []);
+          acceptVersionImages(result.images || []);
         });
       }
       showOutput(data.images || []);
+      acceptVersionImages(data.images || []);
     }).catch(e => {
       state.generating = false;
       showToast('Variation request failed: ' + (e.message || e), 'err');
@@ -777,12 +842,14 @@ genBtn.addEventListener('click', async () => {
       fd.append('product', state.prodImage);
       fd.append('aspect_ratio', state.aspect);
       fd.append('tier', state.tier);
+      fd.append('session_id', state.sessionId);
+      if (state.currentVersionNode) fd.append('parent_node_id', state.currentVersionNode);
       const resp = await fetch('/api/composite', updateFetchOptions({ method: 'POST', body: fd }));
       data = await resp.json();
     } else {
       const resp = await fetch('/api/generate', updateFetchOptions({
         method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newIdempotencyKey() },
-        body: JSON.stringify({ prompt, mode: 'direct', tier: state.tier, aspect_ratio: state.aspect, variations: count })
+        body: JSON.stringify({ prompt, mode: 'direct', tier: state.tier, aspect_ratio: state.aspect, variations: count, session_id: state.sessionId, parent_node_id: state.currentVersionNode })
       }));
       data = await resp.json();
     }
@@ -803,6 +870,7 @@ genBtn.addEventListener('click', async () => {
 
     if (data.images && data.images.length) {
       showOutput(data.images);
+      acceptVersionImages(data.images);
       addToGallery(data.images);
       showToast('Done', 'ok');
       refreshCost();
@@ -875,6 +943,8 @@ sceneSetBtn.addEventListener('click', async () => {
     const fd = new FormData();
     fd.append('product', state.prodImage);
     fd.append('tier', state.tier);
+    fd.append('session_id', state.sessionId);
+    if (state.currentVersionNode) fd.append('parent_node_id', state.currentVersionNode);
     const resp = await fetch('/api/scene-set', updateFetchOptions({ method: 'POST', body: fd }));
     const data = await resp.json();
     if (data.error) {
@@ -885,6 +955,7 @@ sceneSetBtn.addEventListener('click', async () => {
 
     // Replace skeletons with real images as they come back, in scene order
     const got = data.images || [];
+    acceptVersionImages(got);
     for (const img of got) {
       const sk = outputGrid.querySelector(`.skeleton-cell[data-scene="${img.scene}"]`);
       if (sk) {

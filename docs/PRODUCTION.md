@@ -80,6 +80,14 @@ defaults to `1.00` and rejects an oversized batch before the provider is called.
 Set `CREATIVE_DURABLE_JOBS_ENABLED=false` to roll batch requests back to the
 legacy synchronous path without affecting single-image generation.
 
+Creative lineage is stored separately in `versions.db`. Existing JSON sessions
+remain the rollback source and are imported only after their recorded owner
+authenticates; migration never rewrites them. `CREATIVE_VERSION_GRAPH_ENABLED`
+can disable graph writes and APIs without deleting either representation.
+Branch and cumulative costs are computed from recorded completed/partial nodes
+before the next editor action. Soft deletion propagates through descendants,
+so backups retain recoverability while normal APIs no longer expose the branch.
+
 All browser uploads are decoded, bounded, metadata-stripped, and re-encoded as
 canonical PNG files. Their `.meta.json` sidecars record owner, purpose, source
 format, dimensions, creation, and expiry. Preview cleanup without deletion:

@@ -66,6 +66,8 @@ from creative_studio_app.jobs import (
     job_id as _new_job_id,
     run_job_background as _start_job,
 )
+from creative_studio_app.version_graph import VersionGraphStore
+from creative_studio_app.version_routes import create_blueprint as _create_version_blueprint
 from creative_studio_app.rate_limit import (
     client_ip as _client_ip,
     create_rate_limiter,
@@ -291,6 +293,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 _job_store = DurableJobStore(DATA_DIR / "jobs.db")
 _job_store.recover_interrupted()
+_version_store = VersionGraphStore(DATA_DIR / "versions.db")
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -435,6 +438,8 @@ def save_session(session_id: str, data: dict):
 
 
 def add_entry(session_id: str, entry: dict, owner_id: str | None = None):
+    result = {"node_id": None}
+
     def _do():
         data = load_session(session_id)
         actor_id = owner_id or (_current_actor_id() if has_request_context() else None)
@@ -443,9 +448,39 @@ def add_entry(session_id: str, entry: dict, owner_id: str | None = None):
             if existing and existing != actor_id:
                 raise PermissionError("Session belongs to another user")
             data["owner_id"] = actor_id
+            if os.environ.get("CREATIVE_VERSION_GRAPH_ENABLED", "true").lower() in ("1", "true", "yes"):
+                _version_store.migrate_legacy(data, actor_id)
         data["entries"].append({"time": now_str(), **entry})
         save_session(session_id, data)
+        if actor_id and os.environ.get("CREATIVE_VERSION_GRAPH_ENABLED", "true").lower() in ("1", "true", "yes"):
+            operation = {
+                "direct": "generate",
+                "generate": "generate",
+                "variations": "variation",
+                "refine": "refine",
+                "composite": "composite",
+                "sceneset": "composite",
+                "chat": "chat",
+            }.get(entry.get("type"), "generate")
+            parent_id = entry.get("parent_node_id")
+            if "parent_node_id" not in entry:
+                graph = _version_store.graph(session_id, actor_id)
+                parent_id = graph["current_node_id"] if graph else None
+            node = _version_store.add_node(
+                session_id,
+                actor_id,
+                operation=operation,
+                asset_url=entry.get("image_url") or None,
+                parent_id=parent_id,
+                prompt=entry.get("prompt") or entry.get("note") or "",
+                model=entry.get("model") or "",
+                cost=entry.get("cost") or 0,
+                status="completed" if entry.get("image_url") else "partial",
+                metadata={"note": str(entry.get("note") or "")[:200]},
+            )
+            result["node_id"] = node["id"]
     _with_json_lock(_do)
+    return result["node_id"]
 
 
 def now_str() -> str:
@@ -462,6 +497,23 @@ def _safe_output_relpath(rel_path: str) -> Optional[Path]:
     Returns the resolved Path if safe, None if traversal or non-existent.
     """
     return _resolve_output_path(rel_path, OUTPUT_DIR)
+
+
+def _version_asset_exists(url: str) -> bool:
+    if not isinstance(url, str) or not url.startswith("/image/"):
+        return False
+    return _safe_output_relpath(url[len("/image/") :]) is not None
+
+
+def _validate_version_parent(session_id: str, owner_id: str, node_id: str | None) -> bool:
+    return _version_store.owns_node(session_id, owner_id, node_id)
+
+
+def _current_version_node(session_id: str, owner_id: str) -> str | None:
+    if owner_id:
+        _version_store.migrate_legacy(load_session(session_id), owner_id)
+    graph = _version_store.graph(session_id, owner_id)
+    return graph["current_node_id"] if graph else None
 
 
 # ─── Pin Annotations ────────────────────────────────────────────────────
@@ -1412,6 +1464,8 @@ app.register_blueprint(
         parse_figma_url=parse_figma_url,
         fetch_figma_context=fetch_figma_context,
         rate_limited=rate_limited,
+        validate_version_parent=_validate_version_parent,
+        current_version_node=_current_version_node,
     )
 )
 app.register_blueprint(
@@ -1441,11 +1495,14 @@ app.register_blueprint(
         durable_jobs_enabled=os.environ.get(
             "CREATIVE_DURABLE_JOBS_ENABLED", "true"
         ).lower() in ("1", "true", "yes"),
+        validate_version_parent=_validate_version_parent,
+        current_version_node=_current_version_node,
     )
 )
 app.register_blueprint(
     _create_iteration_blueprint(
         require_api_key=_require_api_key,
+        current_actor_id=_current_actor_id,
         enforce_prompt_length=_enforce_prompt_length,
         enforce_daily_limit=enforce_daily_limit,
         build_pin_prompt=build_pin_prompt,
@@ -1466,6 +1523,8 @@ app.register_blueprint(
         ),
         add_entry=add_entry,
         rate_limited=rate_limited,
+        validate_version_parent=_validate_version_parent,
+        current_version_node=_current_version_node,
     )
 )
 app.register_blueprint(
@@ -1538,6 +1597,18 @@ app.register_blueprint(
     )
 )
 app.register_blueprint(
+    _create_version_blueprint(
+        current_actor_id=_current_actor_id,
+        graph_store=_version_store,
+        load_session=load_session,
+        asset_exists=_version_asset_exists,
+        enabled=lambda: os.environ.get(
+            "CREATIVE_VERSION_GRAPH_ENABLED", "true"
+        ).lower() in ("1", "true", "yes"),
+        rate_limited=rate_limited,
+    )
+)
+app.register_blueprint(
     _create_support_blueprint(
         waitlist_pattern=_WAITLIST_RE,
         request_lock=_request_log_lock,
@@ -1568,6 +1639,8 @@ app.register_blueprint(
         add_entry=add_entry,
         image_url=image_url,
         rate_limited=rate_limited,
+        validate_version_parent=_validate_version_parent,
+        current_version_node=_current_version_node,
     )
 )
 app.register_blueprint(

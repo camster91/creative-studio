@@ -20,6 +20,7 @@ same subprocess-compatible service boundaries:
 - `delivery.py`: export and QC execution
 - `assets.py`: output URL/path safety and pin prompt shaping
 - `costs.py`: pricing, persistence, and daily spend checks
+- `version_graph.py`: owner-scoped creative lineage, selection, and branch costs
 
 ## HTTP ownership
 
@@ -31,6 +32,7 @@ same subprocess-compatible service boundaries:
 | `delivery_routes.py` | composite, export, QC, Figma context |
 | `chat_routes.py` | multi-turn chat, history, reset, approved output save |
 | `state_routes.py` | pins, sessions, cost summaries |
+| `version_routes.py` | version recovery, favorite, branch, undo, deletion |
 | `account_routes.py` | signup, magic-link login, account status |
 | `billing_routes.py` | plans, Checkout, portal, Stripe webhook |
 | `project_routes.py` | ownership-scoped project CRUD and ZIP export |
@@ -42,14 +44,15 @@ same subprocess-compatible service boundaries:
 ## Runtime state
 
 `CREATIVE_DATA_DIR` contains SQLite auth/project state, JSON sessions, cost
-records, pins, templates, waitlist data, and approved chat outputs.
+records, pins, templates, waitlist data, approved chat outputs, and the
+`versions.db` lineage graph.
 `CREATIVE_OUTPUT_DIR` contains generated assets. Both must be persistent volumes
 in production. Local generated-image URLs are resolved beneath the configured
 output root and reject traversal.
 
-The current library is host-wide rather than per-user. Project data is
-ownership-scoped in SQLite, but library asset enumeration is not. Treat this as
-a production limitation until per-user asset ownership is implemented.
+Project, library, session, job, and version records are owner-scoped. Version
+nodes retain parent/child lineage, per-attempt cost, partial status, and missing
+asset state without copying prompts or images into operational logs.
 
 ## Verification contract
 
