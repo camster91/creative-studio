@@ -13,6 +13,7 @@ def create_blueprint(
     consume_magic_link: Callable[[str], dict | None],
     current_session: Callable[[], dict | None],
     auth_db: Callable,
+    signup_enabled: Callable[[], bool] = lambda: True,
 ) -> Blueprint:
     blueprint = Blueprint("account", __name__)
 
@@ -20,6 +21,9 @@ def create_blueprint(
     def signup_page():
         if request.method == "GET":
             return render_template("signup.html")
+
+        if not signup_enabled():
+            return jsonify({"error": "Signup is temporarily unavailable"}), 503
 
         data = request.json or {}
         email = (data.get("email") or "").strip().lower()

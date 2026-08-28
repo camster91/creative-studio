@@ -159,12 +159,71 @@ class TestPathTraversal:
 
 
 class TestProductionAuthorization:
+    def test_signup_kill_switch_preserves_fail_closed_response(self, flask_client, monkeypatch):
+        monkeypatch.setenv("CREATIVE_SIGNUP_ENABLED", "false")
+        response = flask_client.post("/signup", json={"email": "person@example.com"})
+        assert response.status_code == 503
+        assert response.get_json() == {"error": "Signup is temporarily unavailable"}
+
     def test_signup_never_exposes_token_without_explicit_test_flag(self, flask_client, monkeypatch):
         monkeypatch.delenv("CREATIVE_EXPOSE_MAGIC_LINK_TOKEN", raising=False)
         monkeypatch.delenv("SMTP_HOST", raising=False)
         response = flask_client.post("/signup", json={"email": "victim@example.com"})
         assert response.status_code == 503
         assert "token" not in response.get_json()
+
+    def test_delivery_telemetry_excludes_email_and_token(self, monkeypatch):
+        events = []
+        sent = []
+
+        class SMTP:
+            def __init__(self, *_args, **_kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def starttls(self): pass
+            def login(self, *_args): pass
+            def sendmail(self, sender, recipients, message):
+                sent.append((sender, recipients, message))
+
+        monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+        monkeypatch.setenv("SMTP_USERNAME", "mailer")
+        monkeypatch.setenv("SMTP_PASSWORD", "secret")
+        monkeypatch.setenv("MAGIC_LINK_FROM", "login@example.com")
+        monkeypatch.setenv("PUBLIC_URL", "https://studio.example.com")
+        monkeypatch.setattr(cs.smtplib, "SMTP", SMTP)
+        monkeypatch.setattr(cs, "_emit_metric", events.append)
+        cs._consecutive_delivery_failures = 0
+        assert cs._deliver_magic_link("private@example.com", "bearer-secret") is True
+        assert sent
+        assert "private@example.com" not in events[0]
+        assert "bearer-secret" not in events[0]
+
+    def test_provider_rejection_alert_is_redacted(self, monkeypatch, caplog):
+        class RejectingSMTP:
+            def __init__(self, *_args, **_kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def starttls(self): pass
+            def sendmail(self, *_args):
+                raise cs.smtplib.SMTPRecipientsRefused(
+                    {"private@example.com": (550, b"recipient rejected")}
+                )
+
+        events = []
+        monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+        monkeypatch.setenv("MAGIC_LINK_FROM", "login@example.com")
+        monkeypatch.setenv("PUBLIC_URL", "https://studio.example.com")
+        monkeypatch.setenv("CREATIVE_EMAIL_FAILURE_ALERT_THRESHOLD", "1")
+        monkeypatch.delenv("SMTP_USERNAME", raising=False)
+        monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+        monkeypatch.setattr(cs.smtplib, "SMTP", RejectingSMTP)
+        monkeypatch.setattr(cs, "_emit_metric", events.append)
+        cs._consecutive_delivery_failures = 0
+        assert cs._deliver_magic_link("private@example.com", "bearer-secret") is False
+        combined = " ".join(events) + " " + caplog.text
+        assert "magic_link_delivery_sustained_failure" in caplog.text
+        assert "private@example.com" not in combined
+        assert "bearer-secret" not in combined
 
     def test_shared_figma_token_is_disabled_by_default(self, flask_client, monkeypatch):
         monkeypatch.delenv("CREATIVE_ENABLE_SHARED_FIGMA_TOKEN", raising=False)
