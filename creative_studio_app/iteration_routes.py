@@ -15,6 +15,7 @@ def create_blueprint(
     enforce_daily_limit: Callable,
     build_pin_prompt: Callable[[list], str],
     safe_filename: Callable[[str], str],
+    save_upload: Callable,
     get_data_dir: Callable,
     image_extensions: set,
     tier_models: dict,
@@ -95,14 +96,10 @@ def create_blueprint(
             return limit_error
         input_image = None
         if "image" in request.files:
-            upload = request.files["image"]
-            uploads = get_data_dir() / "uploads"
-            uploads.mkdir(exist_ok=True)
-            input_image = str(
-                uploads
-                / f"variations_ref_{int(time.time())}_{safe_filename(upload.filename)}"
-            )
-            upload.save(input_image)
+            try:
+                input_image = str(save_upload(request.files["image"], "variations_ref"))
+            except ValueError as error:
+                return jsonify({"error": str(error)}), 400
         session_id = data.get("session_id", new_session_id())
         images, session_key = run_variations(
             api_key,
@@ -143,12 +140,6 @@ def create_blueprint(
         if "product" not in request.files:
             return jsonify({"error": "Product image required (form field 'product')"}), 400
         upload = request.files["product"]
-        if not upload or not upload.filename:
-            return jsonify({"error": "Empty product upload"}), 400
-        filename = safe_filename(upload.filename)
-        extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        if extension not in image_extensions:
-            return jsonify({"error": "Product must be PNG, JPG, WEBP, GIF, or BMP"}), 400
         tier = request.form.get("tier", "balanced")
         if tier not in tier_models:
             tier = "balanced"
@@ -156,10 +147,10 @@ def create_blueprint(
         if limit_error is not None:
             return limit_error
         session_id = request.form.get("session_id", new_session_id())
-        uploads = get_data_dir() / "uploads"
-        uploads.mkdir(exist_ok=True)
-        product = uploads / f"sceneset_{int(time.time())}_{filename}"
-        upload.save(str(product))
+        try:
+            product = save_upload(upload, "sceneset")
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
         images = []
         images_lock = threading.Lock()
         scenes = list(scene_prompts)

@@ -12,6 +12,9 @@ The container fails closed when optional trust boundaries are not configured.
 | `PHOTOGEN_ADMIN_SECRET` | Operator-only shared secret; store only in the deployment secret manager |
 | `CREATIVE_DAILY_LIMIT` | Maximum daily provider spend |
 | `CREATIVE_OUTPUT_DIR`, `CREATIVE_DATA_DIR` | Persistent mounted storage |
+| `CREATIVE_MAX_UPLOAD_BYTES` | Encoded upload limit; defaults to 16 MiB |
+| `CREATIVE_MAX_IMAGE_DIMENSION`, `CREATIVE_MAX_IMAGE_PIXELS` | Decoded image-bomb limits |
+| `CREATIVE_UPLOAD_RETENTION_DAYS` | Canonical upload expiry; defaults to 30 days |
 
 `CREATIVE_EXPOSE_MAGIC_LINK_TOKEN` and `CREATIVE_ALLOW_UNOWNED_ASSETS` are
 test/migration switches and must not be set in production. Shared Figma access
@@ -37,6 +40,18 @@ uploads, generated outputs, and rotating warning/error logs. Logs must not
 contain API keys, session tokens, email login tokens, prompts, or image bytes.
 Retain uploads and outputs only for the documented customer retention period;
 deletion must cover sidecars and backups.
+
+All browser uploads are decoded, bounded, metadata-stripped, and re-encoded as
+canonical PNG files. Their `.meta.json` sidecars record owner, purpose, source
+format, dimensions, creation, and expiry. Preview cleanup without deletion:
+
+```bash
+python scripts/purge-expired-uploads.py --upload-dir /app/data/uploads
+```
+
+After reviewing the list, execute it with `--execute`. Schedule that exact
+command daily in the production scheduler; malformed or traversal sidecars are
+ignored rather than followed.
 
 Nightly local backups are not sufficient evidence of recovery. Production
 requires encrypted off-host backups, retention limits, and a scheduled restore

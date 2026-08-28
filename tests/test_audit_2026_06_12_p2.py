@@ -285,10 +285,9 @@ class TestPinsAuth:
 # ─── /api/scene-set: extension check uses _safe_filename ─────────────
 
 class TestSceneSetExtensionCheck:
-    def test_extension_check_uses_safe_filename(self):
-        """The scene-set endpoint must call _safe_filename on the filename
-        before extracting the extension — otherwise a path-traversal
-        filename like `../../etc/passwd.png` would pass the check.
+    def test_scene_set_uses_decoded_upload_validation(self):
+        """Scene-set must persist only through the canonical decoder; trusting
+        even a sanitized filename extension is insufficient validation.
         """
         src = (SCRIPT_DIR.parent / "creative_studio_app" / "iteration_routes.py").read_text()
         # Find the scene-set route in its owning blueprint.
@@ -296,10 +295,8 @@ class TestSceneSetExtensionCheck:
         assert idx != -1
         next_def = src.find("\ndef ", idx + 1)
         body = src[idx:next_def]
-        # The line that extracts the extension must use the injected safe_filename
-        # (not raw f.filename) on the path being inspected
-        assert "safe_filename" in body, \
-            "scene-set extension check must use safe_filename before ext extraction"
+        assert "save_upload(upload, \"sceneset\")" in body
+        assert "upload.save" not in body
         # And the unsafe `fname = f.filename or ""` pattern must be gone
         assert 'fname = f.filename or ""' not in body, \
             "scene-set still uses raw f.filename for extension check"

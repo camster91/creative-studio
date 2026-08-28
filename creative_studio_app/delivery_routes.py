@@ -21,6 +21,7 @@ def create_blueprint(
     enforce_prompt_length: Callable,
     enforce_daily_limit: Callable,
     safe_filename: Callable[[str], str],
+    save_upload: Callable,
     safe_output_path: Callable[[str], object],
     get_data_dir: Callable,
     new_session_id: Callable[[], str],
@@ -101,11 +102,10 @@ def create_blueprint(
         limit_error = enforce_daily_limit(1, tier)
         if limit_error is not None:
             return limit_error
-        upload = request.files["product"]
-        uploads = get_data_dir() / "uploads"
-        uploads.mkdir(exist_ok=True)
-        product = uploads / f"product_{int(time.time())}_{safe_filename(upload.filename)}"
-        upload.save(str(product))
+        try:
+            product = save_upload(request.files["product"], "product")
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
         aspect = request.form.get("aspect_ratio", "16:9")
         session_id = request.form.get("session_id", new_session_id())
         images = run_composite(prompt, str(product), api_key, aspect)
@@ -145,11 +145,10 @@ def create_blueprint(
                     {"error": "Image path is invalid or outside the output directory"}
                 ), 400
         elif "image" in request.files:
-            upload = request.files["image"]
-            uploads = get_data_dir() / "uploads"
-            uploads.mkdir(exist_ok=True)
-            source = uploads / f"export_{int(time.time())}_{safe_filename(upload.filename)}"
-            upload.save(str(source))
+            try:
+                source = save_upload(request.files["image"], "export")
+            except ValueError as error:
+                return jsonify({"error": str(error)}), 400
         else:
             return jsonify({"error": "Image required"}), 400
         session_id = request.form.get("session_id", new_session_id())
@@ -217,11 +216,10 @@ def create_blueprint(
                     {"error": "Image path is invalid or outside the output directory"}
                 ), 400
         elif "image" in request.files:
-            upload = request.files["image"]
-            uploads = get_data_dir() / "uploads"
-            uploads.mkdir(exist_ok=True)
-            image = uploads / f"qc_{int(time.time())}_{safe_filename(upload.filename)}"
-            upload.save(str(image))
+            try:
+                image = save_upload(request.files["image"], "qc")
+            except ValueError as error:
+                return jsonify({"error": str(error)}), 400
         else:
             return jsonify({"error": "Image required"}), 400
         result = run_qc(str(image), api_key)
