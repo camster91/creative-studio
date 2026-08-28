@@ -10,7 +10,8 @@
 | **CLI Skill** | Command-line tool for power users | Developers, AI researchers |
 | **Web App** | Visual platform for marketing teams to generate product photography at scale | CPG brands, DTC marketers |
 
-**Live web app:** https://photogen.ashbi.ca (v4.5.1)
+**Web app:** production deployment is operator-managed; verify `/api/whoami`
+before relying on a previously published version.
 
 ---
 
@@ -106,10 +107,10 @@ state, CLI/web, and verification boundaries.
 | Layer | Choice |
 |-------|--------|
 | Backend | Flask + gunicorn |
-| Database | SQLite (local) / PostgreSQL (production) |
-| Queue | Celery + Redis for batch jobs |
-| Frontend | Vanilla JS + HTMX (fast, no build step) |
-| Storage | Local disk (dev) / S3 (production) |
+| Database | SQLite |
+| Queue | Bounded in-process background jobs |
+| Frontend | Vanilla JavaScript |
+| Storage | Owner-scoped metadata plus mounted local volumes |
 | AI | Google Gemini (same as CLI) |
 | Deploy | Docker + Coolify VPS |
 
@@ -138,9 +139,12 @@ state, CLI/web, and verification boundaries.
 - [x] Quality tiers with real per-image pricing
 - [x] BYOK + shared-key modes
 
-### Phase 3: Scale — Next
-- [ ] Split creative-studio-web.py monolith into Flask blueprints
-- [ ] Move from in-process jobs to Celery + Redis for batch processing
+### Phase 3: Production hardening — In progress
+- [x] Split route implementations into Flask blueprints
+- [x] Owner-scope sessions, pins, chats, and library assets
+- [x] Fail closed for email identity and shared Figma credentials
+- [x] Prevent pull-request deployment and require container smoke checks
+- [ ] Move from in-process jobs to a durable queue
 - [ ] Multi-brand workspaces (project → assets → export bundle)
 - [ ] Asset library (reuse product PNGs across sessions)
 - [ ] Review/comment system (collaborative)
@@ -165,12 +169,14 @@ pip install -r requirements.txt  # or: uv sync
 **Live URL:** https://photogen.ashbi.ca
 
 ```bash
-# Already deployed on Coolify (187.77.26.99)
-# To redeploy: see .github/workflows/deploy.yml
 # To run locally:
 export GEMINI_API_KEY="..."
 bash launch.sh  # or: python -m scripts.creative-studio-web
 ```
+
+Production configuration, backups, rollback, and incident controls are defined
+in [docs/PRODUCTION.md](docs/PRODUCTION.md). Security reports follow
+[SECURITY.md](SECURITY.md).
 
 ---
 

@@ -13,11 +13,13 @@ import uuid
 import re
 import subprocess
 import threading
+import hashlib
+import smtplib
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, has_request_context
 
 from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
 from creative_studio_app.assets import (
@@ -410,6 +412,8 @@ def new_session_id():
 
 
 def session_path(session_id: str) -> Path:
+    if not isinstance(session_id, str) or not re.fullmatch(r"sess_[0-9a-f]{8}", session_id):
+        raise ValueError("Invalid session id")
     return SESSIONS_DIR / f"{session_id}.json"
 
 
@@ -424,9 +428,15 @@ def save_session(session_id: str, data: dict):
     save_json(session_path(session_id), data)
 
 
-def add_entry(session_id: str, entry: dict):
+def add_entry(session_id: str, entry: dict, owner_id: str | None = None):
     def _do():
         data = load_session(session_id)
+        actor_id = owner_id or (_current_actor_id() if has_request_context() else None)
+        if actor_id:
+            existing = data.get("owner_id")
+            if existing and existing != actor_id:
+                raise PermissionError("Session belongs to another user")
+            data["owner_id"] = actor_id
         data["entries"].append({"time": now_str(), **entry})
         save_session(session_id, data)
     _with_json_lock(_do)
@@ -742,6 +752,68 @@ def _current_session() -> dict | None:
     return _session_from_cookie(token) if token else None
 
 
+def _current_actor_id() -> str | None:
+    """Stable owner key for persistence; never stores a raw provider key."""
+    session = _current_session()
+    if session:
+        return f"user:{session['user_id']}"
+    key = request.headers.get("X-API-Key", "").strip()
+    if key:
+        return "key:" + hashlib.sha256(key.encode()).hexdigest()
+    return None
+
+
+def _owned_asset_paths(user_id: str) -> set[str]:
+    if os.environ.get("CREATIVE_ALLOW_UNOWNED_ASSETS") == "1":
+        return {
+            str(path.relative_to(OUTPUT_DIR))
+            for path in OUTPUT_DIR.rglob("*")
+            if path.is_file() and path.suffix.lower().lstrip(".") in _IMAGE_EXTS
+        }
+    owner_id = f"user:{user_id}"
+    result = set()
+    for path in SESSIONS_DIR.glob("*.json"):
+        data = load_json(path)
+        if data.get("owner_id") != owner_id:
+            continue
+        for entry in data.get("entries", []):
+            url = entry.get("image_url", "")
+            if isinstance(url, str) and url.startswith("/image/"):
+                result.add(url[len("/image/") :])
+    return result
+
+
+def _deliver_magic_link(email: str, token: str) -> bool:
+    host = os.environ.get("SMTP_HOST", "").strip()
+    sender = os.environ.get("MAGIC_LINK_FROM", "").strip()
+    if not host or not sender:
+        return False
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    user = os.environ.get("SMTP_USERNAME", "")
+    password = os.environ.get("SMTP_PASSWORD", "")
+    public_url = os.environ.get("PUBLIC_URL", "http://localhost:5173").rstrip("/")
+    message = (
+        f"From: {sender}\r\nTo: {email}\r\nSubject: Your Photogen sign-in token\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n\r\n"
+        f"Open {public_url}/login and paste this single-use token:\n\n{token}\n"
+        "\nThis token expires in 60 minutes.\n"
+    )
+    try:
+        with smtplib.SMTP(host, port, timeout=15) as client:
+            client.starttls()
+            if user:
+                client.login(user, password)
+            client.sendmail(sender, [email], message.encode("utf-8"))
+        return True
+    except (OSError, smtplib.SMTPException, ValueError):
+        app.logger.exception("Magic-link delivery failed")
+        return False
+
+
+def _expose_magic_link_token() -> bool:
+    return os.environ.get("CREATIVE_EXPOSE_MAGIC_LINK_TOKEN") == "1"
+
+
 def _use_trial_credit(user_id: str) -> tuple[bool, int]:
     return _auth_service.use_trial_credit(AUTH_DB, user_id)
 
@@ -887,53 +959,18 @@ _SSRF_BLOCKED_SCHEMES = frozenset(("", "file", "ftp", "gopher", "ldap", "dict", 
 
 
 def _is_safe_export_url(url: str) -> bool:
-    """Reject anything that isn't a public http(s) URL pointing at a routable host.
+    """Only same-origin generated images are exportable.
 
-    Blocks SSRF to loopback, link-local, private RFC1918 ranges, multicast,
-    unspecified, and reserved IPv6 ranges. The /image/... path on our own
-    server is the only legit use, so we also allow it explicitly.
+    Remote fetching is intentionally not supported here: validating a DNS
+    answer before a later fetch cannot safely prevent redirects or rebinding.
     """
-    from urllib.parse import urlparse
-    if not url:
-        return False
-    # Allow our own /image/ paths (same-origin only — no host tricks)
-    if url.startswith("/image/") and "://" not in url and "\n" not in url and "\r" not in url:
-        return True
-    try:
-        p = urlparse(url)
-    except Exception:
-        return False
-    if p.scheme.lower() not in ("http", "https"):
-        return False
-    if p.scheme.lower() in _SSRF_BLOCKED_SCHEMES:
-        return False
-    host = (p.hostname or "").lower()
-    if not host:
-        return False
-    # Strip IPv6 brackets if any
-    if host.startswith("[") and host.endswith("]"):
-        host = host[1:-1]
-    # Resolve and inspect every address (hostnames can resolve to private IPs)
-    import ipaddress, socket
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except (socket.gaierror, UnicodeError):
-        return False
-    for info in infos:
-        try:
-            ip = ipaddress.ip_address(info[4][0])
-        except ValueError:
-            return False
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
-            return False
-    return True
+    return bool(
+        isinstance(url, str)
+        and url.startswith("/image/")
+        and "://" not in url
+        and "\n" not in url
+        and "\r" not in url
+    )
 
 
 # ── Scene-set endpoint: one product, 5 scene types, 5 outputs in parallel ──
@@ -1246,6 +1283,10 @@ app.register_blueprint(
 app.register_blueprint(
     _create_delivery_blueprint(
         safe_export_url=_is_safe_export_url,
+        current_session=_current_session,
+        current_actor_id=_current_actor_id,
+        owned_asset_paths=_owned_asset_paths,
+        shared_figma_enabled=lambda: os.environ.get("CREATIVE_ENABLE_SHARED_FIGMA_TOKEN") == "1" and _admin_authed(),
         require_api_key=_require_api_key,
         get_api_key=_get_api_key,
         enforce_prompt_length=_enforce_prompt_length,
@@ -1284,6 +1325,7 @@ app.register_blueprint(
         save_costs=save_costs,
         get_sessions_dir=lambda: SESSIONS_DIR,
         current_session=_current_session,
+        current_actor_id=_current_actor_id,
         rate_limited=rate_limited,
     )
 )
@@ -1314,6 +1356,8 @@ app.register_blueprint(
 app.register_blueprint(
     _create_account_blueprint(
         create_magic_link_token=_create_magic_link_token,
+        deliver_magic_link=_deliver_magic_link,
+        expose_magic_link_token=_expose_magic_link_token,
         consume_magic_link=_consume_magic_link,
         current_session=_current_session,
         auth_db=_auth_db,
@@ -1354,12 +1398,14 @@ app.register_blueprint(
     _create_library_blueprint(
         get_output_dir=lambda: OUTPUT_DIR,
         current_session=_current_session,
+        owned_asset_paths=_owned_asset_paths,
         rate_limited=rate_limited,
     )
 )
 app.register_blueprint(
     _create_state_blueprint(
         require_api_key=_require_api_key,
+        current_actor_id=_current_actor_id,
         safe_pin_path=_safe_pin_path,
         safe_pin_id=_safe_pin_id,
         load_pins=load_pins,
@@ -1391,6 +1437,7 @@ app.register_blueprint(
 app.register_blueprint(
     _create_chat_blueprint(
         require_api_key=_require_api_key,
+        current_actor_id=_current_actor_id,
         enforce_prompt_length=_enforce_prompt_length,
         safe_filename=_safe_filename,
         get_data_dir=lambda: DATA_DIR,

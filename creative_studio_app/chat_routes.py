@@ -3,6 +3,7 @@
 import shutil
 import time
 import uuid
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from flask import Blueprint, jsonify, request
 def create_blueprint(
     *,
     require_api_key: Callable,
+    current_actor_id: Callable[[], str | None],
     enforce_prompt_length: Callable,
     safe_filename: Callable[[str], str],
     get_data_dir: Callable,
@@ -28,12 +30,18 @@ def create_blueprint(
 
     def authorized():
         key, error, _used_trial_credit = require_api_key()
-        return key, error
+        return key, current_actor_id(), error
+
+    def owned_chat(session_key: str, actor_id: str):
+        session = get_chat_sessions().get(session_key)
+        if session is not None and session.get("_owner_id") != actor_id:
+            return None
+        return session
 
     @blueprint.post("/api/chat")
     @rate_limited
     def chat():
-        api_key, error = authorized()
+        api_key, actor_id, error = authorized()
         if error is not None:
             return error
         data = request.form if request.files else (request.json or {})
@@ -44,6 +52,10 @@ def create_blueprint(
         if length_error is not None:
             return length_error
         session_key = data.get("session_key", f"chat-{uuid.uuid4().hex[:8]}")
+        if not isinstance(session_key, str) or not re.fullmatch(r"chat-[0-9a-f]{8}", session_key):
+            return jsonify({"error": "Invalid chat session key"}), 400
+        if owned_chat(session_key, actor_id) is None and session_key in get_chat_sessions():
+            return jsonify({"error": "Chat session not found"}), 404
         session_id = data.get("session_id", new_session_id())
         input_image = None
         if "image" in request.files:
@@ -62,6 +74,7 @@ def create_blueprint(
             aspect=data.get("aspect_ratio", "1:1"),
             input_image=input_image,
         )
+        session["_owner_id"] = actor_id
         for image in images:
             if "error" not in image:
                 add_entry(
@@ -88,10 +101,12 @@ def create_blueprint(
     @blueprint.get("/api/chat/<session_key>/history")
     @rate_limited
     def history(session_key):
-        _api_key, error = authorized()
+        _api_key, actor_id, error = authorized()
         if error is not None:
             return error
-        session = get_chat_sessions().get(session_key, {})
+        session = owned_chat(session_key, actor_id)
+        if session is None:
+            return jsonify({"error": "Chat session not found"}), 404
         return jsonify(
             {
                 "history": chat_history(session_key),
@@ -103,18 +118,22 @@ def create_blueprint(
     @blueprint.post("/api/chat/<session_key>/reset")
     @rate_limited
     def reset(session_key):
-        _api_key, error = authorized()
+        _api_key, actor_id, error = authorized()
         if error is not None:
             return error
+        if owned_chat(session_key, actor_id) is None:
+            return jsonify({"error": "Chat session not found"}), 404
         reset_chat(session_key)
         return jsonify({"message": "Chat session reset", "turn": 0})
 
     @blueprint.post("/api/chat/<session_key>/save")
     @rate_limited
     def save(session_key):
-        _api_key, error = authorized()
+        _api_key, actor_id, error = authorized()
         if error is not None:
             return error
+        if owned_chat(session_key, actor_id) is None:
+            return jsonify({"error": "Chat session not found"}), 404
         raw_name = (request.json or {}).get("name", "").strip()
         name = safe_filename(raw_name or f"chat-{int(time.time())}")
         current_input = get_chat_sessions().get(session_key, {}).get("current_input")

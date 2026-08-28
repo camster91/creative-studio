@@ -9,6 +9,7 @@ from flask import Blueprint, jsonify, request
 def create_blueprint(
     *,
     require_api_key: Callable,
+    current_actor_id: Callable[[], str | None],
     safe_pin_path: Callable[[str], str],
     safe_pin_id: Callable[[str], str],
     load_pins: Callable[[str], list],
@@ -24,13 +25,18 @@ def create_blueprint(
     blueprint = Blueprint("state", __name__)
 
     def authorized():
+        actor_id = current_actor_id()
+        if not actor_id:
+            return None, (jsonify({"error": "Sign in or provide an API key"}), 401)
+        if actor_id.startswith("user:"):
+            return actor_id, None
         _key, error, _used_trial_credit = require_api_key()
-        return error
+        return actor_id, error
 
     @blueprint.post("/api/pins")
     @rate_limited
     def add_pin():
-        error = authorized()
+        actor_id, error = authorized()
         if error is not None:
             return error
         data = request.json or {}
@@ -49,6 +55,7 @@ def create_blueprint(
             return jsonify({"error": "text required"}), 400
         if len(text.encode("utf-8")) > 1000:
             return jsonify({"error": "text too long (max 1000 bytes)"}), 400
+        image_path = f"{actor_id}/{image_path}"
         pins = load_pins(image_path)
         pins.append({"id": new_pin_id(), "x": x, "y": y, "text": text, "time": now()})
         save_pins(image_path, pins)
@@ -57,18 +64,18 @@ def create_blueprint(
     @blueprint.get("/api/pins/<path:image_path>")
     @rate_limited
     def get_pins(image_path):
-        error = authorized()
+        actor_id, error = authorized()
         if error is not None:
             return error
         image_path = safe_pin_path(image_path)
         if not image_path:
             return jsonify({"error": "image_path required"}), 400
-        return jsonify({"pins": load_pins(image_path)})
+        return jsonify({"pins": load_pins(f"{actor_id}/{image_path}")})
 
     @blueprint.delete("/api/pins/<path:image_path>/<pin_id>")
     @rate_limited
     def delete_pin(image_path, pin_id):
-        error = authorized()
+        actor_id, error = authorized()
         if error is not None:
             return error
         image_path = safe_pin_path(image_path)
@@ -77,6 +84,7 @@ def create_blueprint(
         pin_id = safe_pin_id(pin_id)
         if not pin_id:
             return jsonify({"error": "pin_id must be hex (1-16 chars)"}), 400
+        image_path = f"{actor_id}/{image_path}"
         pins = [pin for pin in load_pins(image_path) if pin.get("id") != pin_id]
         save_pins(image_path, pins)
         return jsonify({"pins": pins})
@@ -84,19 +92,19 @@ def create_blueprint(
     @blueprint.delete("/api/pins/<path:image_path>")
     @rate_limited
     def clear_pins(image_path):
-        error = authorized()
+        actor_id, error = authorized()
         if error is not None:
             return error
         image_path = safe_pin_path(image_path)
         if not image_path:
             return jsonify({"error": "image_path required"}), 400
-        save_pins(image_path, [])
+        save_pins(f"{actor_id}/{image_path}", [])
         return jsonify({"pins": []})
 
     @blueprint.get("/api/sessions")
     @rate_limited
     def sessions():
-        error = authorized()
+        actor_id, error = authorized()
         if error is not None:
             return error
         result = []
@@ -106,6 +114,8 @@ def create_blueprint(
             reverse=True,
         ):
             data = load_json(path)
+            if data.get("owner_id") != actor_id:
+                continue
             entries = data.get("entries", [])
             result.append(
                 {
@@ -120,10 +130,12 @@ def create_blueprint(
     @blueprint.get("/api/session/<session_id>")
     @rate_limited
     def session(session_id):
-        error = authorized()
+        actor_id, error = authorized()
         if error is not None:
             return error
         data = load_session(session_id)
+        if data.get("owner_id") != actor_id:
+            return jsonify({"error": "Session not found"}), 404
         entries = []
         for entry in data.get("entries", []):
             copy = dict(entry)
@@ -140,11 +152,20 @@ def create_blueprint(
     @blueprint.get("/api/costs")
     @rate_limited
     def costs():
-        error = authorized()
+        actor_id, error = authorized()
         if error is not None:
             return error
-        result = load_costs()
-        result["session_count"] = len(list(get_sessions_dir().glob("*.json")))
+        owned_sessions = [
+            load_json(path) for path in get_sessions_dir().glob("*.json")
+            if load_json(path).get("owner_id") == actor_id
+        ]
+        total = sum(
+            entry.get("cost", 0)
+            for session_data in owned_sessions
+            for entry in session_data.get("entries", [])
+        )
+        result = {"total": total, "by_date": {}, "by_tier": {}}
+        result["session_count"] = len(owned_sessions)
         today = datetime.now().strftime("%Y-%m-%d")
         result["today"] = result.get("by_date", {}).get(today, 0.0)
         return jsonify(result)

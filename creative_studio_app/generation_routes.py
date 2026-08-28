@@ -24,11 +24,12 @@ def create_blueprint(
     save_costs: Callable[[dict], None],
     get_sessions_dir: Callable,
     current_session: Callable[[], dict | None],
+    current_actor_id: Callable[[], str | None],
     rate_limited: Callable,
 ) -> Blueprint:
     blueprint = Blueprint("generation_routes", __name__)
 
-    def record(session_id: str, mode: str, prompt: str, aspect: str, image: dict):
+    def record(session_id: str, mode: str, prompt: str, aspect: str, image: dict, owner_id: str):
         add_entry(
             session_id,
             {
@@ -40,6 +41,7 @@ def create_blueprint(
                 "ratio": image.get("ratio", aspect),
                 "note": f"{image.get('name', '')} ({image.get('model', '')})",
             },
+            owner_id,
         )
 
     def persist_session_count():
@@ -60,6 +62,7 @@ def create_blueprint(
         api_key, error, used_trial_credit = require_api_key()
         if error is not None:
             return error
+        owner_id = current_actor_id()
         try:
             variations = int(data.get("variations", 1))
         except (TypeError, ValueError):
@@ -93,7 +96,7 @@ def create_blueprint(
                     if not batch or "error" in batch[0]:
                         break
                     image = batch[0]
-                    record(session_id, mode, prompt, aspect, image)
+                    record(session_id, mode, prompt, aspect, image, owner_id)
                     images.append(image)
                     with jobs_lock:
                         jobs[job_id].setdefault("result", {})
@@ -122,7 +125,7 @@ def create_blueprint(
         )
         for image in images:
             if "error" not in image:
-                record(session_id, mode, prompt, aspect, image)
+                record(session_id, mode, prompt, aspect, image, owner_id)
         persist_session_count()
         payload = {
             "message": f"Generated {len(images)} image(s)",
