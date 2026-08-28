@@ -428,6 +428,26 @@ class TestPageRoutes:
             # 400 for bad extension, 402 if BYOK gate fires first
             assert r.status_code in (400, 402)
 
+    def test_variation_refine_passes_authenticated_api_key(self, monkeypatch):
+        captured = {}
+
+        def fake_refine(**kwargs):
+            captured.update(kwargs)
+            return [{"error": "test stop"}]
+
+        monkeypatch.setattr(cs, "run_cli_refine_from_variation", fake_refine)
+        monkeypatch.setattr(cs, "_RATE_LIMIT", 1000)
+        with cs.app.test_client() as client:
+            response = client.post(
+                "/api/variations/session/refine",
+                headers={"X-API-Key": "secret-user-key"},
+                json={"pick": 1, "changes": "reduce glare", "tier": "quality"},
+            )
+
+        assert response.status_code == 200
+        assert captured["api_key"] == "secret-user-key"
+        assert captured["changes"] == "reduce glare"
+
     def test_no_literal_unicode_escapes_in_frontend(self):
         """Regression: the HTML_TEMPLATE was a raw string, so literal '\\u003e' sequences
         were being served to the browser as the 6-char string instead of '>'. This broke
