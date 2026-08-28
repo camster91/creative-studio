@@ -46,6 +46,7 @@ from creative_studio_app.informational_routes import (
     create_blueprint as _create_informational_blueprint,
 )
 from creative_studio_app.account_routes import create_blueprint as _create_account_blueprint
+from creative_studio_app.billing_routes import create_blueprint as _create_billing_blueprint
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -2230,129 +2231,6 @@ def _resolve_price_id(plan: str) -> str:
     return _billing_service.resolve_price_id(plan, _BILLING_PLANS)
 
 
-@app.route("/api/billing/plans", methods=["GET"])
-@rate_limited
-def api_billing_plans():
-    """Public list of available plans and their credit counts.
-    Pricing shown as a placeholder string if the env var is unset
-    (the operator can configure prices without a code deploy)."""
-    out = []
-    for plan_id, plan in _BILLING_PLANS.items():
-        price_env = plan["price_id_env"]
-        price_id = os.environ.get(price_env, "").strip()
-        out.append({
-            "id": plan_id,
-            "label": plan["label"],
-            "monthly_credits": plan["monthly_credits"],
-            "price_id_configured": bool(price_id),
-            "price_display": plan["default_price"] if not price_id else "configured",
-        })
-    return jsonify({"plans": out, "stripe_configured": _stripe_configured()})
-
-
-@app.route("/api/billing/checkout", methods=["POST"])
-@rate_limited
-def api_billing_checkout():
-    """Create a Stripe Checkout session for a plan and return the
-    URL the browser should redirect to. Body: {plan: 'starter'|'pro'|'studio'}.
-
-    Signed-in user only. Returns 503 if Stripe is not configured
-    on the host (with a clear message)."""
-    sess = _current_session()
-    if not sess:
-        return jsonify({"error": "Sign in required"}), 401
-    if not _stripe_configured():
-        return jsonify({
-            "error": "Billing not configured",
-            "message": "Set STRIPE_SECRET_KEY on the host to enable paid plans.",
-        }), 503
-    data = request.json or {}
-    plan = (data.get("plan") or "").strip()
-    if plan not in _BILLING_PLANS:
-        return jsonify({
-            "error": "Invalid plan",
-            "valid_plans": list(_BILLING_PLANS.keys()),
-        }), 400
-    try:
-        price_id = _resolve_price_id(plan)
-    except RuntimeError as e:
-        return jsonify({"error": str(e)}), 503
-    with _auth_db() as db:
-        user = db.execute("SELECT * FROM users WHERE id = ?",
-                          (sess["user_id"],)).fetchone()
-    if not user:
-        return jsonify({"error": "User not found"}), 401
-    # Convert sqlite3.Row to dict so the rest of the helpers (which
-    # are typed as dict) work without .get() errors.
-    user = dict(user)
-    try:
-        customer_id = _get_or_create_stripe_customer(user)
-        stripe = _stripe_api()
-        session = stripe.checkout.Session.create(
-            mode="subscription",
-            customer=customer_id,
-            line_items=[{"price": price_id, "quantity": 1}],
-            success_url=_BILLING_PORTAL_RETURN_URL + "?checkout=success",
-            cancel_url=_BILLING_PORTAL_RETURN_URL + "?checkout=canceled",
-            metadata={"photogen_user_id": user["id"], "plan": plan},
-        )
-    except Exception as e:
-        return jsonify({"error": "Checkout creation failed", "message": str(e)}), 500
-    return jsonify({
-        "url": session["url"],
-        "session_id": session["id"],
-        "plan": plan,
-    })
-
-
-@app.route("/api/billing/portal", methods=["POST"])
-@rate_limited
-def api_billing_portal():
-    """Return a Stripe Customer Portal URL for managing the
-    subscription (cancel, change card, view invoices)."""
-    sess = _current_session()
-    if not sess:
-        return jsonify({"error": "Sign in required"}), 401
-    if not _stripe_configured():
-        return jsonify({"error": "Billing not configured"}), 503
-    with _auth_db() as db:
-        user = db.execute("SELECT * FROM users WHERE id = ?",
-                          (sess["user_id"],)).fetchone()
-    if not user or not user["stripe_customer_id"]:
-        return jsonify({"error": "No billing account yet"}), 400
-    try:
-        stripe = _stripe_api()
-        session = stripe.billing_portal.Session.create(
-            customer=user["stripe_customer_id"],
-            return_url=_BILLING_PORTAL_RETURN_URL,
-        )
-    except Exception as e:
-        return jsonify({"error": "Portal creation failed", "message": str(e)}), 500
-    return jsonify({"url": session["url"]})
-
-
-@app.route("/api/billing/webhook", methods=["POST"])
-def api_billing_webhook():
-    """Verify a Stripe signature and apply an idempotent billing event."""
-    if not _stripe_configured():
-        return "Stripe not configured", 503
-    webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
-    if not webhook_secret:
-        return "Webhook secret not configured", 503
-    try:
-        stripe = _stripe_api()
-        event = stripe.Webhook.construct_event(
-            request.get_data(),
-            request.headers.get("Stripe-Signature", ""),
-            webhook_secret,
-        )
-    except Exception as error:
-        return f"Invalid signature: {error}", 400
-    _billing_service.handle_event(AUTH_DB, stripe, event, _BILLING_PLANS)
-    return "", 200
-
-
-
 def _tier_from_price_id(price_id: str) -> str | None:
     return _billing_service.tier_from_price_id(price_id, _BILLING_PLANS)
 
@@ -2368,14 +2246,6 @@ def _cancel_subscription(user_id: str) -> None:
 def _top_up_credits(user_id: str) -> None:
     _billing_service.top_up_credits(AUTH_DB, user_id, _BILLING_PLANS)
 
-
-
-@app.route("/settings/billing", methods=["GET"])
-def settings_billing():
-    """Public page that shows the current user's plan + credit
-    balance + upgrade options. Redirects to /login if not signed
-    in (the frontend JS reads X-Session-Token from localStorage)."""
-    return render_template("billing.html")
 
 
 # ── Project routes (WS-4) ────────────────────────────────────────────
@@ -2791,6 +2661,21 @@ app.register_blueprint(
         consume_magic_link=_consume_magic_link,
         current_session=_current_session,
         auth_db=_auth_db,
+    )
+)
+app.register_blueprint(
+    _create_billing_blueprint(
+        plans=_BILLING_PLANS,
+        portal_return_url=_BILLING_PORTAL_RETURN_URL,
+        auth_db_path=AUTH_DB,
+        auth_db=_auth_db,
+        current_session=_current_session,
+        stripe_configured=_stripe_configured,
+        stripe_api=_stripe_api,
+        get_or_create_customer=_get_or_create_stripe_customer,
+        resolve_price_id=_resolve_price_id,
+        handle_event=_billing_service.handle_event,
+        rate_limited=rate_limited,
     )
 )
 app.register_blueprint(
