@@ -69,6 +69,7 @@ def test_page_exists(cs):
     response = cs.app.test_client().get("/campaigns")
     assert response.status_code == 200
     assert b"Campaign Factory" in response.data
+    assert b'href="/signup"' in response.data
 
 
 def test_anonymous_api_is_rejected(cs):

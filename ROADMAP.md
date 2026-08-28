@@ -122,3 +122,6 @@ Before any production release, run the verification contract in
 proportional security/privacy review, container smoke tests, backup/rollback
 checks, and obtain explicit owner approval as defined in
 [`docs/PRODUCTION.md`](docs/PRODUCTION.md).
+
+Current release evidence and blockers are recorded in
+[`docs/releases/2026-08-28-campaign-factory-release.md`](docs/releases/2026-08-28-campaign-factory-release.md).

@@ -1,9 +1,9 @@
 """
-Regression tests for the hero demo block (the animated scene-set
+Regression tests for the hero demo block (the animated channel-plan
 visualization on the landing page).
 
 The demo block is a key part of the WS-1 ship — it shows users what
-"scene-set" actually means without a real product photo. The animation
+the Campaign Factory produces a bounded plan. The animation
 is pure CSS (no JS, no assets) so the test surface is: the right
 markup, the right CSS classes, the right reduced-motion behavior.
 
@@ -49,11 +49,10 @@ class TestHeroDemoMarkup:
         for n in range(1, 6):
             assert f'data-scene="{n}"' in src, f"missing data-scene={n}"
 
-    def test_tiles_have_name_labels(self):
+    def test_tiles_have_channel_labels(self):
         src = (REPO / "templates" / "landing.html").read_text()
-        # The 5 scene types the app supports
-        for name in ("Studio", "In-hand", "Action", "Lifestyle", "With props"):
-            assert name in src, f"missing scene name {name!r} in demo"
+        for name in ("Amazon", "Shopify", "Meta", "Email", "Web"):
+            assert name in src, f"missing channel name {name!r} in demo"
 
     def test_aria_hidden_on_decorative_block(self):
         """The demo is decorative — screen readers shouldn't read the
@@ -70,10 +69,9 @@ class TestHeroDemoMarkup:
         assert 'class="hero-demo-product"' in src
 
     def test_source_label_present(self):
-        """The 'Your product' label sits under the placeholder so the
-        flow is clear: input on the left, scenes on the right."""
+        """The verified-input label makes the planned workflow explicit."""
         src = (REPO / "templates" / "landing.html").read_text()
-        assert "Your product" in src
+        assert "Verified inputs" in src
 
 
 class TestHeroDemoCSS:

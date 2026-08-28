@@ -5,6 +5,12 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      operation:
+        description: 'Deploy or roll back'
+        required: true
+        type: choice
+        options: [deploy, rollback]
+        default: deploy
       target:
         description: 'Where to deploy'
         required: true
@@ -140,6 +146,14 @@ jobs:
             echo "$HTML" | grep -q "$marker" || (echo "FAIL: /app missing '$marker'"; exit 1)
           done
           echo "Editor OK — all 6 core markers present"
+      - name: Campaign Factory renders
+        run: |
+          set -e
+          HTML=$(curl -sf http://localhost:15173/campaigns)
+          for marker in "Campaign Factory" "Brand Passport" "Product Truth" "READINESS GATE"; do
+            echo "$HTML" | grep -q "$marker" || (echo "FAIL: /campaigns missing '$marker'"; exit 1)
+          done
+          echo "Campaign Factory OK"
       - name: Teardown
         if: always()
         run: |
@@ -152,7 +166,7 @@ jobs:
     name: Deploy to staging
     runs-on: ubuntu-latest
     needs: [build, smoke]
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.target == 'staging' || inputs.target == 'prod'))
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'deploy' && (inputs.target == 'staging' || inputs.target == 'prod'))
     environment:
       name: staging
       url: https://stage.photogen.ashbi.ca
@@ -212,7 +226,7 @@ jobs:
     name: Deploy to production
     runs-on: ubuntu-latest
     needs: [build, smoke, deploy-staging]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.target == 'prod'))
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'deploy' && inputs.target == 'prod'))
     environment:
       name: production
       url: https://photogen.ashbi.ca
@@ -244,27 +258,19 @@ jobs:
             # Start new prod container
             docker run -d \
               --name photogen \
-              --network coolify \
               --restart unless-stopped \
-              -p 5173:5173 \
+              -p 32778:5173 \
               -v /root/photogen-data:/app/data \
               -v /root/photogen-outputs:/app/outputs \
               --env-file /root/.env.photogen \
               -e CREATIVE_OUTPUT_DIR=/app/outputs \
               -e CREATIVE_DATA_DIR=/app/data \
               -e PORT=5173 \
-              -l traefik.enable=true \
-              -l "traefik.http.routers.https-0-photogen.rule=Host(\`photogen.ashbi.ca\`)" \
-              -l traefik.http.routers.https-0-photogen.tls=true \
-              -l traefik.http.routers.https-0-photogen.tls.certresolver=letsencrypt \
-              -l traefik.http.routers.https-0-photogen.entrypoints=https \
-              -l traefik.http.services.https-0-photogen.loadbalancer.server.port=5173 \
-              -l coolify.managed=true \
               ghcr.io/camster91/creative-studio:${{ github.sha }}
 
             # Health check — if it fails, the next step rolls back
             sleep 8
-            STATUS=$(curl -s -o /tmp/whoami.json -w "%{http_code}" http://localhost:5173/api/whoami)
+            STATUS=$(curl -s -o /tmp/whoami.json -w "%{http_code}" http://localhost:32778/api/whoami)
             if [ "$STATUS" != "200" ]; then
               echo "Prod health check FAILED: HTTP $STATUS"
               cat /tmp/whoami.json 2>/dev/null
@@ -275,22 +281,14 @@ jobs:
                 docker rm photogen 2>/dev/null || true
                 docker run -d \
                   --name photogen \
-                  --network coolify \
                   --restart unless-stopped \
-                  -p 5173:5173 \
+                  -p 32778:5173 \
                   -v /root/photogen-data:/app/data \
                   -v /root/photogen-outputs:/app/outputs \
                   --env-file /root/.env.photogen \
                   -e CREATIVE_OUTPUT_DIR=/app/outputs \
                   -e CREATIVE_DATA_DIR=/app/data \
                   -e PORT=5173 \
-                  -l traefik.enable=true \
-                  -l "traefik.http.routers.https-0-photogen.rule=Host(\`photogen.ashbi.ca\`)" \
-                  -l traefik.http.routers.https-0-photogen.tls=true \
-                  -l traefik.http.routers.https-0-photogen.tls.certresolver=letsencrypt \
-                  -l traefik.http.routers.https-0-photogen.entrypoints=https \
-                  -l traefik.http.services.https-0-photogen.loadbalancer.server.port=5173 \
-                  -l coolify.managed=true \
                   "$PREVIOUS"
                 echo "Rollback complete"
               fi
@@ -302,12 +300,24 @@ jobs:
               docker images ghcr.io/camster91/creative-studio --format "{{.ID}}" | sort -u | tail -n +4 | \
               xargs -r docker rmi 2>/dev/null || true
             echo "Pruned old images, kept last 3"
+      - name: Verify public production route
+        run: |
+          set -e
+          curl --fail --show-error --silent --retry 5 --retry-delay 3 \
+            https://photogen.ashbi.ca/api/whoami > /tmp/prod-whoami.json
+          HTML=$(curl --fail --show-error --silent --retry 5 --retry-delay 3 \
+            https://photogen.ashbi.ca/campaigns)
+          echo "$HTML" | grep -q "Campaign Factory"
+          HOME=$(curl --fail --show-error --silent --retry 5 --retry-delay 3 \
+            https://photogen.ashbi.ca/)
+          echo "$HOME" | grep -q 'href="/campaigns"'
+          echo "Public production routes verified"
 
   # ── Manual rollback (workflow_dispatch) ──
   rollback:
     name: Rollback prod
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.target == 'prod'
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'rollback' && inputs.target == 'prod'
     environment:
       name: production
       url: https://photogen.ashbi.ca
@@ -330,7 +340,8 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             TARGET_SHA="${{ inputs.sha }}"
             if [ -z "$TARGET_SHA" ]; then
-              TARGET_SHA="v4.5.1-prod"
+              echo "Rollback requires the exact previously verified SHA or immutable tag"
+              exit 1
             fi
             # Validate the input is a sane git ref (hex SHA, tag, or branch name).
             # Prevents shell injection from a malicious workflow_dispatch payload.
@@ -347,24 +358,16 @@ jobs:
             docker rm photogen 2>/dev/null || true
             docker run -d \
               --name photogen \
-              --network coolify \
               --restart unless-stopped \
-              -p 5173:5173 \
+              -p 32778:5173 \
               -v /root/photogen-data:/app/data \
               -v /root/photogen-outputs:/app/outputs \
               --env-file /root/.env.photogen \
               -e CREATIVE_OUTPUT_DIR=/app/outputs \
               -e CREATIVE_DATA_DIR=/app/data \
               -e PORT=5173 \
-              -l traefik.enable=true \
-              -l "traefik.http.routers.https-0-photogen.rule=Host(\`photogen.ashbi.ca\`)" \
-              -l traefik.http.routers.https-0-photogen.tls=true \
-              -l traefik.http.routers.https-0-photogen.tls.certresolver=letsencrypt \
-              -l traefik.http.routers.https-0-photogen.entrypoints=https \
-              -l traefik.http.services.https-0-photogen.loadbalancer.server.port=5173 \
-              -l coolify.managed=true \
               ghcr.io/camster91/creative-studio:$COMMIT
             sleep 5
-            curl -sf http://localhost:5173/api/whoami
+            curl -sf http://localhost:32778/api/whoami
             echo ""
             echo "Rollback complete"

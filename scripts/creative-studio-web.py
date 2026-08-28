@@ -1016,10 +1016,10 @@ def _deliver_magic_link(email: str, token: str) -> bool:
         _record_delivery_result(False, "configuration")
         return False
     message = (
-        f"From: {sender}\r\nTo: {email}\r\nSubject: Your Photogen sign-in token\r\n"
+        f"From: {sender}\r\nTo: {email}\r\nSubject: Your Photogen sign-in link\r\n"
         "Content-Type: text/plain; charset=utf-8\r\n\r\n"
-        f"Open {public_url}/login and paste this single-use token:\n\n{token}\n"
-        "\nThis token expires in 60 minutes.\n"
+        f"Open this single-use sign-in link:\n\n{public_url}/login#token={token}\n"
+        "\nThe link expires in 60 minutes. If you did not request it, ignore this email.\n"
     )
     try:
         with smtplib.SMTP(host, port, timeout=15) as client:

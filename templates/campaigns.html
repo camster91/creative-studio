@@ -11,7 +11,7 @@
 <body>
   <header class="topbar">
     <a class="brand" href="/"><span>CS</span> Creative Studio</a>
-    <nav><a href="/campaigns" aria-current="page">Campaign Factory</a><a href="/app">Prompt Studio</a></nav>
+    <nav><a href="/campaigns" aria-current="page">Campaign Factory</a><a href="/app">Prompt Studio</a><a href="/signup" id="accountLink">Sign in</a></nav>
   </header>
   <main>
     <section class="hero">
@@ -22,6 +22,7 @@
 
     <div class="layout">
       <form id="campaignForm" class="work-order">
+        <p class="signin-notice" id="signinNotice"><strong>Sign in to save and run campaigns.</strong> You can review the work order first, then <a href="/signup">use a password-free email link</a>.</p>
         <section class="card">
           <div class="step"><span>1</span><div><h2>Brand Passport</h2><p>The rules every output must follow.</p></div></div>
           <label>Brand name<input name="brandName" required maxlength="200" placeholder="Northstar Nutrition"></label>

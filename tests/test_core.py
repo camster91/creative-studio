@@ -349,14 +349,14 @@ class TestPageRoutes:
             html = c.get("/").get_data(as_text=True)
             assert 'name="viewport"' in html
 
-    def test_landing_has_cta_to_app(self):
+    def test_landing_has_campaign_factory_primary_cta_and_studio_fallback(self):
         with cs.app.test_client() as c:
             html = c.get("/").get_data(as_text=True)
+            assert 'href="/campaigns"' in html
             assert 'href="/app"' in html
-            # The hero should mention the 5 scene types
-            assert "Five scene types" in html or "5 scene types" in html
-            # The CTA should be the new "Try it free" copy
-            assert "Try it free" in html
+            assert "Product truth in" in html
+            assert "No chatbot steering required" in html
+            assert "Build a campaign" in html
 
     def test_app_has_scene_types(self):
         """The 5 scene types (In-hand, Studio, Action, Lifestyle, With props)

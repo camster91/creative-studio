@@ -76,6 +76,9 @@ async function loadCampaigns() {
   const list = document.getElementById('campaignList');
   const response = await fetch('/api/campaigns', requestOptions());
   if (!response.ok) { list.innerHTML = '<p>Sign in to save and run campaigns.</p>'; return; }
+  document.getElementById('signinNotice').hidden = true;
+  document.getElementById('accountLink').textContent = 'Account active';
+  document.getElementById('accountLink').href = '/app';
   const body = await response.json();
   list.innerHTML = body.campaigns.length ? body.campaigns.map(c => `<button class="campaign-row" data-id="${c.id}"><strong>${c.name || 'Untitled'}</strong><span>${c.brand_name} · ${c.product_name}</span><small>${c.status}</small></button>`).join('') : '<p>No campaigns yet.</p>';
   list.querySelectorAll('.campaign-row').forEach(button => button.addEventListener('click', async () => {

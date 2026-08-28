@@ -17,6 +17,22 @@ for (const viewport of viewports) {
   });
 }
 
+for (const viewport of viewports) {
+  test(`Campaign Factory ${viewport.name} is accessible without overflow`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto('/campaigns');
+    await expect(page.getByRole('heading', { name: 'From product truth to campaign-ready creative.' })).toBeVisible();
+    await expect(page.locator('#signinNotice a')).toHaveAttribute('href', '/signup');
+    await page.addScriptTag({ content: axeSource });
+    const result = await page.evaluate(async () => window.axe.run(document, {
+      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'] },
+    }));
+    expect(result.violations, JSON.stringify(result.violations, null, 2)).toEqual([]);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+  });
+}
+
 test('400% equivalent zoom keeps controls reachable', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 640 });
   await page.goto('/app');
