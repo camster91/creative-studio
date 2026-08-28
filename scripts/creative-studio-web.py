@@ -726,9 +726,11 @@ try:
     _metrics_handler.setFormatter(logging.Formatter("%(message)s"))
     _metrics_logger.addHandler(_metrics_handler)
     _metrics_logger.setLevel(logging.INFO)
-    install_request_metrics(app, _metrics_logger.info)
+    _emit_metric = _metrics_logger.info
+    install_request_metrics(app, _emit_metric)
 except Exception:
-    install_request_metrics(app, lambda _event: None)
+    _emit_metric = lambda _event: None
+    install_request_metrics(app, _emit_metric)
 
 # ── Auth and project persistence services ───────────────────────────────
 AUTH_DB = DATA_DIR / "users.db"
@@ -827,14 +829,23 @@ def _save_upload(upload, purpose: str) -> Path:
 
 
 def _deliver_magic_link(email: str, token: str) -> bool:
+    global _consecutive_delivery_failures
     host = os.environ.get("SMTP_HOST", "").strip()
     sender = os.environ.get("MAGIC_LINK_FROM", "").strip()
-    if not host or not sender:
+    public_url = os.environ.get("PUBLIC_URL", "").rstrip("/")
+    if not host or not sender or not public_url.startswith("https://"):
+        _record_delivery_result(False, "configuration")
         return False
-    port = int(os.environ.get("SMTP_PORT", "587"))
-    user = os.environ.get("SMTP_USERNAME", "")
+    try:
+        port = int(os.environ.get("SMTP_PORT", "587"))
+    except ValueError:
+        _record_delivery_result(False, "configuration")
+        return False
+    user = os.environ.get("SMTP_USERNAME", "").strip()
     password = os.environ.get("SMTP_PASSWORD", "")
-    public_url = os.environ.get("PUBLIC_URL", "http://localhost:5173").rstrip("/")
+    if bool(user) != bool(password):
+        _record_delivery_result(False, "configuration")
+        return False
     message = (
         f"From: {sender}\r\nTo: {email}\r\nSubject: Your Photogen sign-in token\r\n"
         "Content-Type: text/plain; charset=utf-8\r\n\r\n"
@@ -847,10 +858,43 @@ def _deliver_magic_link(email: str, token: str) -> bool:
             if user:
                 client.login(user, password)
             client.sendmail(sender, [email], message.encode("utf-8"))
+        _record_delivery_result(True, "accepted")
         return True
-    except (OSError, smtplib.SMTPException, ValueError):
-        app.logger.exception("Magic-link delivery failed")
+    except smtplib.SMTPResponseException:
+        _record_delivery_result(False, "rejected")
         return False
+    except (OSError, smtplib.SMTPException, ValueError):
+        _record_delivery_result(False, "unavailable")
+        return False
+
+
+_delivery_failure_lock = threading.Lock()
+_consecutive_delivery_failures = 0
+
+
+def _record_delivery_result(success: bool, outcome: str) -> None:
+    """Emit privacy-safe delivery health and alert after sustained failures."""
+    global _consecutive_delivery_failures
+    with _delivery_failure_lock:
+        _consecutive_delivery_failures = 0 if success else _consecutive_delivery_failures + 1
+        failures = _consecutive_delivery_failures
+    _emit_metric(json.dumps({
+        "schema_version": 1,
+        "event": "magic_link_delivery",
+        "success": success,
+        "outcome": outcome,
+        "consecutive_failures": failures,
+    }, separators=(",", ":"), sort_keys=True))
+    try:
+        threshold = max(
+            1, int(os.environ.get("CREATIVE_EMAIL_FAILURE_ALERT_THRESHOLD", "5"))
+        )
+    except ValueError:
+        threshold = 5
+    if not success and failures == threshold:
+        app.logger.error(
+            "magic_link_delivery_sustained_failure threshold=%d", threshold
+        )
 
 
 def _expose_magic_link_token() -> bool:
@@ -1432,6 +1476,9 @@ app.register_blueprint(
         consume_magic_link=_consume_magic_link,
         current_session=_current_session,
         auth_db=_auth_db,
+        signup_enabled=lambda: os.environ.get(
+            "CREATIVE_SIGNUP_ENABLED", "true"
+        ).lower() in ("1", "true", "yes"),
     )
 )
 app.register_blueprint(

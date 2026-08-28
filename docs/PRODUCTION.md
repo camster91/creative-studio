@@ -16,11 +16,29 @@ The container fails closed when optional trust boundaries are not configured.
 | `CREATIVE_MAX_IMAGE_DIMENSION`, `CREATIVE_MAX_IMAGE_PIXELS` | Decoded image-bomb limits |
 | `CREATIVE_UPLOAD_RETENTION_DAYS` | Canonical upload expiry; defaults to 30 days |
 | `CREATIVE_QC_ESTIMATED_COST_USD` | Operator-maintained per-review cost estimate returned by QC |
+| `CREATIVE_SIGNUP_ENABLED` | Set `false` to stop new magic-link issuance while preserving sessions |
+| `CREATIVE_EMAIL_FAILURE_ALERT_THRESHOLD` | Consecutive failed deliveries before an operator error; defaults to 5 |
 
 `CREATIVE_EXPOSE_MAGIC_LINK_TOKEN` and `CREATIVE_ALLOW_UNOWNED_ASSETS` are
 test/migration switches and must not be set in production. Shared Figma access
 also remains disabled; the web product requires per-user OAuth before it can be
 enabled safely.
+
+Magic-link delivery requires an HTTPS `PUBLIC_URL`, STARTTLS SMTP, and either
+both SMTP username/password or neither. Use a least-privilege sender credential
+and rotate it in the protected environment. Delivery telemetry contains only
+accepted/configuration/rejected/unavailable outcome categories—never email or
+token—and emits `magic_link_delivery_sustained_failure` after the configured
+consecutive-failure threshold. Route that error log to the operator alerting
+channel. Record the selected provider's daily/hourly send limits beside the
+deployment secret inventory; keep the alert threshold comfortably below its
+rejection or throttling limit.
+
+Before enabling signup, use a controlled mailbox to verify accepted delivery,
+expiry, single use, a fresh signup retry, explicit recipient rejection, and
+provider unavailability. Roll back with `CREATIVE_SIGNUP_ENABLED=false`; this
+does not invalidate existing sessions. Never enable
+`CREATIVE_EXPOSE_MAGIC_LINK_TOKEN` outside isolated tests.
 
 ## Release and rollback
 
