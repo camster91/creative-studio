@@ -34,11 +34,6 @@ from creative_studio_app.costs import (
     save_costs as _save_costs,
     track_cost as _record_cost,
 )
-from creative_studio_app.informational import (
-    render_docs as _render_docs,
-    render_history as _render_history,
-    render_status as _render_status,
-)
 from creative_studio_app import auth as _auth_service
 from creative_studio_app import projects as _project_service
 from creative_studio_app import generation as _generation_service
@@ -47,6 +42,9 @@ from creative_studio_app import iterations as _iteration_service
 from creative_studio_app import chat as _chat_service
 from creative_studio_app import billing as _billing_service
 from creative_studio_app.seo_routes import create_blueprint as _create_seo_blueprint
+from creative_studio_app.informational_routes import (
+    create_blueprint as _create_informational_blueprint,
+)
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -2164,27 +2162,6 @@ def admin_waitlist_csv():
     }
 
 
-@app.route("/status")
-def status_page():
-    """Live status page showing cost and active-job health."""
-    with _jobs_lock:
-        jobs_snapshot = {identifier: dict(job) for identifier, job in _jobs.items()}
-    return _render_status(load_costs(), jobs_snapshot)
-
-
-@app.route("/docs")
-def docs_page():
-    """Current authentication and endpoint reference."""
-    return _render_docs()
-
-
-@app.route("/privacy")
-def privacy_page():
-    """Static privacy policy page. We collect as little as possible;
-    see templates/privacy.html for the full text. Public — no auth."""
-    return render_template("privacy.html")
-
-
 # ── Auth Routes (WS-2) ────────────────────────────────────────────────
 
 
@@ -2874,13 +2851,15 @@ def _canonical_url(path: str) -> str:
 
 
 app.register_blueprint(_create_seo_blueprint(lambda: BLOG_CONTENT_DIR))
-
-
-
-@app.route("/history")
-def history_page():
-    """Render persistent generation history."""
-    return _render_history(SESSIONS_DIR, load_json)
+app.register_blueprint(
+    _create_informational_blueprint(
+        load_costs=load_costs,
+        jobs=_jobs,
+        jobs_lock=_jobs_lock,
+        get_sessions_dir=lambda: SESSIONS_DIR,
+        load_json=load_json,
+    )
+)
 
 
 @app.route("/image/<path:subpath>")

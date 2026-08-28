@@ -21,6 +21,7 @@ from creative_studio_app.costs import (
 )
 from creative_studio_app.seo import markdown_to_html, parse_blog_post
 from creative_studio_app.informational import render_docs, render_history, render_status
+from creative_studio_app.informational_routes import create_blueprint as create_informational_blueprint
 from creative_studio_app import auth as auth_service
 from creative_studio_app import projects as project_service
 from creative_studio_app import generation as generation_service
@@ -175,12 +176,20 @@ def test_informational_pages_cover_operations_and_escape_history(tmp_path):
     assert "&lt;script&gt;bad&lt;/script&gt;" in history
 
 
-def test_legacy_informational_routes_remain_available():
-    # The legacy module is exercised exhaustively elsewhere; this source-level
-    # contract catches accidental route loss during further controller splits.
-    source = (Path(__file__).parent.parent / "scripts" / "creative-studio-web.py").read_text()
-    for route in ('/status', '/docs', '/history'):
-        assert f'@app.route("{route}")' in source
+def test_informational_blueprint_preserves_public_routes(tmp_path):
+    app = Flask(__name__)
+    app.register_blueprint(
+        create_informational_blueprint(
+            load_costs=lambda: {"total": 0, "by_date": {}, "image_count": 0},
+            jobs={},
+            jobs_lock=threading.Lock(),
+            get_sessions_dir=lambda: tmp_path,
+            load_json=lambda _path: {},
+        )
+    )
+
+    routes = {rule.rule for rule in app.url_map.iter_rules()}
+    assert {"/status", "/docs", "/privacy", "/history"} <= routes
 
 
 def test_magic_link_is_single_use_under_concurrency(tmp_path):
