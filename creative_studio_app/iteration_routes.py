@@ -192,8 +192,8 @@ def create_blueprint(
                             "note": scene_labels[scene],
                         },
                     )
-            except Exception as error:
-                print(f"[sceneset] {scene} failed: {error}", file=sys.stderr)
+            except Exception:
+                print(f"[sceneset] {scene} failed", file=sys.stderr)
 
         threads = [
             threading.Thread(target=run_scene, args=(scene,), daemon=True)

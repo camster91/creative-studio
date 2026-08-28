@@ -42,6 +42,13 @@ contain API keys, session tokens, email login tokens, prompts, or image bytes.
 Retain uploads and outputs only for the documented customer retention period;
 deletion must cover sidecars and backups.
 
+`request-metrics.jsonl` contains only a random/caller-safe request ID, HTTP
+method, Flask route template (never concrete object IDs or query strings),
+status, and latency. `/status` and `/history` are operator-authenticated because
+they contain host-wide spend/job state and session prompts. Provider and billing
+exceptions are mapped to stable public messages; raw stderr and third-party
+exception text must not be returned to browsers.
+
 All browser uploads are decoded, bounded, metadata-stripped, and re-encoded as
 canonical PNG files. Their `.meta.json` sidecars record owner, purpose, source
 format, dimensions, creation, and expiry. Preview cleanup without deletion:

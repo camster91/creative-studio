@@ -47,14 +47,13 @@ def generate(
             arguments += ["--input-image", input_image]
         try:
             run(arguments, capture_output=True, text=True, timeout=300, env=environment, check=True)
-        except subprocess.CalledProcessError as error:
+        except subprocess.CalledProcessError:
             if index == 0:
-                detail = error.stderr[:500] if error.stderr else error
-                return [{"error": f"Generation failed: {detail}"}]
+                return [{"error": "Generation provider request failed", "error_code": "provider_failed"}]
             break
-        except Exception as error:
+        except Exception:
             if index == 0:
-                return [{"error": str(error)}]
+                return [{"error": "Generation service unavailable", "error_code": "service_unavailable"}]
             break
         files = sorted(
             (output_dir / today).rglob("*.png"),
@@ -110,9 +109,8 @@ def composite(
                 "name": filename, "cost": record_cost(model), "model": model,
                 "ratio": aspect,
             }]
-    except subprocess.CalledProcessError as error:
-        detail = error.stderr[:500] if error.stderr else error
-        return [{"error": f"Composite failed: {detail}"}]
-    except Exception as error:
-        return [{"error": str(error)}]
+    except subprocess.CalledProcessError:
+        return [{"error": "Composite provider request failed", "error_code": "provider_failed"}]
+    except Exception:
+        return [{"error": "Composite service unavailable", "error_code": "service_unavailable"}]
     return [{"error": "Composite produced no output"}]

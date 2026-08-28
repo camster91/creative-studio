@@ -140,11 +140,10 @@ def export_images(
         ]
     except ValueError as error:
         return [{"error": str(error), "kind": "validation"}]
-    except subprocess.CalledProcessError as error:
-        detail = error.stderr[:500] if error.stderr else error
-        return [{"error": f"Export failed: {detail}"}]
-    except Exception as error:
-        return [{"error": str(error)}]
+    except subprocess.CalledProcessError:
+        return [{"error": "Export service failed", "error_code": "service_failed"}]
+    except Exception:
+        return [{"error": "Export service unavailable", "error_code": "service_unavailable"}]
 
 
 def parse_qc_output(output: str) -> dict:

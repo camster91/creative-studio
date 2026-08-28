@@ -185,11 +185,16 @@ def test_informational_blueprint_preserves_public_routes(tmp_path):
             jobs_lock=threading.Lock(),
             get_sessions_dir=lambda: tmp_path,
             load_json=lambda _path: {},
+            admin_authed=lambda: False,
         )
     )
 
     routes = {rule.rule for rule in app.url_map.iter_rules()}
     assert {"/status", "/docs", "/privacy", "/history"} <= routes
+    client = app.test_client()
+    assert client.get("/status").status_code == 401
+    assert client.get("/history").status_code == 401
+    assert client.get("/docs").status_code == 200
 
 
 def test_legacy_entrypoint_does_not_own_flask_routes():
