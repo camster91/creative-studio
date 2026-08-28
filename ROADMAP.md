@@ -1,87 +1,124 @@
-# Creative Studio — Web App Roadmap
+# Creative Studio product roadmap
 
-Current status: v4.9.0 deployed at https://photogen.ashbi.ca
+Last reconciled: 2026-08-28
 
-## ✅ Done
-- [x] Direct generation (exact prompt passthrough, no rewriting)
-- [x] Tier selection (Fast / Balanced / Quality / Ultra)
-- [x] Optional reference image upload (drag-and-drop)
-- [x] Smart prompt enhancement (toggleable, defaults OFF)
-- [x] Aspect ratio selection
-- [x] Cost tracking (live footer)
-- [x] Responsive layout
-- [x] Docker containerized deployment
-- [x] Production deployment on Coolify VPS
-- [x] Spatial pin annotations (CLI + web)
-- [x] BYOK gate (Bring Your Own Gemini API key) — `CREATIVE_ALLOW_SERVER_FALLBACK` opt-in
-- [x] Mobile-first rewrite (collapsible panels, hamburger menu, 44px touch targets, 16px inputs)
-- [x] 5 scene types (In-hand / Studio / Action / Lifestyle / With props) with curated prompts
-- [x] Bento output grid (asymmetric, source-anchored)
-- [x] **Scene-set endpoint** — one product → 5 scene images in parallel (the Riverflow-style "wow")
-- [x] Session gallery with multi-select, ZIP download, delete
-- [x] Lightbox viewer, prompt history, copy-prompt
-- [x] 34 automated tests, all passing
+Repository version: 4.6.0
 
-## 🚧 Pending / Next
+Production status: operator-managed and not inferred from repository state; verify
+`/api/whoami` and the production runbook before making a release claim.
 
-### 1. URL → brand-aware scene generation (the Riverflow real deal)
-Paste a URL, scrape product + brand colors, auto-generate 5 scenes. (2-4 weeks)
-For now: scene-set works with manual product upload.
+## Product charter
 
-### 2. Landing page editorial polish
-Currently dark-mode utilitarian. Riverflow uses off-white + editorial typography + blue accents + magazine-style hero. Could ship a "marketing variant" CSS theme in 4-8 hours.
+Creative Studio is becoming a CPG Creative Operating System: a guided system
+that turns verified brand and SKU inputs into channel-ready campaign creative.
+The initial wedge is lean CPG marketing teams that need more usable variants
+without repeatedly briefing agencies or steering an open-ended chatbot.
 
-### 3. CI workflows (#33)
-2 of 4 GitHub Actions are failing. Probably stale image tags or secrets.
+Promise: define product truth once, submit a bounded Campaign Work Order, pass a
+visible readiness gate, press Go, and review a traceable set of outputs.
 
-### 4. Marketing surface mobile QA
-Need to test on actual iPhone — see what the sticky CTA, touch targets, and iOS Safari quirks feel like for real.
+The dated market and technical evidence behind this direction lives in
+[`docs/CPG-CREATIVE-OPERATING-SYSTEM-RESEARCH.md`](docs/CPG-CREATIVE-OPERATING-SYSTEM-RESEARCH.md).
 
-## 🚧 CLI-Only Features — Need Web UI Integration
+## Verified current state
 
-### 1. Composite Pipeline
-**What it is**: AI generates ONLY the environment/background. User uploads a real product photo. Tool auto-removes background, composites product onto scene with drop shadow.
-**Why it matters**: Zero hallucination of fake products/flavors. Real product on AI scene.
-**CLI command**: `bash launch.sh composite --prompt "..." --product product.png`
-**Web effort**: Add second upload (product photo). Background removal step. Compositing layer.
+- The Flask web app supports prompt-based Gemini generation, product
+  compositing, variations, refinement, version history, projects, library,
+  export, advisory QC, billing, and owner-scoped persistence.
+- The first Campaign Factory slice is implemented: Brand Passport, Product
+  Truth, Campaign Work Order, deterministic readiness, and a Go action that
+  compiles approved inputs into the existing generation request.
+- Gemini remains the only production generation provider. OpenAI support is
+  researched but not implemented or evaluated.
+- Deployment is operator-managed. Repository checks do not prove that the
+  current commit is released.
+- No target-customer interviews, representative AI evaluation corpus, or
+  customer-validated outcome metrics are yet recorded.
 
-### 2. Export Presets
-**What it is**: One click exports generated image to Amazon (1:1 white), Shopify (2048×2048), Meta Feed (4:5), Meta Stories (9:16), Pinterest (2:3), Web Hero (16:9), Print (300 DPI).
-**Why it matters**: Same asset needs different crops for every platform.
-**CLI command**: `bash launch.sh export --input image.png --presets amazon,shopify,meta-feed`
-**Web effort**: Download buttons per preset. Multi-format generation.
+## Primary objective — Campaign Factory foundation
 
-### 3. QC Gate (Quality Check)
-**What it is**: Vision AI scans output for 5 criteria: floating products, garbled text, detached shadows, fake products, readable labels. Returns PASS/FAIL + 1-10 score.
-**Why it matters**: Catches hallucinations before they go to client.
-**CLI command**: `bash launch.sh qc --input image.png`
-**Web effort**: Add QC button next to each generated image. Show score ring + pass/fail grid.
+Status: **in progress**
 
-### 4. Variations + Refine (Midjourney-style)
-**What it is**: Generate 4 variations → pick one → refine with changes → repeat.
-**Why it matters**: Best UX for iterating. Pick visually, then prompt specific changes.
-**CLI commands**: `bash launch.sh variations --prompt "..." -v 4` then `bash launch.sh refine --session X --pick v2 --changes "..."`
-**Web effort**: 4-up grid selection. Session tracking. Refine input panel.
+Problem: the mature generator is still exposed primarily as a blank prompt and
+manual tool collection. CPG teams need reusable truth, bounded work orders,
+visible gates, and exception handling.
 
-### 5. Figma Integration
-**What it is**: Paste a Figma URL. Tool fetches design context (colors, fonts, layout) and incorporates into prompt + posts result back as Figma comment.
-**Why it matters**: Design-aware generation keeps brand consistency.
-**CLI command**: `bash launch.sh figma --url "..." --prompt "..."`
-**Web effort**: Figma URL input node. OAuth flow for write access.
+Outcome: a signed-in CPG marketer can move from reusable brand/SKU truth to a
+reviewable multi-channel campaign without constructing prompts or using chat.
 
-### 6. Chat Mode (Multi-turn)
-**What it is**: Generate → review → prompt changes → generate again in same session. Each output becomes next input. Commands: `done`, `restart`, `back`, `save <name>`.
-**Why it matters**: Natural iterative workflow. Conversational refinement.
-**CLI command**: `bash launch.sh chat --name "session" --input-image product.png`
-**Web effort**: Full chat UI with history. Branching versions. Save/load sessions.
+Acceptance criteria:
 
-## 💡 Nice-to-Have
-- [ ] Interactive canvas annotations (brush tool for "fix this area")
-- [ ] Before/after comparison slider
-- [ ] Prompt history + favorites
-- [ ] Version timeline with thumbnails
-- [ ] Batch staging area (queue multiple prompts)
-- [ ] Command palette (keyboard shortcuts)
-- [ ] Onboarding wizard for new users
-- [ ] Cost budget alerts ("you've spent $5 today")
-- [ ] Team sharing (share sessions via URL)
+- [x] Persist owner-scoped Brand Passport, Product Truth, and Campaign Work Order.
+- [x] Reject cross-owner reads and Go actions without revealing record existence.
+- [x] Show deterministic missing-input checks before provider usage.
+- [x] Compile only verified facts, approved claims, disclosures, and brand rules
+  into a provider-independent generation request.
+- [x] Run the approved request through the existing durable generation path.
+- [ ] Reuse existing Brand Passports and Product Truth records across campaigns.
+- [ ] Attach an exact product pack asset and default CPG campaigns to the
+  deterministic composite path rather than text-only packaging generation.
+- [ ] Create channel recipes that fan one work order into exact format variants.
+- [ ] Route QC or claims failures into an exception inbox with repair/reject actions.
+- [ ] Save successful outputs back to the campaign and export a campaign bundle.
+- [ ] Verify the end-to-end journey in desktop and mobile browser tests.
+
+Measurement hypothesis: a representative user can reach a generation-ready
+work order in under five minutes with zero invented product claims. This is
+proposed until measured with target customers.
+
+## Next priorities
+
+### P0 — Product truth and pack fidelity
+
+- Make Brand Passport and SKU records independently editable and reusable.
+- Require or explicitly waive a product pack asset before Go.
+- Preserve pack pixels through background generation and deterministic
+  compositing; never present text-only packaging generation as exact fidelity.
+- Add audit history for claim/rule changes that affect a campaign.
+
+### P0 — Evaluation and exception workflow
+
+- Build a consent-safe corpus of 30–50 representative CPG work orders.
+- Define rubrics for pack fidelity, claim correctness, brand adherence,
+  composition, channel compliance, latency, and cost.
+- Run Gemini as the baseline; add OpenAI Responses API and GPT Image behind a
+  provider interface only after the evaluation contract exists.
+- Convert advisory QC into rules-first pass/fail checks plus an exception inbox.
+
+### P1 — Channel production and delivery
+
+- Add versioned Amazon, Shopify, Meta, email, and web channel recipes.
+- Generate/crop/export one approved concept into exact channel deliverables.
+- Add campaign bundle manifests with inputs, provider/model, costs, checks,
+  approvals, and output lineage.
+
+### P1 — Teams and governance
+
+- Add workspace roles, approval states, comments, and spend attribution.
+- Define data retention/deletion, provider-data disclosures, and enterprise
+  security requirements before selling governance claims.
+
+### P2 — Commercial validation
+
+- Interview 8–12 CPG marketers and creative operators using the research guide.
+- Test the focused promise, switching barriers, willingness to pay, and desired
+  approval workflow before changing customer-visible pricing.
+- Instrument activation, time to first ready work order, Go success, output
+  acceptance/correction, cost per accepted asset, and repeat campaigns.
+
+## Deliberately deferred
+
+- General-purpose chatbot positioning.
+- Autonomous publishing to ad or commerce platforms without explicit approval.
+- Broad video production before the still-image campaign loop is validated.
+- Provider switching based on marketing claims rather than corpus evidence.
+- Production deployment, pricing changes, and external announcements without
+  accountable owner approval.
+
+## Release gate
+
+Before any production release, run the verification contract in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), browser release gates, a
+proportional security/privacy review, container smoke tests, backup/rollback
+checks, and obtain explicit owner approval as defined in
+[`docs/PRODUCTION.md`](docs/PRODUCTION.md).
