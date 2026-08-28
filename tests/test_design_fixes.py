@@ -134,13 +134,13 @@ class TestValidatedApiKeyThreading:
         """api_export doesn't call _require_api_key() (export is a local PIL
         pipeline, not billed), so _get_api_key() is the correct call.
         """
-        src = (Path(__file__).parent.parent / "scripts" / "creative-studio-web.py").read_text()
-        # Find the api_export function
-        idx = src.find("def api_export()")
+        src = (Path(__file__).parent.parent / "creative_studio_app" / "delivery_routes.py").read_text()
+        # Find the export route in its owning blueprint.
+        idx = src.find("def export()")
         assert idx != -1
         tail = src[idx:idx + 1500]
-        assert "_get_api_key()" in tail, \
-            "api_export dropped the _get_api_key() call — it doesn't have a validated api_key to thread through"
+        assert "get_api_key()" in tail, \
+            "export dropped the get_api_key call — it doesn't have a validated api_key to thread through"
 
 
 # ─── Prompt length cap ─────────────────────────────────────────────────

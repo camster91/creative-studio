@@ -17,7 +17,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 
 from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
 from creative_studio_app.assets import (
@@ -53,6 +53,7 @@ from creative_studio_app.state_routes import create_blueprint as _create_state_b
 from creative_studio_app.support_routes import create_blueprint as _create_support_blueprint
 from creative_studio_app.chat_routes import create_blueprint as _create_chat_blueprint
 from creative_studio_app.core_routes import create_blueprint as _create_core_blueprint
+from creative_studio_app.delivery_routes import create_blueprint as _create_delivery_blueprint
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -1051,212 +1052,6 @@ def _is_safe_export_url(url: str) -> bool:
     return True
 
 
-@app.route("/api/export-zip", methods=["POST"])
-@rate_limited
-def api_export_zip():
-    import io, zipfile, urllib.request
-    data = request.json or {}
-    urls = data.get("urls", [])
-    if not urls:
-        return jsonify({"error": "No URLs provided"}), 400
-    # SSRF gate: reject anything not on the public internet
-    rejected = [u for u in urls if not _is_safe_export_url(u)]
-    if rejected:
-        return jsonify({
-            "error": "Rejected non-public or unsafe URL(s)",
-            "rejected": rejected[:5],
-        }), 400
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for i, url in enumerate(urls):
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "CreativeStudio/1.0"})
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    ext = ".png"
-                    ct = resp.headers.get("Content-Type", "")
-                    if "jpeg" in ct or "jpg" in ct:
-                        ext = ".jpg"
-                    elif "webp" in ct:
-                        ext = ".webp"
-                    zf.writestr(f"image-{i+1}{ext}", resp.read())
-            except Exception as e:
-                zf.writestr(f"image-{i+1}-error.txt", str(e))
-    buf.seek(0)
-    return send_file(
-        buf,
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name="creative-studio-export.zip",
-    )
-
-
-@app.route("/api/composite", methods=["POST"])
-@rate_limited
-def api_composite():
-    if "product" not in request.files:
-        return jsonify({"error": "Product image required"}), 400
-    f = request.files["product"]
-    prompt = request.form.get("prompt", "").strip()
-    aspect = request.form.get("aspect_ratio", "16:9")
-    session_id = request.form.get("session_id", new_session_id())
-    if not prompt:
-        return jsonify({"error": "Prompt required"}), 400
-    cap = _enforce_prompt_length(prompt)
-    if cap is not None:
-        return cap
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-
-    # ── Server-side cost guardrail ──
-    composite_tier = request.form.get("tier", "balanced")
-    guard = enforce_daily_limit(1, composite_tier)
-    if guard is not None:
-        return guard
-
-    tmp_dir = DATA_DIR / "uploads"
-    tmp_dir.mkdir(exist_ok=True)
-    product_path = tmp_dir / f"product_{int(time.time())}_{_safe_filename(f.filename)}"
-    f.save(str(product_path))
-
-    images = run_cli_composite(prompt, str(product_path), api_key, aspect)
-    for img in images:
-        add_entry(
-            session_id,
-            {
-                "type": "composite",
-                "prompt": prompt[:100],
-                "cost": img.get("cost", 0),
-                "image_url": img.get("url", ""),
-                "model": img.get("model", ""),
-                "ratio": img.get("ratio", aspect),
-                "note": img.get("name", ""),
-            },
-        )
-
-    return jsonify(
-        {"message": "Composite generated", "images": images, "session_id": session_id}
-    )
-
-
-@app.route("/api/export", methods=["POST"])
-@rate_limited
-def api_export():
-    session_id = request.form.get("session_id", new_session_id())
-    presets = request.form.get("presets", "")
-    if not presets:
-        return jsonify({"error": "Presets required"}), 400
-
-    # Case 1: Existing image from URL
-    img_url = request.form.get("image_url")
-    if img_url and img_url.startswith("/image/"):
-        rel_path = img_url.replace("/image/", "", 1)
-        safe = _safe_output_relpath(rel_path)
-        if not safe:
-            return jsonify({"error": "Image path is invalid or outside the output directory"}), 400
-        src_path = safe
-    # Case 2: Uploaded image
-    elif "image" in request.files:
-        f = request.files["image"]
-        tmp_dir = DATA_DIR / "uploads"
-        tmp_dir.mkdir(exist_ok=True)
-        src_path = tmp_dir / f"export_{int(time.time())}_{_safe_filename(f.filename)}"
-        f.save(str(src_path))
-    else:
-        return jsonify({"error": "Image required"}), 400
-
-    images = run_cli_export(str(src_path), presets, _get_api_key())
-    # NB: api_export doesn't call _require_api_key() (export uses a local
-    # PIL pipeline and isn't billed), so _get_api_key() is the correct call.
-    selected_list = [p.strip() for p in presets.split(",") if p.strip()]
-    for img in images:
-        add_entry(
-            session_id,
-            {
-                "type": "export",
-                "cost": 0,
-                "image_url": img.get("url", ""),
-                "model": "PIL",
-                "note": f"Exported to:[{', '.join(selected_list)}]",
-            },
-        )
-
-    return jsonify(
-        {
-            "message": f"Exported to {len(images)} formats",
-            "images": images,
-            "session_id": session_id,
-        }
-    )
-
-
-@app.route("/api/export-track", methods=["POST"])
-@rate_limited
-def api_export_track():
-    """Record which presets were used for a given exported image (metadata tracking)."""
-    data = request.json or {}
-    img_url = data.get("image_url", "")
-    preset = data.get("preset", "")
-    session_id = data.get("session_id") or None
-    if session_id and img_url and preset:
-        session_data = load_session(session_id)
-        for e in reversed(session_data.get("entries", [])):
-            if e.get("image_url") == img_url:
-                # Append preset to existing note so we know which export formats were used
-                existing_note = e.get("note", "")
-                used_presets = []
-                if existing_note:
-                    m = re.search(r"Exported to:\[(.*?)\]", existing_note)
-                    if m:
-                        used_presets = [p.strip() for p in m.group(1).split(",")]
-                if preset not in used_presets:
-                    used_presets.append(preset)
-                e["note"] = f"Exported to:[{', '.join(used_presets)}]"
-                save_session(session_id, session_data)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/qc", methods=["POST"])
-@rate_limited
-def api_qc():
-    # Case 1: Existing image from URL (JSON or Form)
-    data = request.json or request.form
-    img_url = data.get("image_url")
-    if img_url and img_url.startswith("/image/"):
-        rel_path = img_url.replace("/image/", "", 1)
-        img_path = _safe_output_relpath(rel_path)
-        if not img_path:
-            return jsonify({"error": "Image path is invalid or outside the output directory"}), 400
-    # Case 2: Uploaded image
-    elif "image" in request.files:
-        f = request.files["image"]
-        tmp_dir = DATA_DIR / "uploads"
-        tmp_dir.mkdir(exist_ok=True)
-        img_path = tmp_dir / f"qc_{int(time.time())}_{_safe_filename(f.filename)}"
-        f.save(str(img_path))
-    else:
-        return jsonify({"error": "Image required"}), 400
-
-    qc = run_cli_qc(str(img_path), api_key)
-    return jsonify({"message": f"QC Score: {qc['quality_score']}/10", "qc": qc})
-
-
-@app.route("/api/figma", methods=["POST"])
-@rate_limited
-def api_figma():
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    url = request.json.get("url")
-    if not url:
-        return jsonify({"error": "URL required"}), 400
-    file_key, node_id = parse_figma_url(url)
-    if not file_key:
-        return jsonify({"error": "Invalid Figma URL"}), 400
-    ctx = fetch_figma_context(file_key, node_id)
-    return jsonify(ctx)
-
-
 @app.route("/api/refine", methods=["POST"])
 @rate_limited
 def api_refine():
@@ -1828,6 +1623,28 @@ app.register_blueprint(
         jobs=_jobs,
         jobs_lock=_jobs_lock,
         get_output_dir=lambda: OUTPUT_DIR,
+        rate_limited=rate_limited,
+    )
+)
+app.register_blueprint(
+    _create_delivery_blueprint(
+        safe_export_url=_is_safe_export_url,
+        require_api_key=_require_api_key,
+        get_api_key=_get_api_key,
+        enforce_prompt_length=_enforce_prompt_length,
+        enforce_daily_limit=enforce_daily_limit,
+        safe_filename=_safe_filename,
+        safe_output_path=_safe_output_relpath,
+        get_data_dir=lambda: DATA_DIR,
+        new_session_id=new_session_id,
+        run_composite=run_cli_composite,
+        run_export=run_cli_export,
+        run_qc=run_cli_qc,
+        add_entry=add_entry,
+        load_session=load_session,
+        save_session=save_session,
+        parse_figma_url=parse_figma_url,
+        fetch_figma_context=fetch_figma_context,
         rate_limited=rate_limited,
     )
 )

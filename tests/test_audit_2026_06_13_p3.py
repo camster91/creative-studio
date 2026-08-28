@@ -256,6 +256,12 @@ class TestReadEndpointsRequireKey:
         r = cs.app.test_client().post("/api/chat/chat-test/save", json={"name": "x"})
         assert r.status_code == 402
 
+    def test_qc_requires_key(self, monkeypatch):
+        monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", False)
+        monkeypatch.setattr(cs, "SERVER_API_KEY", "")
+        r = cs.app.test_client().post("/api/qc", json={"image_url": "/image/x.png"})
+        assert r.status_code == 402
+
     def test_chat_save_name_cannot_escape_approved_dir(self, tmp_path, monkeypatch):
         source = tmp_path / "source.png"
         source.write_bytes(b"image")
