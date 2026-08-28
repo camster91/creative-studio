@@ -15,6 +15,7 @@ import subprocess
 import threading
 import hashlib
 import smtplib
+import urllib.error
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
@@ -71,6 +72,11 @@ from creative_studio_app.version_routes import create_blueprint as _create_versi
 from creative_studio_app.provider_ledger import ProviderLedger, correlation_id as _provider_correlation_id
 from creative_studio_app.provider_metrics_routes import create_blueprint as _create_provider_metrics_blueprint
 from creative_studio_app.provider_errors import error_code as _provider_error_code
+from creative_studio_app.figma_oauth import FigmaOAuthClient, FigmaOAuthStore
+from creative_studio_app.figma_oauth_routes import (
+    create_blueprint as _create_figma_oauth_blueprint,
+    owner_context as _figma_owner_context,
+)
 from creative_studio_app.rate_limit import (
     client_ip as _client_ip,
     create_rate_limiter,
@@ -298,6 +304,28 @@ _job_store = DurableJobStore(DATA_DIR / "jobs.db")
 _job_store.recover_interrupted()
 _version_store = VersionGraphStore(DATA_DIR / "versions.db")
 _provider_ledger = ProviderLedger(DATA_DIR / "provider-ledger.db")
+
+_figma_store = None
+_figma_client = None
+_figma_public_url = os.environ.get("PUBLIC_URL", "").rstrip("/")
+_figma_oauth_configured = bool(
+    os.environ.get("FIGMA_OAUTH_CLIENT_ID")
+    and os.environ.get("FIGMA_OAUTH_CLIENT_SECRET")
+    and os.environ.get("FIGMA_TOKEN_ENCRYPTION_KEY")
+    and _figma_public_url.startswith("https://")
+)
+if _figma_oauth_configured:
+    try:
+        _figma_store = FigmaOAuthStore(
+            DATA_DIR / "figma-oauth.db", os.environ["FIGMA_TOKEN_ENCRYPTION_KEY"]
+        )
+        _figma_client = FigmaOAuthClient(
+            os.environ["FIGMA_OAUTH_CLIENT_ID"],
+            os.environ["FIGMA_OAUTH_CLIENT_SECRET"],
+            f"{_figma_public_url}/api/figma/oauth/callback",
+        )
+    except ValueError:
+        _figma_oauth_configured = False
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -1557,6 +1585,38 @@ app.register_blueprint(
         record_provider_results=_record_provider_results,
     )
 )
+
+
+def _fetch_owner_figma(owner_id, file_key, node_id):
+    if not owner_id or not owner_id.startswith("user:"):
+        return {"error": "Sign in and connect Figma first", "status": 401}
+    if not _figma_oauth_configured:
+        return {"error": "Figma OAuth is not configured", "status": 503}
+    try:
+        return _figma_owner_context(_figma_store, _figma_client, owner_id, file_key, node_id)
+    except PermissionError as error:
+        return {"error": str(error), "status": 401}
+    except urllib.error.HTTPError as error:
+        if error.code in (401, 403):
+            _figma_store.disconnect(owner_id)
+            return {"error": "Figma authorization expired or was revoked", "status": 401}
+        if error.code == 429:
+            return {"error": "Figma rate limit reached; retry later", "status": 429}
+        return {"error": "Figma request failed", "status": 502}
+    except Exception:
+        return {"error": "Figma context unavailable", "status": 502}
+
+
+app.register_blueprint(
+    _create_figma_oauth_blueprint(
+        current_session=_current_session,
+        store=_figma_store,
+        client=_figma_client,
+        configured=lambda: _figma_oauth_configured,
+        parse_figma_url=parse_figma_url,
+        rate_limited=rate_limited,
+    )
+)
 app.register_blueprint(
     _create_generation_blueprint(
         enforce_prompt_length=_enforce_prompt_length,
@@ -1587,6 +1647,7 @@ app.register_blueprint(
         validate_version_parent=_validate_version_parent,
         current_version_node=_current_version_node,
         record_provider_results=_record_provider_results,
+        fetch_owner_figma_context=_fetch_owner_figma,
     )
 )
 app.register_blueprint(

@@ -137,6 +137,38 @@ async function initKeyState() {
 }
 initKeyState().then(() => refreshVersionGraph({ recover: true }));
 
+const figmaPanel = $('figmaPanel');
+const figmaConnect = $('figmaConnect');
+const figmaStatus = $('figmaStatus');
+
+async function refreshFigmaStatus() {
+  if (!localStorage.getItem('photogen_session')) return;
+  const response = await fetch('/api/figma/oauth/status', updateFetchOptions());
+  if (response.status === 401) return;
+  const info = await response.json();
+  figmaPanel.hidden = false;
+  figmaConnect.disabled = !info.configured;
+  figmaConnect.textContent = info.connected ? 'Disconnect' : 'Connect';
+  figmaStatus.textContent = !info.configured
+    ? 'Figma connection is not configured on this deployment.'
+    : info.connected ? 'Connected with read-only file access.' : 'Connect Figma to use a file\'s visual context in your prompt.';
+}
+
+figmaConnect.addEventListener('click', async () => {
+  const status = await fetch('/api/figma/oauth/status', updateFetchOptions()).then(r => r.json());
+  if (status.connected) {
+    await fetch('/api/figma/oauth/disconnect', updateFetchOptions({ method: 'POST' }));
+    $('figmaUrl').value = '';
+    showToast('Figma disconnected', 'ok');
+    return refreshFigmaStatus();
+  }
+  const response = await fetch('/api/figma/oauth/connect', updateFetchOptions({ method: 'POST' }));
+  const result = await response.json();
+  if (!response.ok) return showToast(result.error || 'Figma connection failed', 'err');
+  window.location.assign(result.authorization_url);
+});
+refreshFigmaStatus().catch(() => {});
+
 const versionBar = $('versionBar');
 const versionLabel = $('versionLabel');
 const versionCost = $('versionCost');
@@ -849,7 +881,7 @@ genBtn.addEventListener('click', async () => {
     } else {
       const resp = await fetch('/api/generate', updateFetchOptions({
         method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newIdempotencyKey() },
-        body: JSON.stringify({ prompt, mode: 'direct', tier: state.tier, aspect_ratio: state.aspect, variations: count, session_id: state.sessionId, parent_node_id: state.currentVersionNode })
+        body: JSON.stringify({ prompt, mode: 'direct', tier: state.tier, aspect_ratio: state.aspect, variations: count, session_id: state.sessionId, parent_node_id: state.currentVersionNode, figma_url: $('figmaUrl').value.trim() || undefined })
       }));
       data = await resp.json();
     }

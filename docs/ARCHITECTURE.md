@@ -29,6 +29,8 @@ same subprocess-compatible service boundaries:
 | --- | --- |
 | `core_routes.py` | landing/editor, job status, key validation, immutable images |
 | `generation_routes.py` | synchronous and background generation |
+| `figma_oauth.py` | PKCE client and encrypted, owner-bound Figma token storage |
+| `figma_oauth_routes.py` | connect, callback, refresh, disconnect, and file-context API |
 | `iteration_routes.py` | refine, variations, scene sets, variation refinement |
 | `delivery_routes.py` | composite, export, QC, Figma context |
 | `chat_routes.py` | multi-turn chat, history, reset, approved output save |

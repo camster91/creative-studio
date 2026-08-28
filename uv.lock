@@ -256,6 +256,7 @@ name = "creative-studio"
 version = "4.6.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "flask" },
     { name = "google-genai" },
     { name = "gunicorn" },
@@ -270,6 +271,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=45.0" },
     { name = "flask", specifier = ">=3.1.3" },
     { name = "google-genai", specifier = ">=2.0" },
     { name = "gunicorn", specifier = ">=23.0" },

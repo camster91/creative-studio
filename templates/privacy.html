@@ -22,7 +22,7 @@
 
 <h2>What we collect</h2>
 <p><b>Waitlist signups:</b> your email address, the source ("landing-page", "twitter", etc.) and a timestamp. We do not collect your name, IP, browser fingerprint, or anything else.</p>
-<p><b>Generated images:</b> when you use the app, your prompts and uploaded product photos are sent to Google Gemini for image generation. Outputs are stored in <code>/app/data</code> on the host. We do not store these on a third-party service.</p>
+<p><b>Generated images:</b> when you use the app, your prompts and uploaded product photos are sent to Google Gemini for image generation. If you connect Figma and provide a file URL, read-only design context from that file is also incorporated into the prompt sent to Gemini. Figma access and refresh tokens are encrypted on the host and deleted when you disconnect. Outputs are stored in <code>/app/data</code> on the host. We do not store these on a third-party service.</p>
 <p><b>API keys:</b> if you paste a Google Gemini API key, it lives in your browser's localStorage only. We never see it. (The server has its own key for the shared demo; check the &lt;title&gt; of the editor to see if the server fallback is enabled.)</p>
 <p><b>Server logs:</b> standard HTTP access logs (path, status, user agent). No body capture.</p>
 
