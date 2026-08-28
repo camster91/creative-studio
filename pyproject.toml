@@ -25,4 +25,4 @@ build-backend = "setuptools.build_meta"
 # asset directories such as templates/ and static/ are not mistaken for Python
 # packages during a clean editable install.
 [tool.setuptools]
-py-modules = []
+packages = ["creative_studio_app"]

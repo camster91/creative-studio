@@ -16,11 +16,19 @@ import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
-from functools import wraps
 
 from flask import Flask, render_template, request, jsonify, send_from_directory, send_file
 
 from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
+from creative_studio_app.jobs import (
+    evict_old_jobs as _evict_jobs,
+    job_id as _new_job_id,
+    run_job_background as _start_job,
+)
+from creative_studio_app.rate_limit import (
+    client_ip as _client_ip,
+    create_rate_limiter,
+)
 
 
 # Single source of truth for the app version. Read this in /api/whoami and
@@ -1560,59 +1568,12 @@ _RATE_LIMIT = 20  # requests per minute per IP
 # safety net for the long-tail of IPs that touch once and never again.
 _MAX_TRACKED_IPS = 50000
 
-
-def _client_ip() -> str:
-    """Return the best-available client IP. By default trust the immediate
-    peer's `request.remote_addr` (Caddy/Proxmox/whatever's on :5173 directly).
-    If the operator sets TRUST_PROXY=1 in the environment, honor
-    X-Forwarded-For (right-most entry, since Caddy appends on each hop). The
-    previous version trusted X-Forwarded-For unconditionally, which let any
-    client spoof the limiter key and bypass the rate cap.
-    """
-    trust_proxy = os.environ.get("TRUST_PROXY", "").lower() in ("1", "true", "yes")
-    if trust_proxy:
-        xff = request.headers.get("X-Forwarded-For", "")
-        if xff:
-            # Last entry is the original client per the X-Forwarded-For spec
-            last = xff.split(",")[-1].strip()
-            if last:
-                return last
-    return request.remote_addr or "unknown"
-
-
-def rate_limited(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        ip = _client_ip()
-        now = time.time()
-        with _request_log_lock:
-            _request_log.setdefault(ip, [])
-            # purge old
-            _request_log[ip] = [t for t in _request_log[ip] if now - t < 60]
-            # Drop empty IP entries first (came in via setdefault but
-            # the purge emptied them). Cheap — but never drop the
-            # current caller's IP (they're still active right now).
-            for stale_ip in [k for k, v in _request_log.items() if not v]:
-                if stale_ip != ip:
-                    _request_log.pop(stale_ip, None)
-            # Cap the distinct-IP cardinality. If we're over, evict the
-            # IP with the oldest most-recent activity. Pick the IP whose
-            # most-recent timestamp is the smallest — that's the IP that
-            # hasn't been active in the longest time.
-            if len(_request_log) > _MAX_TRACKED_IPS:
-                # Iterate the dict once to find the oldest-active IP.
-                oldest_ip = min(_request_log,
-                    key=lambda k: _request_log[k][-1] if _request_log[k] else 0)
-                # If the current request is from that oldest IP, fall
-                # through (don't refuse our own caller just because
-                # they're the oldest of the lot). Otherwise evict.
-                if oldest_ip != ip:
-                    _request_log.pop(oldest_ip, None)
-            if len(_request_log[ip]) >= _RATE_LIMIT:
-                return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
-            _request_log[ip].append(now)
-        return f(*args, **kwargs)
-    return wrapper
+rate_limited = create_rate_limiter(
+    lambda: _RATE_LIMIT,
+    lambda: _MAX_TRACKED_IPS,
+    _request_log,
+    _request_log_lock,
+)
 
 # ── Async Job System ──────────────────────────────────────────────────
 _jobs: Dict[str, dict] = {}
@@ -1628,31 +1589,18 @@ _JOB_TTL_SECONDS = 24 * 60 * 60  # evict completed jobs older than 24h regardles
 
 
 def _job_id() -> str:
-    return "job_" + uuid.uuid4().hex[:12]
+    return _new_job_id()
 
 
 def _evict_old_jobs():
     """Called under _jobs_lock. Evict oldest completed jobs to keep the map
     under _MAX_JOBS, and drop any completed job older than _JOB_TTL_SECONDS.
     """
-    now = time.time()
-    # 1) Time-based sweep first — drop stale completed jobs regardless of count
-    stale = [
-        jid for jid, j in _jobs.items()
-        if j.get("finished_at") and (now - j["finished_at"]) > _JOB_TTL_SECONDS
-    ]
-    for jid in stale:
-        _jobs.pop(jid, None)
-    # 2) Size cap — drop oldest completed jobs (running jobs are protected)
-    if len(_jobs) <= _MAX_JOBS:
-        return
-    completed = sorted(
-        ((jid, j) for jid, j in _jobs.items() if j.get("status") in ("done", "error")),
-        key=lambda kv: kv[1].get("finished_at") or kv[1].get("started_at") or 0,
+    _evict_jobs(
+        _jobs,
+        max_jobs=_MAX_JOBS,
+        ttl_seconds=_JOB_TTL_SECONDS,
     )
-    while len(_jobs) > _MAX_JOBS and completed:
-        jid, _ = completed.pop(0)
-        _jobs.pop(jid, None)
 
 
 def _run_job_background(
@@ -1661,34 +1609,16 @@ def _run_job_background(
     *args,
     **kwargs,
 ):
-    """Run a long-running generation function in a background thread."""
-
-    def _worker():
-        try:
-            result = fn(*args, **kwargs)
-            with _jobs_lock:
-                _jobs[job_id]["status"] = "done"
-                _jobs[job_id]["result"] = result
-                _jobs[job_id]["finished_at"] = time.time()
-                _evict_old_jobs()
-        except Exception as e:
-            with _jobs_lock:
-                _jobs[job_id]["status"] = "error"
-                _jobs[job_id]["error"] = str(e)
-                _jobs[job_id]["finished_at"] = time.time()
-                _evict_old_jobs()
-
-    with _jobs_lock:
-        _jobs[job_id] = {
-            "status": "running",
-            "started_at": time.time(),
-            "result": None,
-            "error": None,
-            "finished_at": None,
-        }
-        _evict_old_jobs()
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
+    """Compatibility wrapper around the independently tested job service."""
+    _start_job(
+        job_id,
+        fn,
+        *args,
+        jobs=_jobs,
+        lock=_jobs_lock,
+        evict=_evict_old_jobs,
+        **kwargs,
+    )
 
 
 # ── Frontend templates & static files ──────────────────────────────────
