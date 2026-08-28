@@ -22,8 +22,7 @@ dev:
 .PHONY: install
 install:
 	@if [ ! -d .venv ]; then uv venv .venv --python 3.12; fi
-	@uv pip install --python .venv/bin/python -e .
-	@uv pip install --python .venv/bin/python pytest
+	@uv pip install --python .venv/bin/python -e '.[test]'
 
 # ── Tests ──────────────────────────────────────────────────────
 .PHONY: test

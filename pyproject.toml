@@ -10,3 +10,19 @@ dependencies = [
     "gunicorn>=23.0",
     "stripe>=10.0",
 ]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+# Creative Studio is launched from its repository scripts rather than imported
+# as a library. Explicitly disable setuptools' flat-layout auto-discovery so
+# asset directories such as templates/ and static/ are not mistaken for Python
+# packages during a clean editable install.
+[tool.setuptools]
+py-modules = []

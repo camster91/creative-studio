@@ -4329,7 +4329,19 @@ def serve_image(subpath):
     except (ValueError, RuntimeError):
         return jsonify({"error": "Access denied"}), 403
     if resolved.exists() and resolved.is_file():
-        return send_from_directory(str(resolved.parent), resolved.name)
+        # Generated output paths are immutable: refinements and retries create a
+        # new file instead of replacing an existing image. Let browsers and CDNs
+        # retain these multi-megabyte assets while preserving Flask's ETag and
+        # conditional-request support.
+        response = send_from_directory(
+            str(resolved.parent),
+            resolved.name,
+            conditional=True,
+            max_age=31536000,
+        )
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
     return jsonify({"error": "Not found"}), 404
 
 
