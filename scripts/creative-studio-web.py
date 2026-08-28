@@ -50,6 +50,7 @@ from creative_studio_app.billing_routes import create_blueprint as _create_billi
 from creative_studio_app.project_routes import create_blueprint as _create_project_blueprint
 from creative_studio_app.library_routes import create_blueprint as _create_library_blueprint
 from creative_studio_app.state_routes import create_blueprint as _create_state_blueprint
+from creative_studio_app.support_routes import create_blueprint as _create_support_blueprint
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -1820,50 +1821,6 @@ def _write_waitlist(entries: list) -> None:
     os.replace(tmp, WAITLIST_FILE)
 
 
-@app.route("/api/waitlist", methods=["POST"])
-@rate_limited
-def api_waitlist():
-    """Public waitlist signup. Stores email + source in a flat JSON file.
-    No auth required. No CSRF needed: the endpoint is POST + JSON only,
-    and the side-effect is a single append to a local file.
-
-    Returns:
-        201 {email, position, total_signups} on success
-        400 {error} on bad email
-        200 {email, already_signed_up: true} on duplicate (idempotent)
-    """
-    data = request.json or {}
-    email = (data.get("email") or "").strip().lower()
-    if not email or len(email) > 320 or not _WAITLIST_RE.match(email):
-        return jsonify({"error": "Invalid email"}), 400
-    # Cap length on source to keep the file from bloating with junk.
-    source = (data.get("source") or "unknown")[:64]
-
-    with _request_log_lock:  # reuse the rate-limiter lock for FS safety
-        entries = _read_waitlist()
-        # Idempotent: if email already present, return 200 with
-        # already_signed_up=true. Don't add a duplicate row.
-        for e in entries:
-            if e.get("email") == email:
-                return jsonify({
-                    "email": email,
-                    "already_signed_up": True,
-                    "position": entries.index(e) + 1,
-                    "total_signups": len(entries),
-                })
-        entries.append({
-            "email": email,
-            "source": source,
-            "ts": now_str(),
-        })
-        _write_waitlist(entries)
-        return jsonify({
-            "email": email,
-            "position": len(entries),
-            "total_signups": len(entries),
-        }), 201
-
-
 # ── Templates (WS-3) ────────────────────────────────────────────────
 # Curated presets that map to common CPG/DTC ad placements: Amazon main
 # image, Instagram 4:5, Pinterest 9:16, email header, etc. The
@@ -1905,36 +1862,7 @@ def _read_templates() -> list:
     return []
 
 
-@app.route("/api/templates", methods=["GET"])
-@rate_limited
-def api_templates():
-    """Return the curated template list. Public — no auth. The
-    frontend fetches this on boot to populate the Templates panel.
-    Templates are a discovery surface, not a security boundary.
-    """
-    return jsonify({"templates": _read_templates(), "version": 1})
-
-
 # ── Whoami / BYOK status (existing) ────────────────────────────────
-
-
-@app.route("/api/whoami", methods=["GET"])
-@rate_limited
-def api_whoami():
-    """Tell the frontend the BYOK/fallback status.
-
-    The frontend uses this to decide whether to show the key input as required
-    or as a convenience, and whether server fallback will work if no key is set.
-    """
-    user_key = request.headers.get("X-API-Key", "").strip()
-    return jsonify({
-        "byok": bool(user_key),
-        "user_supplied_key": bool(user_key),
-        "server_has_fallback": bool(SERVER_API_KEY),
-        "fallback_enabled": bool(ALLOW_SERVER_FALLBACK and SERVER_API_KEY),
-        "byok_required": not (ALLOW_SERVER_FALLBACK and SERVER_API_KEY),
-        "version": __version__,
-    })
 
 
 # ── Admin auth + admin pages ────────────────────────────────────────────
@@ -1957,88 +1885,6 @@ def _admin_authed() -> bool:
     if not sent:
         return False
     return _hmac.compare_digest(sent, ADMIN_SECRET)
-
-
-@app.route("/admin/waitlist")
-def admin_waitlist():
-    """Operator-only view of the waitlist JSON. Show a tiny HTML table.
-    Auth: X-Admin-Secret header matching PHOTOGEN_ADMIN_SECRET env var.
-    If the env var isn't set, this route always 401s."""
-    if not _admin_authed():
-        return (
-            "<h1>401</h1><p>Set PHOTOGEN_ADMIN_SECRET and pass it as "
-            "X-Admin-Secret to see the waitlist.</p>",
-            401,
-            {"Content-Type": "text/html; charset=utf-8"},
-        )
-    entries = _read_waitlist()
-    total = len(entries)
-    sources = {}
-    for e in entries:
-        s = e.get("source", "unknown")
-        sources[s] = sources.get(s, 0) + 1
-    rows = "\n".join(
-        "<tr><td>{ts}</td><td><code>{email}</code></td><td>{src}</td></tr>".format(
-            ts=e.get("ts", "?"), email=e.get("email", "?"),
-            src=e.get("source", "?")
-        )
-        for e in entries
-    )
-    # Sources summary
-    src_rows = "\n".join(
-        "<tr><td>{s}</td><td>{n}</td></tr>".format(s=s, n=n)
-        for s, n in sorted(sources.items(), key=lambda x: -x[1])
-    )
-    # Tiny inline HTML, no template dependency. This is an operator-only
-    # page so we're not worried about its visual design.
-    html = f"""<!doctype html>
-<html><head><meta charset="utf-8"><title>Photogen — Waitlist</title>
-<style>
-body {{ font: 14px/1.5 -apple-system, sans-serif; margin: 24px; color: #1a1a1a; background: #fafafa; }}
-h1 {{ margin: 0 0 8px; font-size: 22px; }}
-h2 {{ margin: 24px 0 8px; font-size: 16px; color: #444; }}
-table {{ border-collapse: collapse; width: 100%; max-width: 1100px; background: #fff; }}
-th, td {{ padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; }}
-th {{ background: #f5f5f5; font-size: 12px; text-transform: uppercase; color: #555; }}
-code {{ font: 13px ui-monospace, SF Mono, Menlo, monospace; }}
-.meta {{ color: #666; font-size: 13px; margin-bottom: 16px; }}
-.summary {{ display: inline-block; margin-right: 32px; }}
-</style></head>
-<body>
-<h1>Photogen Waitlist</h1>
-<p class="meta">
-  <span class="summary"><b>{total}</b> total signups</span>
-  <a href="/admin/waitlist.csv?ts={int(time.time())}">Download CSV</a>
-</p>
-<h2>By source</h2>
-<table><tr><th>Source</th><th>Signups</th></tr>{src_rows}</table>
-<h2>All signups (newest first)</h2>
-<table>
-  <tr><th>Timestamp</th><th>Email</th><th>Source</th></tr>
-  {rows or '<tr><td colspan="3"><i>No signups yet.</i></td></tr>'}
-</table>
-</body></html>"""
-    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
-
-
-@app.route("/admin/waitlist.csv")
-def admin_waitlist_csv():
-    """Same auth as /admin/waitlist but returns CSV for grep / Excel /
-    import-into-Mailchimp workflows. Newest first."""
-    if not _admin_authed():
-        return "401", 401, {"Content-Type": "text/plain"}
-    entries = _read_waitlist()
-    import csv as _csv
-    import io as _io
-    buf = _io.StringIO()
-    w = _csv.writer(buf, lineterminator="\n")
-    w.writerow(["timestamp", "email", "source"])
-    for e in entries:
-        w.writerow([e.get("ts", ""), e.get("email", ""), e.get("source", "")])
-    return buf.getvalue(), 200, {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": 'attachment; filename="photogen-waitlist.csv"',
-    }
 
 
 # ── Billing (WS-6) — Stripe Checkout + webhook + credit ledger ──────────
@@ -2237,6 +2083,21 @@ app.register_blueprint(
         load_json=load_json,
         load_session=load_session,
         load_costs=load_costs,
+        rate_limited=rate_limited,
+    )
+)
+app.register_blueprint(
+    _create_support_blueprint(
+        waitlist_pattern=_WAITLIST_RE,
+        request_lock=_request_log_lock,
+        read_waitlist=_read_waitlist,
+        write_waitlist=_write_waitlist,
+        now=now_str,
+        read_templates=_read_templates,
+        server_api_key=SERVER_API_KEY,
+        allow_server_fallback=ALLOW_SERVER_FALLBACK,
+        version=__version__,
+        admin_authed=_admin_authed,
         rate_limited=rate_limited,
     )
 )

@@ -131,6 +131,21 @@ class TestAdminWaitlistRender:
         body = r.get_data(as_text=True)
         assert "/admin/waitlist.csv" in body
 
+    def test_user_controlled_fields_are_html_escaped(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PHOTOGEN_ADMIN_SECRET", "s")
+        cs = _load_web_module("s")
+        wl = tmp_path / "waitlist.json"
+        wl.write_text('[{"email":"a@b.co","source":"<script>alert(1)</script>","ts":"<b>x</b>"}]')
+        monkeypatch.setattr(cs, "WAITLIST_FILE", wl)
+
+        body = cs.app.test_client().get(
+            "/admin/waitlist", headers={"X-Admin-Secret": "s"}
+        ).get_data(as_text=True)
+
+        assert "<script>alert(1)</script>" not in body
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in body
+        assert "<b>x</b>" not in body
+
 
 # ─── /admin/waitlist.csv ─────────────────────────────────────────────────
 
