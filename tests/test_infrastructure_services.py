@@ -315,9 +315,11 @@ def test_qc_parser_maps_score_failures_and_warnings():
     )
 
     assert result["quality_score"] == 7
-    assert result["floating_products"] is True
-    assert result["readable_labels"] is True
+    assert result["criteria"]["physical_grounding"]["passed"] is False
+    assert result["criteria"]["label_readability"]["passed"] is True
     assert result["issues"] == ["glare on label"]
+    assert result["advisory"] is True
+    assert result["confidence"] == "low"
 
 
 def test_chat_service_feeds_each_output_into_the_next_turn(tmp_path):

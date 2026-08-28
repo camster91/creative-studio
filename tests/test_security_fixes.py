@@ -194,6 +194,35 @@ class TestProductionAuthorization:
         )
         assert response.status_code == 404
 
+    def test_qc_override_is_owner_scoped_and_audited(self, flask_client, fs_isolated):
+        signup = flask_client.post("/signup", json={"email": "qc-reviewer@example.com"})
+        login = flask_client.post("/login", json={"token": signup.get_json()["token"]})
+        token = login.get_json()["session_token"]
+        account = cs._session_from_cookie(token)
+        session_id = "sess_deadbeef"
+        cs.save_session(session_id, {
+            "id": session_id,
+            "owner_id": f"user:{account['user_id']}",
+            "created_at": cs.now_str(),
+            "entries": [],
+        })
+        response = flask_client.post(
+            "/api/qc/override",
+            json={
+                "session_id": session_id,
+                "decision": "accept",
+                "reason": "Packaging text verified against source artwork",
+                "quality_score": 6,
+                "image_url": "/image/owned.png",
+            },
+            headers={"X-Session-Token": token},
+        )
+        assert response.status_code == 200
+        [entry] = cs.load_session(session_id)["entries"]
+        assert entry["type"] == "qc_override"
+        assert entry["model"] == "human-review"
+        assert "Packaging text verified" in entry["note"]
+
     def test_export_rejects_traversal_image_url(self, flask_client, fs_isolated):
         r = flask_client.post(
             "/api/export",

@@ -555,11 +555,16 @@ def run_cli_export(source_path: str, presets: str, api_key: str) -> List[Dict]:
 
 
 def run_cli_qc(image_path: str, api_key: str) -> dict:
+    try:
+        estimated_cost = float(os.environ["CREATIVE_QC_ESTIMATED_COST_USD"])
+    except (KeyError, ValueError):
+        estimated_cost = None
     return _delivery_service.run_qc(
         image_path,
         api_key,
         launch_script=Path(__file__).parent.parent / "launch.sh",
         run=subprocess.run,
+        estimated_cost_usd=estimated_cost,
     )
 
 
