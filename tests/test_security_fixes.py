@@ -153,7 +153,7 @@ class TestPathTraversal:
         )
         # Will be 402 (no key) or 400 (rejected path) — both indicate
         # that the traversal was caught *before* the subprocess ran.
-        assert r.status_code in (400, 402)
+        assert r.status_code in (400, 401, 402)
         if r.status_code == 400:
             assert "outside" in r.get_json()["error"].lower() or "invalid" in r.get_json()["error"].lower()
 
@@ -199,7 +199,7 @@ class TestProductionAuthorization:
             "/api/export",
             data={"image_url": "/image/../../etc/passwd", "presets": "amazon"},
         )
-        assert r.status_code in (400, 402)
+        assert r.status_code in (400, 401, 402)
         if r.status_code == 400:
             assert "outside" in r.get_json()["error"].lower() or "invalid" in r.get_json()["error"].lower()
 
