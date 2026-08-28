@@ -448,6 +448,17 @@ class TestPageRoutes:
         assert captured["api_key"] == "secret-user-key"
         assert captured["changes"] == "reduce glare"
 
+    @pytest.mark.parametrize("variations", [0, 9, "many"])
+    def test_generate_rejects_invalid_variation_count(self, variations):
+        with cs.app.test_client() as client:
+            response = client.post(
+                "/api/generate",
+                headers={"X-API-Key": "secret-user-key"},
+                json={"prompt": "product photo", "variations": variations},
+            )
+        assert response.status_code == 400
+        assert "variations" in response.get_json()["error"]
+
     def test_no_literal_unicode_escapes_in_frontend(self):
         """Regression: the HTML_TEMPLATE was a raw string, so literal '\\u003e' sequences
         were being served to the browser as the 6-char string instead of '>'. This broke

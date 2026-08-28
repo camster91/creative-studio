@@ -54,6 +54,7 @@ from creative_studio_app.support_routes import create_blueprint as _create_suppo
 from creative_studio_app.chat_routes import create_blueprint as _create_chat_blueprint
 from creative_studio_app.core_routes import create_blueprint as _create_core_blueprint
 from creative_studio_app.delivery_routes import create_blueprint as _create_delivery_blueprint
+from creative_studio_app.generation_routes import create_blueprint as _create_generation_blueprint
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -881,124 +882,6 @@ APP_TEMPLATE = "app.html"
 # ── API Routes ──────────────────────────────────────────────────────────
 
 
-@app.route("/api/generate", methods=["POST"])
-@rate_limited
-def api_generate():
-    data = request.json or {}
-    prompt = data.get("prompt", "").strip()
-    if not prompt:
-        return jsonify({"error": "Prompt required"}), 400
-    # Length cap runs before figma context expansion so a huge figma
-    # payload can't sneak past via concatenation.
-    cap = _enforce_prompt_length(prompt)
-    if cap is not None:
-        return cap
-
-    # ── BYOK gate (applies to both sync and async paths) ──
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-
-    mode = data.get("mode", "direct")
-    tier = data.get("tier", "balanced")
-    aspect = data.get("aspect_ratio", "16:9")
-    smart = True
-    variations = int(data.get("variations", 1))
-    session_id = data.get("session_id", new_session_id())
-    figma_url = data.get("figma_url")
-
-    # ── Server-side cost guardrail ──
-    guard = enforce_daily_limit(variations, tier)
-    if guard is not None:
-        return guard
-
-    # Fetch figma context if requested
-    figma_ctx = None
-    if figma_url:
-        file_key, node_id = parse_figma_url(figma_url)
-        if file_key:
-            figma_ctx = fetch_figma_context(file_key, node_id)
-            if "error" not in figma_ctx:
-                prompt = enhance_prompt_with_figma(prompt, figma_ctx)
-
-    # Async: if variations > 1, run in background thread
-    if variations > 1:
-        job_id = _job_id()
-
-        def _do_generate():
-            images = []
-            count = max(1, min(8, variations))
-            for i in range(count):
-                batch_images = run_cli_generate(prompt, mode, api_key, tier, aspect, smart, variations=1)
-                if batch_images and "error" not in batch_images[0]:
-                    img = batch_images[0]
-                    add_entry(
-                        session_id,
-                        {
-                            "type": mode,
-                            "prompt": prompt[:100],
-                            "cost": img.get("cost", 0),
-                            "image_url": img.get("url", ""),
-                            "model": img.get("model", ""),
-                            "ratio": img.get("ratio", aspect),
-                            "note": f"{img.get('name', '')} ({img.get('model', '')})",
-                        },
-                    )
-                    images.append(img)
-                    # Update job state incrementally so frontend can stream results
-                    with _jobs_lock:
-                        _jobs[job_id].setdefault("result", {})
-                        _jobs[job_id]["result"]["images"] = images.copy()
-                        _jobs[job_id]["result"]["progress"] = f"{i+1}/{count}"
-                else:
-                    # Stop on first failure
-                    break
-            costs = load_costs()
-            costs["session_count"] = len(list(SESSIONS_DIR.glob("*.json")))
-            save_costs(costs)
-            return {"images": images, "session_id": session_id, "message": f"Generated {len(images)} image(s)"}
-
-        _run_job_background(job_id, _do_generate)
-        return jsonify({"job_id": job_id, "status": "running", "message": "Generation started"})
-
-    # Sync: single image (fast path)
-    images = run_cli_generate(prompt, mode, api_key, tier, aspect, smart, variations=1)
-    for img in images:
-        if "error" not in img:
-            add_entry(
-                session_id,
-                {
-                    "type": mode,
-                    "prompt": prompt[:100],
-                    "cost": img.get("cost", 0),
-                    "image_url": img.get("url", ""),
-                    "model": img.get("model", ""),
-                    "ratio": img.get("ratio", aspect),
-                    "note": f"{img.get('name', '')} ({img.get('model', '')})",
-                },
-            )
-
-    costs = load_costs()
-    costs["session_count"] = len(list(SESSIONS_DIR.glob("*.json")))
-    save_costs(costs)
-
-    response_payload = {
-        "message": f"Generated {len(images)} image(s)",
-        "images": images,
-        "session_id": session_id,
-    }
-    if used_trial_credit:
-        # Surface the credit burn so the frontend can update the badge
-        # without a refresh. Look up the user's current remaining count.
-        sess = _current_session()
-        if sess:
-            response_payload.update({
-                "trial_credit_used": True,
-                "credits_remaining": sess["credits_remaining"],
-            })
-    return jsonify(response_payload)
-
-
 _SSRF_BLOCKED_SCHEMES = frozenset(("", "file", "ftp", "gopher", "ldap", "dict", "data", "javascript"))
 
 
@@ -1645,6 +1528,28 @@ app.register_blueprint(
         save_session=save_session,
         parse_figma_url=parse_figma_url,
         fetch_figma_context=fetch_figma_context,
+        rate_limited=rate_limited,
+    )
+)
+app.register_blueprint(
+    _create_generation_blueprint(
+        enforce_prompt_length=_enforce_prompt_length,
+        require_api_key=_require_api_key,
+        enforce_daily_limit=enforce_daily_limit,
+        parse_figma_url=parse_figma_url,
+        fetch_figma_context=fetch_figma_context,
+        enhance_prompt_with_figma=enhance_prompt_with_figma,
+        new_session_id=new_session_id,
+        new_job_id=_job_id,
+        run_job_background=_run_job_background,
+        jobs=_jobs,
+        jobs_lock=_jobs_lock,
+        run_generate=run_cli_generate,
+        add_entry=add_entry,
+        load_costs=load_costs,
+        save_costs=save_costs,
+        get_sessions_dir=lambda: SESSIONS_DIR,
+        current_session=_current_session,
         rate_limited=rate_limited,
     )
 )
