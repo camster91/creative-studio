@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from .provider_errors import error_code
+
 
 def generate(
     prompt: str,
@@ -47,9 +49,9 @@ def generate(
             arguments += ["--input-image", input_image]
         try:
             run(arguments, capture_output=True, text=True, timeout=300, env=environment, check=True)
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
             if index == 0:
-                return [{"error": "Generation provider request failed", "error_code": "provider_failed"}]
+                return [{"error": "Generation provider request failed", "error_code": error_code(error)}]
             break
         except Exception:
             if index == 0:
@@ -109,8 +111,8 @@ def composite(
                 "name": filename, "cost": record_cost(model), "model": model,
                 "ratio": aspect,
             }]
-    except subprocess.CalledProcessError:
-        return [{"error": "Composite provider request failed", "error_code": "provider_failed"}]
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        return [{"error": "Composite provider request failed", "error_code": error_code(error)}]
     except Exception:
         return [{"error": "Composite service unavailable", "error_code": "service_unavailable"}]
     return [{"error": "Composite produced no output"}]

@@ -21,6 +21,7 @@ same subprocess-compatible service boundaries:
 - `assets.py`: output URL/path safety and pin prompt shaping
 - `costs.py`: pricing, persistence, and daily spend checks
 - `version_graph.py`: owner-scoped creative lineage, selection, and branch costs
+- `provider_ledger.py`: privacy-safe call accounting, correlation, and alert inputs
 
 ## HTTP ownership
 
@@ -33,6 +34,7 @@ same subprocess-compatible service boundaries:
 | `chat_routes.py` | multi-turn chat, history, reset, approved output save |
 | `state_routes.py` | pins, sessions, cost summaries |
 | `version_routes.py` | version recovery, favorite, branch, undo, deletion |
+| `provider_metrics_routes.py` | operator-only provider dashboard queries |
 | `account_routes.py` | signup, magic-link login, account status |
 | `billing_routes.py` | plans, Checkout, portal, Stripe webhook |
 | `project_routes.py` | ownership-scoped project CRUD and ZIP export |
@@ -46,6 +48,10 @@ same subprocess-compatible service boundaries:
 `CREATIVE_DATA_DIR` contains SQLite auth/project state, JSON sessions, cost
 records, pins, templates, waitlist data, approved chat outputs, and the
 `versions.db` lineage graph.
+`provider-ledger.db` stores only owner/job identifiers, provider/model,
+estimate/recorded charge, latency, stable outcome, and a random call
+correlation ID. It has no prompt, image, token, key, email, or provider error
+text columns.
 `CREATIVE_OUTPUT_DIR` contains generated assets. Both must be persistent volumes
 in production. Local generated-image URLs are resolved beneath the configured
 output root and reject traversal.

@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from .provider_errors import error_code
+
 
 def turn(
     sessions: dict[str, dict],
@@ -60,9 +62,9 @@ def turn(
                 "output": str(output_path),
             })
         return images, session
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         session["turn"] -= 1
-        return [{"error": "Chat provider request failed", "error_code": "provider_failed"}], session
+        return [{"error": "Chat provider request failed", "error_code": error_code(error)}], session
     except Exception:
         session["turn"] -= 1
         return [{"error": "Chat service unavailable", "error_code": "service_unavailable"}], session

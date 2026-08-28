@@ -61,6 +61,7 @@ env GEMINI_API_KEY="..." FIGMA_ACCESS_TOKEN="..." bash launch.sh variations \
 - Durable version history with branching, favorite, back/undo, and cost recovery
 - Pin annotations, refine, variations, chat mode, and an advisory QC API
 - Cost tracking (per-image, per-day, per-session)
+- Privacy-safe provider ledger with cost variance, latency, outcomes, and alerts
 - Lightbox, skeleton loaders, prompt history, copy-prompt, Ctrl+Enter
 - `/api/whoami` endpoint to surface BYOK vs shared-key status
 

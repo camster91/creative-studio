@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from .provider_errors import error_code
+
 
 VARIATION_SUFFIXES = [
     " eye-level composition. warm 3200K overhead lighting. shallow depth of field with creamy bokeh. Professional product photography.",
@@ -58,8 +60,8 @@ def refine(
         if output_path.exists():
             model = "gemini-3.1-flash-image-preview" if tier in ("fast", "balanced") else "gemini-3-pro-image-preview"
             return [{"path": str(output_path), "url": to_image_url(str(output_path)), "name": output_path.name, "cost": record_cost(model), "model": model}]
-    except subprocess.CalledProcessError:
-        return [{"error": "Refine provider request failed", "error_code": "provider_failed"}]
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        return [{"error": "Refine provider request failed", "error_code": error_code(error)}]
     except Exception:
         return [{"error": "Refine service unavailable", "error_code": "service_unavailable"}]
     return []
@@ -108,14 +110,21 @@ def variations(
             run(arguments, capture_output=True, text=True, timeout=300, env=environment, check=True)
             if path.exists():
                 images.append({"path": str(path), "url": to_image_url(str(path)), "name": name, "cost": record_cost(model, resolution), "model": model, "variation_index": index + 1})
-        except subprocess.CalledProcessError:
-            continue
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            images.append({
+                "error": "Variation provider request failed",
+                "error_code": error_code(error),
+                "variation_index": index + 1,
+            })
     manifest = {
         "count": len(images), "model": tier_models.get(tier, ("gemini-3-pro-image-preview", "2K"))[0],
         "resolution": tier_models.get(tier, ("gemini-3-pro-image-preview", "2K"))[1],
         "original_prompt": prompt, "tier": tier, "aspect_ratio": aspect,
-        "files": [image["path"] for image in images],
-        "prompts": [prompt + VARIATION_SUFFIXES[index % len(VARIATION_SUFFIXES)] for index in range(len(images))],
+        "files": [image["path"] for image in images if "path" in image],
+        "prompts": [
+            prompt + VARIATION_SUFFIXES[index % len(VARIATION_SUFFIXES)]
+            for index, image in enumerate(images) if "path" in image
+        ],
     }
     (session_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return images, session_key
@@ -169,8 +178,8 @@ def refine_variation(
         run(arguments, capture_output=True, text=True, timeout=300, env=environment, check=True)
         if output_path.exists():
             return [{"path": str(output_path), "url": to_image_url(str(output_path)), "name": output_path.name, "cost": record_cost(model, resolution), "model": model}]
-    except subprocess.CalledProcessError:
-        return [{"error": "Refine provider request failed", "error_code": "provider_failed"}]
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        return [{"error": "Refine provider request failed", "error_code": error_code(error)}]
     except Exception:
         return [{"error": "Refine service unavailable", "error_code": "service_unavailable"}]
     return [{"error": "Refine produced no output"}]

@@ -225,6 +225,47 @@ class TestProductionAuthorization:
         assert "private@example.com" not in combined
         assert "bearer-secret" not in combined
 
+
+    def test_provider_result_accounting_is_redacted_and_correlated(self, monkeypatch):
+        recorded = []
+
+        class Ledger:
+            def record(self, **values):
+                recorded.append(values)
+                return True
+
+        monkeypatch.setattr(cs, "_provider_ledger", Ledger())
+        cs._provider_trace_state.calls = []
+        result = {
+            "url": "/image/customer-secret.png",
+            "prompt": "private launch campaign",
+            "cost": 0.06,
+            "model": "gemini-test",
+        }
+        cs._record_provider_results(
+            "key:hashed", "job_1", [result],
+            estimated_cost_each=0.05, latency_ms=123,
+        )
+        assert result["provider_correlation_id"].startswith("pcall_")
+        assert recorded[0]["actual_cost"] == 0.06
+        serialized = json.dumps(recorded)
+        assert "customer-secret" not in serialized
+        assert "private launch campaign" not in serialized
+
+    def test_provider_correlation_is_set_before_subprocess(self, monkeypatch):
+        observed = {}
+
+        def run(*_args, **kwargs):
+            observed.update(kwargs["env"])
+            return object()
+
+        monkeypatch.setattr(cs.subprocess, "run", run)
+        cs._provider_trace_state.calls = []
+        cs._tracked_provider_run(["provider"], env={"GEMINI_API_KEY": "secret"})
+        traces = cs._take_provider_traces()
+        assert observed["CREATIVE_PROVIDER_CORRELATION_ID"] == traces[0]["correlation_id"]
+        assert traces[0]["correlation_id"].startswith("pcall_")
+
     def test_shared_figma_token_is_disabled_by_default(self, flask_client, monkeypatch):
         monkeypatch.delenv("CREATIVE_ENABLE_SHARED_FIGMA_TOKEN", raising=False)
         response = flask_client.post(

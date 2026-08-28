@@ -43,6 +43,7 @@ def install_request_metrics(app, emit, *, clock=time.monotonic) -> None:
 def summarize_request_metrics(lines, *, spend_today=0.0, daily_limit=0.0, queue_depth=0, error_rate_limit=0.05, latency_p95_limit_ms=10_000, queue_depth_limit=20):
     """Summarize synthetic/live JSONL and return deterministic alert reasons."""
     events = []
+    delivery_failures = 0
     for line in lines:
         try:
             event = json.loads(line)
@@ -50,6 +51,10 @@ def summarize_request_metrics(lines, *, spend_today=0.0, daily_limit=0.0, queue_
             continue
         if event.get("event") == "http_request" and isinstance(event.get("status"), int):
             events.append(event)
+        elif event.get("event") == "magic_link_delivery" and event.get("success") is False:
+            delivery_failures = max(
+                delivery_failures, int(event.get("consecutive_failures") or 1)
+            )
     request_count = len(events)
     error_count = sum(event["status"] >= 500 for event in events)
     error_rate = error_count / request_count if request_count else 0.0
@@ -64,6 +69,8 @@ def summarize_request_metrics(lines, *, spend_today=0.0, daily_limit=0.0, queue_
         alerts.append("http_latency_p95")
     if queue_depth > queue_depth_limit:
         alerts.append("queue_depth")
+    if delivery_failures >= 5:
+        alerts.append("email_delivery_failures")
     return {
         "schema_version": 1,
         "request_count": request_count,
@@ -73,5 +80,6 @@ def summarize_request_metrics(lines, *, spend_today=0.0, daily_limit=0.0, queue_
         "spend_today": spend_today,
         "daily_limit": daily_limit,
         "queue_depth": queue_depth,
+        "email_consecutive_failures": delivery_failures,
         "alerts": alerts,
     }
