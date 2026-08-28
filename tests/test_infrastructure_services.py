@@ -25,6 +25,7 @@ from creative_studio_app import auth as auth_service
 from creative_studio_app import projects as project_service
 from creative_studio_app import generation as generation_service
 from creative_studio_app.delivery import parse_qc_output
+from creative_studio_app import chat as chat_service
 
 
 def test_job_ids_are_unique_and_prefixed():
@@ -302,3 +303,36 @@ def test_qc_parser_maps_score_failures_and_warnings():
     assert result["floating_products"] is True
     assert result["readable_labels"] is True
     assert result["issues"] == ["glare on label"]
+
+
+def test_chat_service_feeds_each_output_into_the_next_turn(tmp_path):
+    sessions = {}
+    calls = []
+
+    def run(arguments, **kwargs):
+        calls.append(arguments)
+        output = Path(arguments[arguments.index("--filename") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"png")
+
+    dependencies = {
+        "output_dir": tmp_path,
+        "script_path": "creative_studio.py",
+        "python_executable": "python",
+        "tier_models": {"balanced": ("model", "1K")},
+        "run": run,
+        "record_cost": lambda model, resolution: 0.1,
+        "to_image_url": lambda path: "/image/" + Path(path).name,
+    }
+    first, _ = chat_service.turn(
+        sessions, "chat-1", "key", "first", "balanced", "1:1",
+        input_image=None, **dependencies,
+    )
+    second, session = chat_service.turn(
+        sessions, "chat-1", "key", "second", "balanced", "1:1",
+        input_image=None, **dependencies,
+    )
+
+    assert first[0]["turn"] == 1 and second[0]["turn"] == 2
+    assert calls[1][calls[1].index("--input-image") + 1] == first[0]["path"]
+    assert len(session["history"]) == 2

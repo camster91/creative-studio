@@ -44,6 +44,7 @@ from creative_studio_app import projects as _project_service
 from creative_studio_app import generation as _generation_service
 from creative_studio_app import delivery as _delivery_service
 from creative_studio_app import iterations as _iteration_service
+from creative_studio_app import chat as _chat_service
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -608,7 +609,7 @@ def run_cli_refine_from_variation(
 
 
 # ─── Chat multi-turn state ──────────────────────────────────────────────
-_chat_sessions: Dict[str, dict] = {}  # session_key → {turn, current_input, history}
+_chat_sessions: Dict[str, dict] = {}
 
 
 def run_cli_chat_turn(
@@ -619,106 +620,31 @@ def run_cli_chat_turn(
     aspect: str,
     input_image: Optional[str] = None,
 ) -> tuple[List[Dict], dict]:
-    """
-    Single turn of the multi-turn chat workflow.
-    Each result feeds into the next turn as the input image.
-    Returns (images, session_state).
-    """
-    today = datetime.now().strftime("%Y-%m-%d")
-    out_dir = OUTPUT_DIR / today / "chat"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    if session_key not in _chat_sessions:
-        _chat_sessions[session_key] = {
-            "turn": 0,
-            "current_input": input_image,
-            "initial_input": input_image,
-            "history": [],
-        }
-
-    sess = _chat_sessions[session_key]
-    sess["turn"] += 1
-    turn = sess["turn"]
-
-    fname = f"turn-{turn:02d}.png"
-    out_path = out_dir / f"{session_key}" / fname
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    _tier_info = _TIER_MODEL.get(tier, ("gemini-3.1-flash-image-preview", "1K"))
-    _resolution = _tier_info[1] if isinstance(_tier_info, tuple) else "1K"
-    args = [
-        sys.executable,
-        SCRIPT_PATH,
-        "direct",
-        "--prompt",
+    return _chat_service.turn(
+        _chat_sessions,
+        session_key,
+        api_key,
         prompt,
-        "--tier",
         tier,
-        "--aspect-ratio",
         aspect,
-        "--resolution",
-        _resolution,
-        "--filename",
-        str(out_path),
-    ]
-    current_input = sess["current_input"]
-    if current_input:
-        args += ["--input-image", current_input]
-
-    env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key
-    env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
-
-    images = []
-    try:
-        subprocess.run(
-            args, capture_output=True, text=True, timeout=300, env=env, check=True
-        )
-        if out_path.exists():
-            model_used, resolution = _TIER_MODEL.get(tier, ("gemini-3-pro-image-preview", "2K"))
-            cost = track_cost(model_used, resolution)
-            images.append(
-                {
-                    "path": str(out_path),
-                    "url": image_url(str(out_path)),
-                    "name": fname,
-                    "cost": cost,
-                    "model": model_used,
-                    "turn": turn,
-                }
-            )
-            # Feed this output as input for next turn
-            sess["current_input"] = str(out_path)
-            sess["history"].append(
-                {
-                    "turn": turn,
-                    "prompt": prompt,
-                    "input": current_input,
-                    "output": str(out_path),
-                }
-            )
-    except subprocess.CalledProcessError as e:
-        sess["turn"] -= 1  # rollback on failure
-        return [{"error": f"Generation failed: {e.stderr[:500] if e.stderr else e}"}], sess
-    except Exception as e:
-        sess["turn"] -= 1
-        return [{"error": str(e)}], sess
-
-    return images, sess
+        input_image=input_image,
+        output_dir=OUTPUT_DIR,
+        script_path=SCRIPT_PATH,
+        python_executable=sys.executable,
+        tier_models=_TIER_MODEL,
+        run=subprocess.run,
+        record_cost=track_cost,
+        to_image_url=image_url,
+    )
 
 
 def chat_session_history(session_key: str) -> List[dict]:
-    sess = _chat_sessions.get(session_key, {})
-    return sess.get("history", [])
+    return _chat_service.history(_chat_sessions, session_key)
 
 
 def chat_reset(session_key: str) -> dict:
-    sess = _chat_sessions.get(session_key, {})
-    sess["turn"] = 0
-    sess["current_input"] = sess.get("initial_input")
-    sess["history"] = []
-    _chat_sessions[session_key] = sess
-    return sess
+    return _chat_service.reset(_chat_sessions, session_key)
+
 
 
 # ─── Flask App ─────────────────────────────────────────────────────────
