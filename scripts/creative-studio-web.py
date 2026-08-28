@@ -3817,6 +3817,13 @@ def api_library_delete(subpath):
 import re as _re_seo
 import html as _html_seo
 import xml.etree.ElementTree as _ET
+from creative_studio_app.seo import (
+    canonical_url as _seo_canonical_url,
+    inline_markdown as _seo_inline_markdown,
+    load_blog_posts as _seo_load_blog_posts,
+    markdown_to_html as _seo_markdown_to_html,
+    parse_blog_post as _seo_parse_blog_post,
+)
 
 BLOG_CONTENT_DIR = APP_ROOT / "content" / "blog"
 BLOG_CONTENT_DIR.mkdir(parents=True, exist_ok=True)
@@ -3826,32 +3833,7 @@ _BLOG_FRONTMATTER_RE = _re_seo.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", _re_seo
 def _parse_blog_post(path: Path) -> dict:
     """Parse a single blog post .md file. Returns {slug, title, description,
     date, tags, body_md, body_html, template_id} or {} if invalid."""
-    try:
-        raw = path.read_text()
-    except (OSError, UnicodeDecodeError):
-        return {}
-    m = _BLOG_FRONTMATTER_RE.match(raw)
-    if not m:
-        return {}
-    front, body_md = m.group(1), m.group(2)
-    meta = {}
-    for line in front.splitlines():
-        if ":" in line:
-            k, v = line.split(":", 1)
-            meta[k.strip().lower()] = v.strip().strip('"').strip("'")
-    # Convert markdown to HTML (minimal: headings, paragraphs, lists, links, code)
-    body_html = _markdown_to_html(body_md)
-    slug = path.stem  # e.g. "photoroom-vs-photogen.md" -> "photoroom-vs-photogen"
-    return {
-        "slug": slug,
-        "title": meta.get("title", slug.replace("-", " ").title()),
-        "description": meta.get("description", ""),
-        "date": meta.get("date", ""),
-        "tags": [t.strip() for t in meta.get("tags", "").split(",") if t.strip()],
-        "template_id": meta.get("template_id", "").strip(),
-        "body_md": body_md,
-        "body_html": body_html,
-    }
+    return _seo_parse_blog_post(path)
 
 
 def _markdown_to_html(md: str) -> str:
@@ -3859,73 +3841,23 @@ def _markdown_to_html(md: str) -> str:
     posts: # h1, ## h2, ### h3, **bold**, *italic*, [text](url),
     lists (lines starting with -), fenced code blocks. NOT a full
     CommonMark implementation; the operator should keep posts simple."""
-    out_lines = []
-    in_code = False
-    in_list = False
-    for line in md.splitlines():
-        if line.startswith("```"):
-            if in_code:
-                out_lines.append("</code></pre>")
-                in_code = False
-            else:
-                out_lines.append("<pre><code>")
-                in_code = True
-            continue
-        if in_code:
-            out_lines.append(_html_seo.escape(line))
-            continue
-        if line.startswith("### "):
-            if in_list: out_lines.append("</ul>"); in_list = False
-            out_lines.append(f"<h3>{_html_seo.escape(line[4:].strip())}</h3>")
-        elif line.startswith("## "):
-            if in_list: out_lines.append("</ul>"); in_list = False
-            out_lines.append(f"<h2>{_html_seo.escape(line[3:].strip())}</h2>")
-        elif line.startswith("# "):
-            if in_list: out_lines.append("</ul>"); in_list = False
-            out_lines.append(f"<h1>{_html_seo.escape(line[2:].strip())}</h1>")
-        elif line.startswith("- "):
-            if not in_list: out_lines.append("<ul>"); in_list = True
-            out_lines.append(f"<li>{_inline_md(line[2:].strip())}</li>")
-        elif line.strip() == "":
-            if in_list: out_lines.append("</ul>"); in_list = False
-            out_lines.append("")
-        else:
-            if in_list: out_lines.append("</ul>"); in_list = False
-            out_lines.append(f"<p>{_inline_md(line)}</p>")
-    if in_list: out_lines.append("</ul>")
-    if in_code: out_lines.append("</code></pre>")
-    return "\n".join(out_lines)
+    return _seo_markdown_to_html(md)
 
 
 def _inline_md(s: str) -> str:
     """Inline: **bold**, *italic*, [text](url), `code`."""
-    s = _html_seo.escape(s)
-    # [text](url) — url is already escaped above, but we want raw url
-    # Re-do: match the escaped form, leave url alone
-    s = _re_seo.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', s)
-    s = _re_seo.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
-    s = _re_seo.sub(r"\*([^*]+)\*", r"<em>\1</em>", s)
-    s = _re_seo.sub(r"`([^`]+)`", r"<code>\1</code>", s)
-    return s
+    return _seo_inline_markdown(s)
 
 
 def _load_all_blog_posts() -> list:
     """Return all blog posts, newest first."""
-    if not BLOG_CONTENT_DIR.is_dir():
-        return []
-    posts = []
-    for f in BLOG_CONTENT_DIR.glob("*.md"):
-        p = _parse_blog_post(f)
-        if p:
-            posts.append(p)
-    posts.sort(key=lambda p: p.get("date") or "", reverse=True)
-    return posts
+    return _seo_load_blog_posts(BLOG_CONTENT_DIR)
 
 
 def _canonical_url(path: str) -> str:
     """Build the canonical URL for a public page. Sitemap uses
     these to tell search engines about the page."""
-    return "https://photogen.ashbi.ca" + path
+    return _seo_canonical_url(path)
 
 
 @app.route("/robots.txt")
