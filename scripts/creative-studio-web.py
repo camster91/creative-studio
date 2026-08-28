@@ -55,6 +55,7 @@ from creative_studio_app.chat_routes import create_blueprint as _create_chat_blu
 from creative_studio_app.core_routes import create_blueprint as _create_core_blueprint
 from creative_studio_app.delivery_routes import create_blueprint as _create_delivery_blueprint
 from creative_studio_app.generation_routes import create_blueprint as _create_generation_blueprint
+from creative_studio_app.iteration_routes import create_blueprint as _create_iteration_blueprint
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -935,115 +936,6 @@ def _is_safe_export_url(url: str) -> bool:
     return True
 
 
-@app.route("/api/refine", methods=["POST"])
-@rate_limited
-def api_refine():
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    data = request.json or {}
-    image_path = data.get("image_path", "")
-    changes = data.get("changes", "").strip()
-    pins = data.get("pins", [])
-    tier = data.get("tier", "quality")
-    session_id = data.get("session_id", new_session_id())
-
-    # Build spatial prompt from pins + user text
-    pin_text = build_pin_prompt(pins) if pins else ""
-    if pin_text and changes:
-        full_changes = f"{changes}. Also: {pin_text}"
-    elif pin_text:
-        full_changes = pin_text
-    elif changes:
-        full_changes = changes
-    else:
-        return jsonify({"error": "changes or pins required"}), 400
-
-    images = run_cli_refine(image_path, full_changes, api_key, tier)
-    for img in images:
-        add_entry(
-            session_id,
-            {
-                "type": "refine",
-                "cost": img.get("cost", 0),
-                "image_url": img.get("url", ""),
-                "model": img.get("model", ""),
-                "note": full_changes[:200],
-            },
-        )
-
-    return jsonify({"message": "Refined", "images": images, "session_id": session_id})
-
-
-# ── Variations + Refine Routes ─────────────────────────────────────────────
-
-
-@app.route("/api/variations", methods=["POST"])
-@rate_limited
-def api_variations():
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    data = request.json or {}
-    prompt = data.get("prompt", "").strip()
-    if not prompt:
-        return jsonify({"error": "Prompt required"}), 400
-    cap = _enforce_prompt_length(prompt)
-    if cap is not None:
-        return cap
-
-    count = int(data.get("count", 4))
-    count = max(1, min(8, count))
-    tier = data.get("tier", "balanced")
-    aspect = data.get("aspect_ratio", "1:1")
-    session_id = data.get("session_id", new_session_id())
-
-    # ── Server-side cost guardrail ──
-    guard = enforce_daily_limit(count, tier)
-    if guard is not None:
-        return guard
-
-    # Handle optional reference image upload
-    input_image = None
-    if "image" in request.files:
-        f = request.files["image"]
-        tmp_dir = DATA_DIR / "uploads"
-        tmp_dir.mkdir(exist_ok=True)
-        input_image = str(tmp_dir / f"variations_ref_{int(time.time())}_{_safe_filename(f.filename)}")
-        f.save(input_image)
-
-    images, session_key = run_cli_variations(api_key,
-        prompt=prompt,
-        count=count,
-        tier=tier,
-        aspect=aspect,
-        input_image=input_image,
-    )
-
-    for img in images:
-        if "error" not in img:
-            add_entry(
-                session_id,
-                {
-                    "type": "variations",
-                    "prompt": prompt[:100],
-                    "cost": img.get("cost", 0),
-                    "image_url": img.get("url", ""),
-                    "model": img.get("model", ""),
-                    "note": f"v{img.get('variation_index', '?')}",
-                },
-            )
-
-    return jsonify(
-        {
-            "message": f"Generated {len(images)} variation(s)",
-            "images": images,
-            "session_key": session_key,
-            "session_id": session_id,
-        }
-    )
-
-
 # ── Scene-set endpoint: one product, 5 scene types, 5 outputs in parallel ──
 # This is the Riverflow-style "wow" — upload a product, get one of each
 # scene type back in a single click. No client-side loop required.
@@ -1068,164 +960,6 @@ _SCENE_LABELS = {
     "lifestyle": "Lifestyle",
     "withprops": "With props",
 }
-
-
-@app.route("/api/scene-set", methods=["POST"])
-@rate_limited
-def api_scene_set():
-    """One product → 5 images, one per scene type, generated in parallel threads.
-
-    Form fields:
-      - product: the product image file (required)
-      - tier: 'fast' | 'balanced' | 'quality' | 'ultra' (default: balanced)
-      - session_id: optional session id
-
-    Returns JSON {images: [...], message, session_id} where each image has
-    scene (inhand|studio|action|lifestyle|withprops), label, url, cost, model.
-    """
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-
-    if "product" not in request.files:
-        return jsonify({"error": "Product image required (form field 'product')"}), 400
-
-    f = request.files["product"]
-    if not f or not f.filename:
-        return jsonify({"error": "Empty product upload"}), 400
-    # Filename-based mime sniff (works across storage backends; some
-    # FileStorage wrappers raise on .type access for in-memory uploads).
-    # Note: strip any path components first so a filename like
-    # `../../etc/passwd.png` doesn't both pass the extension check AND
-    # smuggle a path-traversal into the save path. The save path uses
-    # _safe_filename() below which strips a second time for defense in
-    # depth.
-    fname = _safe_filename(f.filename)
-    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
-    if ext not in _IMAGE_EXTS:
-        return jsonify({"error": "Product must be PNG, JPG, WEBP, GIF, or BMP"}), 400
-
-    tier = request.form.get("tier", "balanced")
-    if tier not in _TIER_MODEL:
-        tier = "balanced"
-    session_id = request.form.get("session_id", new_session_id())
-
-    # Cost guardrail: 5 images worst-case
-    guard = enforce_daily_limit(5, tier)
-    if guard is not None:
-        return guard
-
-    # Save the uploaded product once
-    tmp_dir = DATA_DIR / "uploads"
-    tmp_dir.mkdir(exist_ok=True)
-    product_path = tmp_dir / f"sceneset_{int(time.time())}_{_safe_filename(f.filename)}"
-    f.save(str(product_path))
-
-    # Use a thread pool to run all 5 scenes in parallel
-    images: List[Dict] = []
-    images_lock = threading.Lock()
-    scenes = list(_SCENE_PROMPTS.keys())
-
-    def _run_scene(scene_key: str):
-        prompt = _SCENE_PROMPTS[scene_key]
-        aspect = _SCENE_ASPECTS[scene_key]
-        try:
-            # Pass the scene key as the name_suffix so the 5 parallel
-            # scene-set threads can't collide on the timestamp-based
-            # filename in run_cli_composite. Each scene gets a
-            # distinct filename like composite-1700000000-inhand-<hex>.png
-            # instead of all-5-writing-to-the-same composite-1700000000.png.
-            imgs = run_cli_composite(
-                prompt, str(product_path), api_key, aspect,
-                name_suffix=scene_key,
-            )
-            if imgs and "error" not in imgs[0]:
-                img = imgs[0]
-                with images_lock:
-                    images.append({
-                        "scene": scene_key,
-                        "label": _SCENE_LABELS[scene_key],
-                        "url": img.get("url", ""),
-                        "path": img.get("path", ""),
-                        "name": img.get("name", ""),
-                        "cost": img.get("cost", 0),
-                        "model": img.get("model", ""),
-                        "ratio": aspect,
-                    })
-                    add_entry(
-                        session_id,
-                        {
-                            "type": "sceneset",
-                            "prompt": prompt[:100],
-                            "cost": img.get("cost", 0),
-                            "image_url": img.get("url", ""),
-                            "model": img.get("model", ""),
-                            "note": _SCENE_LABELS[scene_key],
-                        },
-                    )
-        except Exception as e:
-            # Silently skip failed scenes so the user still gets 4 of 5
-            print(f"[sceneset] {scene_key} failed: {e}", file=sys.stderr)
-
-    threads = [threading.Thread(target=_run_scene, args=(s,), daemon=True) for s in scenes]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=300)  # each scene up to 5 min
-
-    # Order the output to match scene order (Riverflow-style bento)
-    images.sort(key=lambda x: scenes.index(x["scene"]) if x["scene"] in scenes else 99)
-
-    total_cost = sum(img.get("cost", 0) for img in images)
-    return jsonify({
-        "message": f"Generated {len(images)}/{len(scenes)} scene(s)",
-        "images": images,
-        "session_id": session_id,
-        "total_cost": total_cost,
-        "scenes_requested": scenes,
-    })
-
-
-@app.route("/api/variations/<session_key>/refine", methods=["POST"])
-@rate_limited
-def api_variations_refine(session_key):
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    data = request.json or {}
-    pick = int(data.get("pick", 1))  # 1-based variation index
-    changes = data.get("changes", "").strip()
-    tier = data.get("tier", "quality")
-    session_id = data.get("session_id", new_session_id())
-
-    if not changes:
-        return jsonify({"error": "changes required"}), 400
-
-    images = run_cli_refine_from_variation(
-        session_key=session_key,
-        pick_index=pick,
-        changes=changes,
-        tier=tier,
-        api_key=api_key,
-    )
-
-    for img in images:
-        if "error" not in img:
-            add_entry(
-                session_id,
-                {
-                    "type": "refine",
-                    "prompt": f"Refine v{pick}: {changes[:80]}",
-                    "cost": img.get("cost", 0),
-                    "image_url": img.get("url", ""),
-                    "model": img.get("model", ""),
-                    "note": f"Refined from v{pick}",
-                },
-            )
-
-    return jsonify(
-        {"message": "Refined", "images": images, "session_id": session_id}
-    )
 
 
 # ── Pin Annotation Routes ───────────────────────────────────────────────
@@ -1550,6 +1284,30 @@ app.register_blueprint(
         save_costs=save_costs,
         get_sessions_dir=lambda: SESSIONS_DIR,
         current_session=_current_session,
+        rate_limited=rate_limited,
+    )
+)
+app.register_blueprint(
+    _create_iteration_blueprint(
+        require_api_key=_require_api_key,
+        enforce_prompt_length=_enforce_prompt_length,
+        enforce_daily_limit=enforce_daily_limit,
+        build_pin_prompt=build_pin_prompt,
+        safe_filename=_safe_filename,
+        get_data_dir=lambda: DATA_DIR,
+        image_extensions=_IMAGE_EXTS,
+        tier_models=_TIER_MODEL,
+        scene_prompts=_SCENE_PROMPTS,
+        scene_aspects=_SCENE_ASPECTS,
+        scene_labels=_SCENE_LABELS,
+        new_session_id=new_session_id,
+        run_refine=lambda *args, **kwargs: run_cli_refine(*args, **kwargs),
+        run_variations=lambda *args, **kwargs: run_cli_variations(*args, **kwargs),
+        run_composite=lambda *args, **kwargs: run_cli_composite(*args, **kwargs),
+        run_refine_from_variation=lambda **kwargs: run_cli_refine_from_variation(
+            **kwargs
+        ),
+        add_entry=add_entry,
         rate_limited=rate_limited,
     )
 )

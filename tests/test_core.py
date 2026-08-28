@@ -459,6 +459,28 @@ class TestPageRoutes:
         assert response.status_code == 400
         assert "variations" in response.get_json()["error"]
 
+    @pytest.mark.parametrize("count", [0, 9, "many"])
+    def test_variations_reject_invalid_count(self, count):
+        with cs.app.test_client() as client:
+            response = client.post(
+                "/api/variations",
+                headers={"X-API-Key": "secret-user-key"},
+                json={"prompt": "product photo", "count": count},
+            )
+        assert response.status_code == 400
+        assert "count" in response.get_json()["error"]
+
+    @pytest.mark.parametrize("pick", [0, -1, "first"])
+    def test_variation_refine_rejects_invalid_pick(self, pick):
+        with cs.app.test_client() as client:
+            response = client.post(
+                "/api/variations/session/refine",
+                headers={"X-API-Key": "secret-user-key"},
+                json={"pick": pick, "changes": "reduce glare"},
+            )
+        assert response.status_code == 400
+        assert "pick" in response.get_json()["error"]
+
     def test_no_literal_unicode_escapes_in_frontend(self):
         """Regression: the HTML_TEMPLATE was a raw string, so literal '\\u003e' sequences
         were being served to the browser as the 6-char string instead of '>'. This broke
