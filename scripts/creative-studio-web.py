@@ -34,6 +34,11 @@ from creative_studio_app.costs import (
     save_costs as _save_costs,
     track_cost as _record_cost,
 )
+from creative_studio_app.informational import (
+    render_docs as _render_docs,
+    render_history as _render_history,
+    render_status as _render_status,
+)
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -2836,185 +2841,16 @@ def admin_waitlist_csv():
 
 @app.route("/status")
 def status_page():
-    """Live status page showing container health, active jobs, cost today."""
-    costs = load_costs()
-    today = datetime.now().strftime("%Y-%m-%d")
-    cost_today = costs.get("by_date", {}).get(today, 0.0)
-    total = costs.get("total", 0.0)
-    image_count = costs.get("image_count", 0)
-
-    # Active jobs
+    """Live status page showing cost and active-job health."""
     with _jobs_lock:
-        jobs_list = []
-        for jid, j in list(_jobs.items())[-20:]:
-            jobs_list.append({
-                "id": jid,
-                "status": j["status"],
-                "elapsed": round(time.time() - j["started_at"], 1) if j["started_at"] else None,
-            })
-        active_jobs = [j for j in jobs_list if j["status"] == "running"]
-
-    # Build job rows HTML
-    if active_jobs:
-        job_rows = "\n".join(
-            '<div class="job-row"><span>' + j["id"][:16] + '...</span><span class="badge running">running (' + str(j["elapsed"]) + 's)</span></div>'
-            for j in active_jobs
-        )
-    else:
-        job_rows = '<div class="job-row"><span>No active jobs</span><span class="badge ok">idle</span></div>'
-
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
-    cost_class = "warn" if cost_today > 3 else "ok"
-
-    html = (
-        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
-        '<title>Status | Creative Studio</title>'
-        '<style>'
-        ':root { --bg:#0a0a0f; --surface:#14141b; --border:rgba(255,255,255,0.08); --text:#f0f0f5; --text2:#9a9aa8; --ok:#2dd4a8; --warn:#fbbf24; --err:#f87171; --primary:#ff6b4a; --font:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif; }'
-        'body { font-family:var(--font); background:var(--bg); color:var(--text); padding:40px 24px; max-width:640px; margin:0 auto; }'
-        'h1 { font-size:1.3rem; margin-bottom:4px; } h1 span { color:var(--primary); }'
-        '.subtitle { color:var(--text2); font-size:0.9rem; margin-bottom:28px; }'
-        '.card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:16px; }'
-        '.card-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text2); margin-bottom:12px; font-weight:600; }'
-        '.metric { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); }'
-        '.metric:last-child { border:none; }'
-        '.metric .val { font-weight:700; font-size:1.1rem; }'
-        '.metric .lbl { color:var(--text2); font-size:0.85rem; }'
-        '.ok { color:var(--ok); } .warn { color:var(--warn); } .err { color:var(--err); }'
-        '.job-row { display:flex; justify-content:space-between; font-size:0.85rem; padding:6px 0; border-bottom:1px solid var(--border); }'
-        '.job-row:last-child { border:none; }'
-        '.badge { display:inline-block; padding:2px 8px; border-radius:100px; font-size:0.7rem; font-weight:600; }'
-        '.badge.ok { background:rgba(45,212,168,0.12); color:var(--ok); }'
-        '.badge.running { background:rgba(251,191,36,0.12); color:var(--warn); }'
-        '.badge.err { background:rgba(248,113,113,0.12); color:var(--err); }'
-        'a { color:var(--primary); text-decoration:none; } a:hover { text-decoration:underline; }'
-        '.refresh { text-align:center; margin-top:20px; font-size:0.8rem; color:var(--text2); }'
-        '</style></head><body>'
-        '<h1>Creative Studio <span>Status</span></h1>'
-        '<div class="subtitle">' + timestamp + '</div>'
-        '<div class="card"><div class="card-title">Cost Tracker</div>'
-        '<div class="metric"><span class="lbl">Today</span><span class="val ' + cost_class + '">$' + f"{cost_today:.2f}" + '</span></div>'
-        '<div class="metric"><span class="lbl">All time</span><span class="val">$' + f"{total:.2f}" + '</span></div>'
-        '<div class="metric"><span class="lbl">Images generated</span><span class="val">' + str(image_count) + '</span></div>'
-        '</div>'
-        '<div class="card"><div class="card-title">Active Jobs <span style="color:var(--text2);font-weight:400;">(' + str(len(active_jobs)) + ' running)</span></div>'
-        + job_rows +
-        '</div>'
-        '<div class="card"><div class="card-title">Quick Links</div>'
-        '<div class="metric"><span class="lbl"><a href="/">Back to Studio</a></span></span></div>'
-        '<div class="metric"><span class="lbl"><a href="/api/costs">Raw costs JSON</a></span></span></div>'
-        '</div>'
-        '<div class="refresh">Auto-refreshes every 30s — or <a href="/status">reload now</a></div>'
-        '<script>setTimeout(()=>location.reload(),30000);</script>'
-        '</body></html>'
-    )
-    return html
+        jobs_snapshot = {identifier: dict(job) for identifier, job in _jobs.items()}
+    return _render_status(load_costs(), jobs_snapshot)
 
 
 @app.route("/docs")
 def docs_page():
-    """API documentation page."""
-    html = (
-        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
-        '<title>API Docs | Creative Studio</title>'
-        '<style>'
-        ':root { --bg:#0a0a0f; --surface:#14141b; --border:rgba(255,255,255,0.08); --text:#f0f0f5; --text2:#9a9aa8; --ok:#2dd4a8; --warn:#fbbf24; --err:#f87171; --primary:#ff6b4a; --font:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif; }'
-        'body { font-family:var(--font); background:var(--bg); color:var(--text); padding:40px 24px; max-width:840px; margin:0 auto; }'
-        'h1 { font-size:1.3rem; margin-bottom:4px; } h1 span { color:var(--primary); }'
-        '.subtitle { color:var(--text2); font-size:0.9rem; margin-bottom:28px; }'
-        '.card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:16px; }'
-        '.card-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text2); margin-bottom:12px; font-weight:600; }'
-        '.endpoint { margin-bottom:24px; }'
-        '.endpoint:last-child { margin-bottom:0; }'
-        '.method { display:inline-block; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:700; margin-right:8px; }'
-        '.method.post { background:rgba(45,212,168,0.12); color:var(--ok); }'
-        '.method.get { background:rgba(96,165,250,0.12); color:#60a5fa; }'
-        '.path { font-family:monospace; font-size:0.9rem; color:var(--text); }'
-        '.desc { color:var(--text2); font-size:0.85rem; margin:6px 0 10px; }'
-        'pre { background:#0d0d12; border:1px solid var(--border); border-radius:8px; padding:12px; overflow-x:auto; font-size:0.78rem; color:#c4c4d0; margin:8px 0; }'
-        'code { font-family:monospace; font-size:0.82rem; color:var(--primary); }'
-        'table { width:100%; border-collapse:collapse; font-size:0.85rem; }'
-        'th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--border); }'
-        'th { color:var(--text2); font-weight:600; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em; }'
-        'a { color:var(--primary); text-decoration:none; } a:hover { text-decoration:underline; }'
-        '.nav { margin-bottom:24px; display:flex; gap:8px; flex-wrap:wrap; }'
-        '.nav a { font-size:0.85rem; color:var(--text2); padding:8px 12px; min-height:32px; display:inline-flex; align-items:center; border-radius:6px; }'
-        '.nav a:hover { color:var(--text); background:rgba(255,255,255,0.05); text-decoration:none; }'
-        '</style></head><body>'
-        '<div class="nav"><a href="/">← Studio</a> <a href="/status">Status</a> <a href="/history">History</a></div>'
-        '<h1>Creative Studio <span>API Docs</span></h1>'
-        '<div class="subtitle">Reference for the Creative Studio REST API. No auth required for reads. Writes need an API key.</div>'
-
-        '<div class="card">'
-        '<div class="card-title">Authentication</div>'
-        '<p class="desc">Creative Studio runs in <strong>BYOK mode</strong>. Pass your Gemini API key via the <code>X-API-Key</code> header on every write request. We do not store your key. Costs are billed directly by Google.</p>'
-        '<pre>curl -H "X-API-Key: YOUR_GEMINI_KEY" https://photogen.ashbi.ca/api/generate</pre>'
-        '</div>'
-
-        '<div class="card">'
-        '<div class="card-title">Endpoints</div>'
-
-        '<div class="endpoint">'
-        '<span class="method get">GET</span><span class="path">/api/costs</span>'
-        '<p class="desc">Get total spend, per-model breakdown, per-day breakdown, and image count.</p>'
-        '<pre>curl https://photogen.ashbi.ca/api/costs</pre>'
-        '</div>'
-
-        '<div class="endpoint">'
-        '<span class="method post">POST</span><span class="path">/api/validate-key</span>'
-        '<p class="desc">Test whether a Gemini API key is valid before using it.</p>'
-        '<pre>curl -X POST -H \"Content-Type: application/json\" -d \'{\"key\": \"YOUR_GEMINI_KEY\"}\' https://photogen.ashbi.ca/api/validate-key</pre>'
-        '</div>'
-
-        '<div class="endpoint">'
-        '<span class="method post">POST</span><span class="path">/api/generate</span>'
-        '<p class="desc">Generate a single image. Returns immediately with a job ID. Poll <code>/api/jobs/&lt;id&gt;</code> for the result.</p>'
-        '<pre>curl -X POST -H "X-API-Key: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d \'{"model": "gemini-3.1-flash-image-preview", "prompt": "A sleek bottle on marble", "ratio": "1:1", "product_image": "base64..."}\' \
-  https://photogen.ashbi.ca/api/generate</pre>'
-        '</div>'
-
-        '<div class="endpoint">'
-        '<span class="method post">POST</span><span class="path">/api/composite</span>'
-        '<p class="desc">Composite a product image onto a generated background. Same async pattern as /generate.</p>'
-        '<pre>curl -X POST -H "X-API-Key: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d \'{"prompt": "On a beach at sunset", "product_image": "base64...", "ratio": "4:3"}\' \
-  https://photogen.ashbi.ca/api/composite</pre>'
-        '</div>'
-
-        '<div class="endpoint">'
-        '<span class="method get">GET</span><span class="path">/api/jobs/&lt;job_id&gt;</span>'
-        '<p class="desc">Poll for job status. Returns <code>running</code>, <code>done</code> (with image URL + cost), or <code>error</code>.</p>'
-        '<pre>curl https://photogen.ashbi.ca/api/jobs/job_abc123</pre>'
-        '</div>'
-
-        '<div class="endpoint">'
-        '<span class="method get">GET</span><span class="path">/image/&lt;path&gt;</span>'
-        '<p class="desc">Serve a generated image. Paths are relative to the output directory.</p>'
-        '</div>'
-
-        '</div>'
-
-        '<div class="card">'
-        '<div class="card-title">Cost Table</div>'
-        '<table>'
-        '<tr><th>Model</th><th>Price / image</th></tr>'
-        '<tr><td>gemini-3.1-flash-image-preview (1K)</td><td>$0.045</td></tr>'
-        '<tr><td>gemini-3.1-flash-image-preview (2K)</td><td>$0.090</td></tr>'
-        '<tr><td>gemini-3-pro-image-preview (2K)</td><td>$0.240</td></tr>'
-        '<tr><td>imagen-4.0-fast-generate-001</td><td>$0.02</td></tr>'
-        '<tr><td>imagen-4.0-generate-001</td><td>$0.04</td></tr>'
-        '<tr><td>imagen-4.0-ultra-generate-001</td><td>$0.06</td></tr>'
-        '</table>'
-        '</div>'
-
-        '</body></html>'
-    )
-    return html
+    """Current authentication and endpoint reference."""
+    return _render_docs()
 
 
 @app.route("/privacy")
@@ -4015,81 +3851,8 @@ h1 {{ font-size: 32px; margin: 16px 0 8px; line-height: 1.2; }}
 
 @app.route("/history")
 def history_page():
-    """Show all past sessions from persistent data dir."""
-    sessions = []
-    if SESSIONS_DIR.exists():
-        for sess_file in sorted(SESSIONS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-            try:
-                data = load_json(sess_file)
-                created = datetime.fromtimestamp(sess_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-                images = data.get("images", [])
-                first_prompt = ""
-                if images:
-                    first_prompt = images[0].get("prompt", "")[:60] + ("..." if len(images[0].get("prompt", "")) > 60 else "")
-                cost = sum(img.get("cost", 0) for img in images)
-                model = images[0].get("model", "unknown") if images else "unknown"
-                sessions.append({
-                    "id": sess_file.stem,
-                    "created": created,
-                    "images": len(images),
-                    "cost": cost,
-                    "model": model,
-                    "prompt": first_prompt,
-                })
-            except Exception:
-                continue
-
-    rows = []
-    if sessions:
-        for s in sessions[:100]:
-            rows.append(
-                '<tr>'
-                '<td>' + s["created"] + '</td>'
-                '<td><code>' + s["id"][:16] + '</code></td>'
-                '<td>' + s["model"] + '</td>'
-                '<td>' + str(s["images"]) + '</td>'
-                '<td>$' + f"{s['cost']:.2f}" + '</td>'
-                '<td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + s["prompt"].replace('"', '&quot;') + '">' + s["prompt"] + '</td>'
-                '</tr>'
-            )
-    else:
-        rows = ['<tr><td colspan="6" style="text-align:center;color:var(--text2);padding:24px;">No sessions yet. Generate your first image in the Studio.</td></tr>']
-
-    html = (
-        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
-        '<title>History | Creative Studio</title>'
-        '<style>'
-        ':root { --bg:#0a0a0f; --surface:#14141b; --border:rgba(255,255,255,0.08); --text:#f0f0f5; --text2:#9a9aa8; --ok:#2dd4a8; --warn:#fbbf24; --err:#f87171; --primary:#ff6b4a; --font:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif; }'
-        'body { font-family:var(--font); background:var(--bg); color:var(--text); padding:40px 24px; max-width:960px; margin:0 auto; }'
-        'h1 { font-size:1.3rem; margin-bottom:4px; } h1 span { color:var(--primary); }'
-        '.subtitle { color:var(--text2); font-size:0.9rem; margin-bottom:28px; }'
-        '.card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:16px; overflow-x:auto; }'
-        '.card-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text2); margin-bottom:12px; font-weight:600; }'
-        'table { width:100%; border-collapse:collapse; font-size:0.85rem; }'
-        'th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); }'
-        'th { color:var(--text2); font-weight:600; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em; }'
-        'tr:hover td { background:rgba(255,255,255,0.02); }'
-        'code { font-family:monospace; font-size:0.8rem; background:#0d0d12; padding:2px 6px; border-radius:4px; color:var(--primary); }'
-        'a { color:var(--primary); text-decoration:none; } a:hover { text-decoration:underline; }'
-        '.nav { margin-bottom:24px; display:flex; gap:8px; flex-wrap:wrap; }'
-        '.nav a { font-size:0.85rem; color:var(--text2); padding:8px 12px; min-height:32px; display:inline-flex; align-items:center; border-radius:6px; }'
-        '.nav a:hover { color:var(--text); background:rgba(255,255,255,0.05); text-decoration:none; }'
-        '.total { font-size:0.85rem; color:var(--text2); margin-top:12px; }'
-        '</style></head><body>'
-        '<div class="nav"><a href="/">← Studio</a> <a href="/status">Status</a> <a href="/docs">API Docs</a></div>'
-        '<h1>Creative Studio <span>History</span></h1>'
-        '<div class="subtitle">All past sessions sorted by newest first.</div>'
-        '<div class="card">'
-        '<div class="card-title">Sessions</div>'
-        '<table>'
-        '<tr><th>Date</th><th>Session ID</th><th>Model</th><th>Images</th><th>Cost</th><th>Prompt</th></tr>'
-        + '\n'.join(rows) +
-        '</table>'
-        '</div>'
-        '</body></html>'
-    )
-    return html
+    """Render persistent generation history."""
+    return _render_history(SESSIONS_DIR, load_json)
 
 
 @app.route("/image/<path:subpath>")
