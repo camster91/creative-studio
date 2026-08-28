@@ -41,6 +41,8 @@ from creative_studio_app.informational import (
 )
 from creative_studio_app import auth as _auth_service
 from creative_studio_app import projects as _project_service
+from creative_studio_app import generation as _generation_service
+from creative_studio_app import delivery as _delivery_service
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -470,217 +472,72 @@ def run_cli_generate(
     input_image: Optional[str] = None,
     variations: int = 4,
 ) -> List[Dict]:
-    """Generate images by calling creative_studio.py directly (no bash/uv wrapper).
-    If variations > 1, run the direct command multiple times and collect outputs."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    out_dir = OUTPUT_DIR / today / mode
-    out_dir.mkdir(parents=True, exist_ok=True)
+    return _generation_service.generate(
+        prompt,
+        mode,
+        api_key,
+        tier,
+        aspect,
+        smart,
+        input_image=input_image,
+        variations=variations,
+        output_dir=OUTPUT_DIR,
+        script_path=SCRIPT_PATH,
+        python_executable=sys.executable,
+        tier_models=_TIER_MODEL,
+        run=subprocess.run,
+        record_cost=track_cost,
+        to_image_url=image_url,
+    )
 
-    env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key
-    env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
-
-    images = []
-    count = max(1, min(8, variations))
-    # Map tier → resolution so the CLI charges the correct amount
-    _tier_info = _TIER_MODEL.get(tier, ("gemini-3.1-flash-image-preview", "1K"))
-    resolution = _tier_info[1] if isinstance(_tier_info, tuple) else "1K"
-    for i in range(count):
-        args = [
-            sys.executable,
-            SCRIPT_PATH,
-            "direct",
-            "--prompt",
-            prompt,
-            "--tier",
-            tier,
-            "--aspect-ratio",
-            aspect,
-            "--resolution",
-            resolution,
-        ]
-        if smart:
-            args.append("--smart")
-        if input_image:
-            args += ["--input-image", input_image]
-
-        try:
-            proc = subprocess.run(
-                args, capture_output=True, text=True, timeout=300, env=env, check=True
-            )
-        except subprocess.CalledProcessError as e:
-            if i == 0:
-                return [{"error": f"Generation failed: {e.stderr[:500] if e.stderr else e}"}]
-            break  # Return what we have so far
-        except Exception as e:
-            if i == 0:
-                return [{"error": str(e)}]
-            break
-
-        # Collect the single most-recent file from this run
-        today_dir = OUTPUT_DIR / today
-        files = sorted(
-            today_dir.rglob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True
-        )
-        now = time.time()
-        recent = [f for f in files if (now - f.stat().st_mtime) < 180]
-        if recent:
-            f = recent[0]
-            model_used, resolution = _TIER_MODEL.get(tier, ("gemini-3-pro-image-preview", "2K"))
-            cost = track_cost(model_used, resolution)
-            images.append(
-                {
-                    "path": str(f),
-                    "url": image_url(str(f)),
-                    "name": f.name,
-                    "cost": cost,
-                    "model": model_used,
-                    "ratio": aspect,
-                }
-            )
-
-    if not images:
-        return [{"error": "Generation produced no output"}]
-    return images
 
 
 def run_cli_composite(
-    prompt: str, product_path: str, api_key: str, aspect: str, tier: str = "quality",
+    prompt: str,
+    product_path: str,
+    api_key: str,
+    aspect: str,
+    tier: str = "quality",
     name_suffix: str = "",
 ) -> List[Dict]:
-    out_dir = OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d") / "composite"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # Include a per-call uuid suffix so 5 parallel scene-set threads
-    # (which all start within the same second) can't collide on
-    # `int(time.time())`. Without this, last writer wins and the user
-    # pays for 5 generations but receives 1-2.
-    suffix = name_suffix or uuid.uuid4().hex[:6]
-    fname = f"composite-{int(time.time())}-{suffix}.png"
-    out_path = out_dir / fname
-
-    args = [
-        sys.executable,
-        SCRIPT_PATH,
-        "composite",
-        "--prompt",
+    return _generation_service.composite(
         prompt,
-        "--product",
         product_path,
-        "--aspect-ratio",
+        api_key,
         aspect,
-        "--tier",
         tier,
-        "--filename",
-        fname,
-    ]
-    env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key
+        name_suffix=name_suffix,
+        output_dir=OUTPUT_DIR,
+        script_path=SCRIPT_PATH,
+        python_executable=sys.executable,
+        run=subprocess.run,
+        record_cost=track_cost,
+        to_image_url=image_url,
+    )
 
-    try:
-        subprocess.run(
-            args, capture_output=True, text=True, timeout=300, env=env, check=True
-        )
-        if out_path.exists():
-            model_used = "gemini-3-pro-image-preview"
-            cost = track_cost(model_used)
-            return [
-                {
-                    "path": str(out_path),
-                    "url": image_url(str(out_path)),
-                    "name": fname,
-                    "cost": cost,
-                    "model": model_used,
-                    "ratio": aspect,
-                }
-            ]
-    except subprocess.CalledProcessError as e:
-        return [{"error": f"Composite failed: {e.stderr[:500] if e.stderr else e}"}]
-    except Exception as e:
-        return [{"error": str(e)}]
-    return [{"error": "Composite produced no output"}]
 
 
 def run_cli_export(source_path: str, presets: str, api_key: str) -> List[Dict]:
-    args = [
-        "bash",
-        str(Path(__file__).parent.parent / "launch.sh"),
-        "export",
-        "--input",
+    return _delivery_service.export_images(
         source_path,
-        "--presets",
         presets,
-    ]
-    env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key
-    env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
-    try:
-        subprocess.run(
-            args, capture_output=True, text=True, timeout=120, env=env, check=True
-        )
-        out_dir = OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d") / "exports"
-        files = list(out_dir.glob("*.png"))
-        images = []
-        for f in files:
-            images.append(
-                {
-                    "path": str(f),
-                    "url": image_url(str(f)),
-                    "name": f.name,
-                    "cost": 0.0,
-                    "model": "PIL",
-                }
-            )
-        return images
-    except subprocess.CalledProcessError as e:
-        return [{"error": f"Export failed: {e.stderr[:500] if e.stderr else e}"}]
-    except Exception as e:
-        return [{"error": str(e)}]
+        api_key,
+        launch_script=Path(__file__).parent.parent / "launch.sh",
+        output_dir=OUTPUT_DIR,
+        run=subprocess.run,
+        to_image_url=image_url,
+    )
+
 
 
 def run_cli_qc(image_path: str, api_key: str) -> dict:
-    args = [
-        "bash",
-        str(Path(__file__).parent.parent / "launch.sh"),
-        "qc",
-        "--input",
+    return _delivery_service.run_qc(
         image_path,
-    ]
-    env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key
-    # Parse stdout for QC results
-    try:
-        result = subprocess.run(
-            args, capture_output=True, text=True, timeout=120, env=env, check=True
-        )
-        out = result.stdout + result.stderr
-        # Extract score
-        score = 5
-        m = re.search(r"QC SCORE:\s*(\d)/10", out)
-        if m:
-            score = int(m.group(1))
-        floating = "FAIL" in out and "Floating" in out
-        garbled = "FAIL" in out and "Garbled" in out
-        shadows = "FAIL" in out and "Shadows" in out
-        fake = "FAIL" in out and "Fake" in out
-        labels = "PASS" in out and "Labels" in out
-        # Extract issues
-        issues = []
-        for line in out.split("\n"):
-            if "⚠" in line:
-                issues.append(line.replace("⚠", "").strip())
-        return {
-            "quality_score": score,
-            "floating_products": floating,
-            "garbled_text": garbled,
-            "detached_shadows": shadows,
-            "fake_products": fake,
-            "readable_labels": labels,
-            "issues": issues[:5],
-        }
-    except subprocess.CalledProcessError as e:
-        return {"quality_score": 0, "error": f"QC failed: {e.stderr[:500] if e.stderr else e}", "issues": []}
-    except Exception as e:
-        return {"quality_score": 0, "error": str(e), "issues": []}
+        api_key,
+        launch_script=Path(__file__).parent.parent / "launch.sh",
+        run=subprocess.run,
+    )
+
 
 
 def run_cli_refine(image_path: str, changes: str, api_key: str, tier: str) -> List[Dict]:

@@ -23,6 +23,8 @@ from creative_studio_app.seo import markdown_to_html, parse_blog_post
 from creative_studio_app.informational import render_docs, render_history, render_status
 from creative_studio_app import auth as auth_service
 from creative_studio_app import projects as project_service
+from creative_studio_app import generation as generation_service
+from creative_studio_app.delivery import parse_qc_output
 
 
 def test_job_ids_are_unique_and_prefixed():
@@ -254,3 +256,49 @@ def test_project_service_enforces_ownership(tmp_path):
     assert updated["generations"][0]["url"] == "/image/one.png"
     assert project_service.get(database, project["id"], "intruder") is None
     assert project_service.delete(database, project["id"], "intruder") is False
+
+
+def test_generation_service_builds_exact_passthrough_command(tmp_path):
+    from datetime import datetime
+    output_dir = tmp_path / "outputs"
+    calls = []
+
+    def run(arguments, **kwargs):
+        calls.append((arguments, kwargs))
+        destination = output_dir / datetime.now().strftime("%Y-%m-%d") / "direct"
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "result.png").write_bytes(b"png")
+
+    images = generation_service.generate(
+        "literal prompt",
+        "direct",
+        "secret-key",
+        "balanced",
+        "1:1",
+        False,
+        input_image=None,
+        variations=1,
+        output_dir=output_dir,
+        script_path="creative_studio.py",
+        python_executable="python",
+        tier_models={"balanced": ("model", "1K")},
+        run=run,
+        record_cost=lambda model, resolution: 0.25,
+        to_image_url=lambda path: "/image/result.png",
+    )
+
+    arguments, options = calls[0]
+    assert arguments[arguments.index("--prompt") + 1] == "literal prompt"
+    assert options["env"]["GEMINI_API_KEY"] == "secret-key"
+    assert images[0]["cost"] == 0.25
+
+
+def test_qc_parser_maps_score_failures_and_warnings():
+    result = parse_qc_output(
+        "QC SCORE: 7/10\nFloating: FAIL\nLabels: PASS\n⚠ glare on label"
+    )
+
+    assert result["quality_score"] == 7
+    assert result["floating_products"] is True
+    assert result["readable_labels"] is True
+    assert result["issues"] == ["glare on label"]
