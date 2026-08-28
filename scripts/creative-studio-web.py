@@ -51,6 +51,7 @@ from creative_studio_app.project_routes import create_blueprint as _create_proje
 from creative_studio_app.library_routes import create_blueprint as _create_library_blueprint
 from creative_studio_app.state_routes import create_blueprint as _create_state_blueprint
 from creative_studio_app.support_routes import create_blueprint as _create_support_blueprint
+from creative_studio_app.chat_routes import create_blueprint as _create_chat_blueprint
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -1639,121 +1640,6 @@ def api_variations_refine(session_key):
     )
 
 
-# ── Chat Routes ─────────────────────────────────────────────────────────────
-
-
-@app.route("/api/chat", methods=["POST"])
-@rate_limited
-def api_chat():
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    data = request.json or {}
-    prompt = data.get("prompt", "").strip()
-    if not prompt:
-        return jsonify({"error": "Prompt required"}), 400
-    cap = _enforce_prompt_length(prompt)
-    if cap is not None:
-        return cap
-
-    tier = data.get("tier", "balanced")
-    aspect = data.get("aspect_ratio", "1:1")
-    session_key = data.get("session_key", f"chat-{uuid.uuid4().hex[:8]}")
-    session_id = data.get("session_id", new_session_id())
-
-    # Optional starting image upload
-    input_image = None
-    if "image" in request.files:
-        f = request.files["image"]
-        tmp_dir = DATA_DIR / "uploads"
-        tmp_dir.mkdir(exist_ok=True)
-        input_image = str(tmp_dir / f"chat_ref_{int(time.time())}_{_safe_filename(f.filename)}")
-        f.save(input_image)
-        # If this is a fresh session, set the initial input
-        if session_key not in _chat_sessions:
-            pass  # run_cli_chat_turn handles first-turn initialization
-
-    images, sess = run_cli_chat_turn(api_key,
-        session_key=session_key,
-        prompt=prompt,
-        tier=tier,
-        aspect=aspect,
-        input_image=input_image,
-    )
-
-    for img in images:
-        if "error" not in img:
-            add_entry(
-                session_id,
-                {
-                    "type": "chat",
-                    "prompt": prompt[:100],
-                    "cost": img.get("cost", 0),
-                    "image_url": img.get("url", ""),
-                    "model": img.get("model", ""),
-                    "note": f"Turn {img.get('turn', '?')}",
-                },
-            )
-
-    return jsonify(
-        {
-            "message": "Turn complete",
-            "images": images,
-            "session_key": session_key,
-            "session_id": session_id,
-            "turn": sess.get("turn", 0),
-        }
-    )
-
-
-@app.route("/api/chat/<session_key>/history", methods=["GET"])
-@rate_limited
-def api_chat_history(session_key):
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    history = chat_session_history(session_key)
-    sess = _chat_sessions.get(session_key, {})
-    return jsonify(
-        {
-            "history": history,
-            "turn": sess.get("turn", 0),
-            "current_input": sess.get("current_input"),
-        }
-    )
-
-
-@app.route("/api/chat/<session_key>/reset", methods=["POST"])
-@rate_limited
-def api_chat_reset(session_key):
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    chat_reset(session_key)
-    return jsonify({"message": "Chat session reset", "turn": 0})
-
-
-@app.route("/api/chat/<session_key>/save", methods=["POST"])
-@rate_limited
-def api_chat_save(session_key):
-    """Save the latest output from a chat session as a named file."""
-    data = request.json or {}
-    name = data.get("name", "").strip() or f"chat-{int(time.time())}"
-    sess = _chat_sessions.get(session_key, {})
-    current_input = sess.get("current_input")
-
-    if not current_input or not Path(current_input).exists():
-        return jsonify({"error": "No output to save"}), 400
-
-    approved_dir = DATA_DIR / "approved"
-    approved_dir.mkdir(exist_ok=True)
-    dest = approved_dir / f"{name}.png"
-    import shutil
-
-    shutil.copy2(current_input, dest)
-    return jsonify({"message": f"Saved as {name}", "path": str(dest), "url": image_url(str(dest))})
-
-
 # ── Pin Annotation Routes ───────────────────────────────────────────────
 
 
@@ -2098,6 +1984,22 @@ app.register_blueprint(
         allow_server_fallback=ALLOW_SERVER_FALLBACK,
         version=__version__,
         admin_authed=_admin_authed,
+        rate_limited=rate_limited,
+    )
+)
+app.register_blueprint(
+    _create_chat_blueprint(
+        require_api_key=_require_api_key,
+        enforce_prompt_length=_enforce_prompt_length,
+        safe_filename=_safe_filename,
+        get_data_dir=lambda: DATA_DIR,
+        get_chat_sessions=lambda: _chat_sessions,
+        run_chat_turn=run_cli_chat_turn,
+        chat_history=chat_session_history,
+        reset_chat=chat_reset,
+        new_session_id=new_session_id,
+        add_entry=add_entry,
+        image_url=image_url,
         rate_limited=rate_limited,
     )
 )

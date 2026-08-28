@@ -250,6 +250,29 @@ class TestReadEndpointsRequireKey:
         r = client.post("/api/chat/chat-test/reset")
         assert r.status_code == 402
 
+    def test_chat_save_requires_key(self, monkeypatch):
+        monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", False)
+        monkeypatch.setattr(cs, "SERVER_API_KEY", "")
+        r = cs.app.test_client().post("/api/chat/chat-test/save", json={"name": "x"})
+        assert r.status_code == 402
+
+    def test_chat_save_name_cannot_escape_approved_dir(self, tmp_path, monkeypatch):
+        source = tmp_path / "source.png"
+        source.write_bytes(b"image")
+        monkeypatch.setattr(cs, "DATA_DIR", tmp_path)
+        cs._chat_sessions["chat-save"] = {"current_input": str(source)}
+
+        response = cs.app.test_client().post(
+            "/api/chat/chat-save/save",
+            json={"name": "../../outside"},
+            headers={"X-API-Key": "AIzaTest"},
+        )
+
+        assert response.status_code == 200
+        saved = Path(response.get_json()["path"]).resolve()
+        saved.relative_to((tmp_path / "approved").resolve())
+        assert not (tmp_path.parent / "outside.png").exists()
+
     def test_jobs_status_with_key_works(self, monkeypatch):
         """Sanity check: with a valid key, the endpoint still works
         (returns 404 for a nonexistent job, not 402)."""
