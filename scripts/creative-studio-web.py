@@ -43,6 +43,7 @@ from creative_studio_app import auth as _auth_service
 from creative_studio_app import projects as _project_service
 from creative_studio_app import generation as _generation_service
 from creative_studio_app import delivery as _delivery_service
+from creative_studio_app import iterations as _iteration_service
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -541,75 +542,20 @@ def run_cli_qc(image_path: str, api_key: str) -> dict:
 
 
 def run_cli_refine(image_path: str, changes: str, api_key: str, tier: str) -> List[Dict]:
-    # Since refine needs a session folder from variations, we'll do a "revise" via direct mode
-    # with the original image as reference + changes in prompt
-    out_dir = OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d") / "refine"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    fname = f"refine-{int(time.time())}.png"
-
-    # Build revised prompt
-    args = [
-        "bash",
-        str(Path(__file__).parent.parent / "launch.sh"),
-        "direct",
-        "--prompt",
-        f"Based on this reference image, make these changes: {changes}",
-        "--input-image",
+    return _iteration_service.refine(
         image_path,
-        "--tier",
+        changes,
+        api_key,
         tier,
-        "--filename",
-        fname,
-    ]
-    env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key
-    try:
-        subprocess.run(
-            args, capture_output=True, text=True, timeout=300, env=env, check=True
-        )
-        out_path = out_dir / fname
-        if not out_path.exists():
-            # Fallback: search for any newly created png in output dir
-            today_dir = OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d")
-            files = sorted(
-                today_dir.rglob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True
-            )
-            if files:
-                out_path = files[0]
-        if out_path.exists():
-            model_used = (
-                "gemini-3.1-flash-image-preview"
-                if tier in ("fast", "balanced")
-                else "gemini-3-pro-image-preview"
-            )
-            cost = track_cost(model_used)
-            return [
-                {
-                    "path": str(out_path),
-                    "url": image_url(str(out_path)),
-                    "name": out_path.name,
-                    "cost": cost,
-                    "model": model_used,
-                }
-            ]
-    except subprocess.CalledProcessError as e:
-        return [{"error": f"Refine failed: {e.stderr[:500] if e.stderr else e}"}]
-    except Exception as e:
-        return [{"error": str(e)}]
-    return []
+        output_dir=OUTPUT_DIR,
+        launch_script=Path(__file__).parent.parent / "launch.sh",
+        run=subprocess.run,
+        record_cost=track_cost,
+        to_image_url=image_url,
+    )
 
 
-# Variations angle/lighting suffix templates — match CLI cmd_variations exactly
-_VARIATION_SUFFIXES = [
-    " eye-level composition. warm 3200K overhead lighting. shallow depth of field with creamy bokeh. Professional product photography.",
-    " slightly low angle hero shot. neutral 5600K soft-diffused lighting. deep depth of field. Professional product photography.",
-    " three-quarter view composition. crisp directional rim light. selective focus on hero product. Professional product photography.",
-    " straight-on composition. even flat ambient lighting. sharp throughout with slight falloff. Professional product photography.",
-    " eye-level composition. neutral 5600K soft-diffused lighting. shallow depth of field with creamy bokeh. Professional product photography.",
-    " slightly low angle hero shot. warm 3200K overhead lighting. deep depth of field. Professional product photography.",
-    " three-quarter view composition. even flat ambient lighting. selective focus on hero product. Professional product photography.",
-    " straight-on composition. crisp directional rim light. sharp throughout with slight falloff. Professional product photography.",
-]
+_VARIATION_SUFFIXES = _iteration_service.VARIATION_SUFFIXES
 
 
 def run_cli_variations(
@@ -620,89 +566,21 @@ def run_cli_variations(
     aspect: str,
     input_image: Optional[str] = None,
 ) -> tuple[List[Dict], str]:
-    """
-    Generate N variations using the same brief + different angle/lighting suffixes.
-    Returns (images, session_key) where session_key is used by refine.
-    """
-    today = datetime.now().strftime("%Y-%m-%d")
-    out_dir = OUTPUT_DIR / today / "variations"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    session_key = f"vars-{int(time.time())}-{uuid.uuid4().hex[:4]}"  # unique per call — no collision
-    session_dir = out_dir / session_key
-    session_dir.mkdir(parents=True, exist_ok=True)
-
-    images = []
-    for i in range(count):
-        vname = f"v{i+1:02d}.png"
-        vpath = session_dir / vname
-        variation_prompt = (
-            prompt
-            + "\n\n"
-            + _VARIATION_SUFFIXES[i % len(_VARIATION_SUFFIXES)]
-            + " The shelf surface is perfectly flat and level. Products sit firmly with flat bases touching the shelf. No tilting, no floating, no falling."
-        )
-
-        _tier_info = _TIER_MODEL.get(tier, ("gemini-3.1-flash-image-preview", "1K"))
-        _resolution = _tier_info[1] if isinstance(_tier_info, tuple) else "1K"
-        args = [
-            sys.executable,
-            SCRIPT_PATH,
-            "direct",
-            "--prompt",
-            variation_prompt,
-            "--tier",
-            tier,
-            "--aspect-ratio",
-            aspect,
-            "--resolution",
-            _resolution,
-            "--filename",
-            str(vpath),
-        ]
-        if input_image:
-            args += ["--input-image", input_image]
-
-        env = os.environ.copy()
-        env["GEMINI_API_KEY"] = api_key
-        env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
-
-        try:
-            subprocess.run(
-                args, capture_output=True, text=True, timeout=300, env=env, check=True
-            )
-            if vpath.exists():
-                model_used, resolution = _TIER_MODEL.get(tier, ("gemini-3-pro-image-preview", "2K"))
-                cost = track_cost(model_used, resolution)
-                images.append(
-                    {
-                        "path": str(vpath),
-                        "url": image_url(str(vpath)),
-                        "name": vname,
-                        "cost": cost,
-                        "model": model_used,
-                        "variation_index": i + 1,
-                    }
-                )
-        except subprocess.CalledProcessError:
-            # Continue with remaining variations
-            pass
-
-    # Save manifest so refine can find the session
-    manifest = {
-        "count": len(images),
-        "model": _TIER_MODEL.get(tier, ("gemini-3-pro-image-preview", "2K"))[0],
-        "resolution": _TIER_MODEL.get(tier, ("gemini-3-pro-image-preview", "2K"))[1],
-        "original_prompt": prompt,
-        "tier": tier,
-        "aspect_ratio": aspect,
-        "files": [img["path"] for img in images],
-        "prompts": [
-            prompt + _VARIATION_SUFFIXES[i % len(_VARIATION_SUFFIXES)]
-            for i in range(len(images))
-        ],
-    }
-    (session_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    return images, session_key
+    return _iteration_service.variations(
+        prompt,
+        api_key,
+        count,
+        tier,
+        aspect,
+        input_image=input_image,
+        output_dir=OUTPUT_DIR,
+        script_path=SCRIPT_PATH,
+        python_executable=sys.executable,
+        tier_models=_TIER_MODEL,
+        run=subprocess.run,
+        record_cost=track_cost,
+        to_image_url=image_url,
+    )
 
 
 def run_cli_refine_from_variation(
@@ -710,90 +588,23 @@ def run_cli_refine_from_variation(
     pick_index: int,
     changes: str,
     tier: str,
+    api_key: str,
 ) -> List[Dict]:
-    """
-    Refine a specific variation by its 1-based index.
-    Uses the manifest written by run_cli_variations.
-    """
-    today = datetime.now().strftime("%Y-%m-%d")
-    session_dir = OUTPUT_DIR / today / "variations" / session_key
-    manifest_path = session_dir / "manifest.json"
-
-    if not manifest_path.exists():
-        # Try searching older dates
-        for date_dir in sorted(OUTPUT_DIR.iterdir(), reverse=True):
-            if date_dir.is_dir():
-                candidate = date_dir / "variations" / session_key
-                if candidate.exists():
-                    session_dir = candidate
-                    manifest_path = session_dir / "manifest.json"
-                    break
-
-    if not manifest_path.exists():
-        return [{"error": f"Session not found: {session_key}"}]
-
-    manifest = json.loads(manifest_path.read_text())
-    files = manifest.get("files", [])
-    idx = pick_index - 1
-    if idx < 0 or idx >= len(files):
-        return [{"error": f"Pick must be between 1 and {len(files)}"}]
-
-    base_path = files[idx]
-    ref_prompt = manifest.get("prompts", [manifest["original_prompt"]])[idx]
-    final_prompt = (
-        f"Refinement based on version v{pick_index}:\n{changes}\n\n"
-        f"Original prompt:\n{ref_prompt}"
+    return _iteration_service.refine_variation(
+        session_key,
+        pick_index,
+        changes,
+        tier,
+        api_key,
+        output_dir=OUTPUT_DIR,
+        script_path=SCRIPT_PATH,
+        python_executable=sys.executable,
+        tier_models=_TIER_MODEL,
+        run=subprocess.run,
+        record_cost=track_cost,
+        to_image_url=image_url,
     )
 
-    out_dir = session_dir
-    fname = f"r{pick_index:02d}-{int(time.time())}.png"
-    out_path = out_dir / fname
-
-    _tier_info = _TIER_MODEL.get(tier, ("gemini-3.1-flash-image-preview", "1K"))
-    _resolution = _tier_info[1] if isinstance(_tier_info, tuple) else "1K"
-    args = [
-        sys.executable,
-        SCRIPT_PATH,
-        "direct",
-        "--prompt",
-        final_prompt,
-        "--input-image",
-        base_path,
-        "--tier",
-        tier,
-        "--aspect-ratio",
-        manifest.get("aspect_ratio", "16:9"),
-        "--resolution",
-        _resolution,
-        "--filename",
-        str(out_path),
-    ]
-
-    env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key
-    env["CREATIVE_OUTPUT_DIR"] = str(OUTPUT_DIR)
-
-    try:
-        subprocess.run(
-            args, capture_output=True, text=True, timeout=300, env=env, check=True
-        )
-        if out_path.exists():
-            model_used, resolution = _TIER_MODEL.get(tier, ("gemini-3-pro-image-preview", "2K"))
-            cost = track_cost(model_used, resolution)
-            return [
-                {
-                    "path": str(out_path),
-                    "url": image_url(str(out_path)),
-                    "name": out_path.name,
-                    "cost": cost,
-                    "model": model_used,
-                }
-            ]
-    except subprocess.CalledProcessError as e:
-        return [{"error": f"Refine failed: {e.stderr[:500] if e.stderr else e}"}]
-    except Exception as e:
-        return [{"error": str(e)}]
-    return [{"error": "Refine produced no output"}]
 
 
 # ─── Chat multi-turn state ──────────────────────────────────────────────
@@ -1878,6 +1689,7 @@ def api_variations_refine(session_key):
         pick_index=pick,
         changes=changes,
         tier=tier,
+        api_key=api_key,
     )
 
     for img in images:
