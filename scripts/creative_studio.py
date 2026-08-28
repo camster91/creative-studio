@@ -33,6 +33,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime
 from io import BytesIO
+from creative_studio_app.delivery import EXPORT_PRESETS, export_presets
 from pathlib import Path
 from typing import Optional
 
@@ -715,49 +716,17 @@ def cmd_composite(args):
 
 def cmd_export(args):
     """Crop a source image to multiple platform-specific formats."""
-    from PIL import Image
-
     src = Path(args.input)
     if not src.exists():
         print(f"File not found: {src}", file=sys.stderr)
         sys.exit(1)
-    presets = {
-        "amazon": {"ratio": "1:1", "w": 2000, "h": 2000, "bg": "white"},
-        "shopify": {"ratio": "1:1", "w": 2048, "h": 2048, "bg": "white"},
-        "meta-feed": {"ratio": "4:5", "w": 1080, "h": 1350, "bg": "transparent"},
-        "meta-stories": {"ratio": "9:16", "w": 1080, "h": 1920, "bg": "transparent"},
-        "web-hero": {"ratio": "16:9", "w": 1920, "h": 1080, "bg": "transparent"},
-        "pinterest": {"ratio": "2:3", "w": 1000, "h": 1500, "bg": "transparent"},
-        "print-dpi": {"ratio": "3:2", "dpi": 300, "bg": "white"},
-    }
-    selected = args.presets.split(",") if args.presets else list(presets.keys())
-    outdir = ensure_dir(_OUT / datetime.now().strftime("%Y-%m-%d") / "exports")
-    img = Image.open(str(src)).convert("RGBA")
+    selected = args.presets.split(",") if args.presets else list(EXPORT_PRESETS)
     print("\n── EXPORT")
-    print(f"  Source: {src.name} ({img.size[0]}x{img.size[1]})")
     print(f"  Presets: {', '.join(selected)}\n")
-    for key in selected:
-        if key not in presets:
-            print(f"  ⚠ Unknown preset: {key}", file=sys.stderr)
-            continue
-        p = presets[key]
-        cropped = crop_to_aspect_ratio(img.copy(), p["ratio"])
-        if "w" in p and "h" in p:
-            cropped = cropped.resize((p["w"], p["h"]), Image.Resampling.LANCZOS)
-        if p.get("bg") == "white":
-            base = Image.new("RGB", cropped.size, (255, 255, 255))
-            base.paste(cropped, mask=cropped.split()[3])
-            cropped = base
-        elif p.get("bg") == "transparent":
-            pass  # keep RGBA for transparent platforms
-        else:
-            cropped = cropped.convert("RGB")
-        dpi = p.get("dpi", 72)
-        fname = f"{src.stem}-{key}.png"
-        out = outdir / fname
-        cropped.save(str(out), "PNG", dpi=(dpi, dpi))
-        print(f"  ✓ {key}: {cropped.size[0]}x{cropped.size[1]} -> {fname}")
-    print(f"\n✓ All exports: {outdir}")
+    paths = export_presets(str(src), args.presets, _OUT)
+    for key, path in zip(selected, paths):
+        print(f"  ✓ {key}: {path.name}")
+    print(f"\n✓ All exports: {paths[0].parent if paths else _OUT}")
 
 
 # ─── Auto QC / Quality Gate ───────────────────────────────────────────
@@ -1923,7 +1892,7 @@ def main():
 
     args = parser.parse_args()
 
-    if not API_KEY:
+    if args.cmd != "export" and not API_KEY:
         print("ERROR: Set GEMINI_API_KEY env var.", file=sys.stderr)
         sys.exit(1)
 

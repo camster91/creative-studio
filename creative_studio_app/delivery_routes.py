@@ -129,11 +129,16 @@ def create_blueprint(
     @blueprint.post("/api/export")
     @rate_limited
     def export():
+        account = current_session()
+        if not account:
+            return jsonify({"error": "Sign in required"}), 401
         presets = request.form.get("presets", "")
         if not presets:
             return jsonify({"error": "Presets required"}), 400
         image_url = request.form.get("image_url")
         if image_url and image_url.startswith("/image/"):
+            if image_url[len("/image/") :] not in owned_asset_paths(account["user_id"]):
+                return jsonify({"error": "Image not found"}), 404
             source = safe_output_path(image_url[len("/image/") :])
             if not source:
                 return jsonify(
@@ -149,6 +154,9 @@ def create_blueprint(
             return jsonify({"error": "Image required"}), 400
         session_id = request.form.get("session_id", new_session_id())
         images = run_export(str(source), presets, get_api_key())
+        if images and "error" in images[0]:
+            status = 400 if images[0].get("kind") == "validation" else 502
+            return jsonify(images[0]), status
         selected = [preset.strip() for preset in presets.split(",") if preset.strip()]
         for image in images:
             add_entry(
