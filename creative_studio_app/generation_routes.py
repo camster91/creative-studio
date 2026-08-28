@@ -36,6 +36,7 @@ def create_blueprint(
     validate_version_parent: Callable = lambda *_args: True,
     current_version_node: Callable = lambda *_args: None,
     record_provider_results: Callable = lambda *_args, **_kwargs: None,
+    fetch_owner_figma_context: Callable | None = None,
 ) -> Blueprint:
     blueprint = Blueprint("generation_routes", __name__)
 
@@ -96,9 +97,17 @@ def create_blueprint(
         if figma_url:
             file_key, node_id = parse_figma_url(figma_url)
             if file_key:
-                context = fetch_figma_context(file_key, node_id)
+                context = (
+                    fetch_owner_figma_context(owner_id, file_key, node_id)
+                    if fetch_owner_figma_context else fetch_figma_context(file_key, node_id)
+                )
                 if "error" not in context:
                     prompt = enhance_prompt_with_figma(prompt, context)
+                    length_error = enforce_prompt_length(prompt)
+                    if length_error is not None:
+                        return length_error
+                elif fetch_owner_figma_context:
+                    return jsonify(context), int(context.get("status", 502))
 
         if variations > 1 and durable_jobs_enabled:
             estimated_cost = estimate_cost(tier) * variations

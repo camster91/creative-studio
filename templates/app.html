@@ -90,6 +90,15 @@
       <div class="library-footer" id="libraryFooter"></div>
     </section>
 
+    <section class="field-group" id="figmaPanel" hidden>
+      <div class="projects-header">
+        <label class="field-label" for="figmaUrl">Figma design <span class="field-optional">optional</span></label>
+        <button class="link-btn" id="figmaConnect" type="button">Connect</button>
+      </div>
+      <input type="url" id="figmaUrl" placeholder="https://www.figma.com/design/…" autocomplete="off" spellcheck="false">
+      <p class="field-hint" id="figmaStatus">Connect Figma to use a file's visual context in your prompt.</p>
+    </section>
+
     <!-- Product — single file input, no badges -->
     <section class="field-group">
       <label class="field-label">Product photo <span class="field-optional">optional</span></label>

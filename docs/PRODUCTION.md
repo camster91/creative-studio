@@ -103,6 +103,26 @@ defaults to `1.00` and rejects an oversized batch before the provider is called.
 Set `CREATIVE_DURABLE_JOBS_ENABLED=false` to roll batch requests back to the
 legacy synchronous path without affecting single-image generation.
 
+## Figma OAuth
+
+Per-user Figma context is disabled unless `PUBLIC_URL`,
+`FIGMA_OAUTH_CLIENT_ID`, `FIGMA_OAUTH_CLIENT_SECRET`, and
+`FIGMA_TOKEN_ENCRYPTION_KEY` are all set. `PUBLIC_URL` must be HTTPS and the
+Figma app callback must exactly match
+`PUBLIC_URL/api/figma/oauth/callback`. The app requests only
+`file_content:read`, uses authorization-code PKCE (S256), encrypts access and
+refresh tokens at rest, and binds each connection to the signed-in account.
+
+Disconnect deletes local tokens and remembered file-key hashes. Figma does not
+document a server-side OAuth revocation endpoint; users can also revoke the app
+in their Figma account settings. Rotate the client secret and encryption key as
+secrets, not source configuration. Rotating the encryption key invalidates
+existing encrypted connections, so users must reconnect. Figma file data is
+retrieved only when a user supplies a Figma URL and is incorporated into the
+prompt sent to Gemini; tokens, file keys, and file content are never written to
+request logs. Provider 429 responses are surfaced without automatic retry so
+the caller can respect Figma's plan- and endpoint-specific limits.
+
 Creative lineage is stored separately in `versions.db`. Existing JSON sessions
 remain the rollback source and are imported only after their recorded owner
 authenticates; migration never rewrites them. `CREATIVE_VERSION_GRAPH_ENABLED`
