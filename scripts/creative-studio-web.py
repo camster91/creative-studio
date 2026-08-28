@@ -20,6 +20,20 @@ from typing import Optional, List, Dict
 from flask import Flask, render_template, request, jsonify, send_from_directory, send_file
 
 from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
+from creative_studio_app.assets import (
+    build_pin_prompt,
+    image_url as _asset_image_url,
+    new_pin_id as pin_id,
+    pin_to_region,
+    safe_output_relpath as _resolve_output_path,
+)
+from creative_studio_app.costs import (
+    check_daily_limit as _cost_limit_check,
+    cost_for_tier as _tier_cost,
+    load_costs as _load_costs,
+    save_costs as _save_costs,
+    track_cost as _record_cost,
+)
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -298,20 +312,11 @@ _TIER_MODEL = {
 
 
 def load_costs():
-    return load_json(
-        COST_DB,
-        {
-            "total": 0.0,
-            "by_model": {},
-            "by_date": {},
-            "session_count": 0,
-            "image_count": 0,
-        },
-    )
+    return _load_costs(COST_DB)
 
 
 def save_costs(data: dict):
-    save_json(COST_DB, data)
+    _save_costs(COST_DB, data)
 
 
 def track_cost(model: str, resolution: str = "1K", count: int = 1):
@@ -321,22 +326,7 @@ def track_cost(model: str, resolution: str = "1K", count: int = 1):
     increments. The cost guardrail uses the same lock via _try_charge_costs()
     so the limit is enforced exactly once per request.
     """
-    def _do():
-        costs = load_costs()
-        price_map = COSTS.get(model, {})
-        if isinstance(price_map, dict):
-            unit = price_map.get(resolution) or price_map.get("1K") or 0.04
-        else:
-            unit = float(price_map) if price_map else 0.04
-        c = unit * count
-        costs["total"] += c
-        costs["by_model"][model] = costs["by_model"].get(model, 0.0) + c
-        today = datetime.now().strftime("%Y-%m-%d")
-        costs["by_date"][today] = costs["by_date"].get(today, 0.0) + c
-        costs["image_count"] += count
-        save_costs(costs)
-        return c
-    return _with_json_lock(_do)
+    return _record_cost(COST_DB, COSTS, model, resolution, count, _json_lock)
 
 
 def _check_daily_limit(est_count: int = 1, tier: str = "balanced"):
@@ -350,30 +340,20 @@ def _check_daily_limit(est_count: int = 1, tier: str = "balanced"):
     The check is held under _json_lock so two concurrent callers cannot
     both pass the limit and both proceed.
     """
-    def _do():
-        try:
-            daily_limit = float(os.environ.get("CREATIVE_DAILY_LIMIT", "5"))
-        except (TypeError, ValueError):
-            daily_limit = 5.0
-        if daily_limit <= 0:
-            return None
-        unit = cost_for_tier(tier)
-        est_total = unit * max(1, est_count)
-        costs_now = load_costs()
-        today = datetime.now().strftime("%Y-%m-%d")
-        spent_today = float(costs_now.get("by_date", {}).get(today, 0.0))
-        if spent_today + est_total > daily_limit:
-            return (
-                jsonify({
-                    "error": f"Daily limit ${daily_limit:.2f} reached. Spent today: ${spent_today:.2f}. Request would cost ${est_total:.2f}. Set CREATIVE_DAILY_LIMIT to a higher value or wait until tomorrow.",
-                    "spent_today": round(spent_today, 4),
-                    "limit": daily_limit,
-                    "est_cost": round(est_total, 4),
-                }),
-                429,
-            )
-        return None
-    return _with_json_lock(_do)
+    try:
+        daily_limit = float(os.environ.get("CREATIVE_DAILY_LIMIT", "5"))
+    except (TypeError, ValueError):
+        daily_limit = 5.0
+    rejection = _cost_limit_check(
+        COST_DB,
+        estimated_count=est_count,
+        tier=tier,
+        daily_limit=daily_limit,
+        tier_models=_TIER_MODEL,
+        price_card=COSTS,
+        lock=_json_lock,
+    )
+    return (jsonify(rejection), 429) if rejection else None
 
 
 # Backward-compat alias. Old callers using enforce_daily_limit() as a pure
@@ -393,11 +373,7 @@ def enforce_daily_limit(est_count: int = 1, tier: str = "balanced"):
 
 def cost_for_tier(tier: str) -> float:
     """Estimated per-image cost for a quality tier."""
-    model, res = _TIER_MODEL.get(tier, ("gemini-3.1-flash-image-preview", "1K"))
-    price_map = COSTS.get(model, {})
-    if isinstance(price_map, dict):
-        return price_map.get(res, price_map.get("1K", 0.04))
-    return float(price_map) if price_map else 0.04
+    return _tier_cost(tier, _TIER_MODEL, COSTS)
 
 
 def session_cost(session_id: str) -> float:
@@ -439,16 +415,7 @@ def now_str() -> str:
 
 
 def image_url(path: str) -> str:
-    if not path:
-        return ""
-    p = Path(path)
-    try:
-        rel = p.relative_to(OUTPUT_DIR)
-        return f"/image/{rel}"
-    except (ValueError, NotImplementedError):
-        if p.exists():
-            return f"/image/{p.parent.name}/{p.name}"
-        return ""
+    return _asset_image_url(path, OUTPUT_DIR)
 
 
 def _safe_output_relpath(rel_path: str) -> Optional[Path]:
@@ -456,24 +423,7 @@ def _safe_output_relpath(rel_path: str) -> Optional[Path]:
     any path that escapes it (the same guard serve_image() already uses).
     Returns the resolved Path if safe, None if traversal or non-existent.
     """
-    if not rel_path:
-        return None
-    # Reject obvious traversal tokens at every path component
-    parts = rel_path.split("/")
-    if any(p in ("", ".", "..") or p.startswith("..") for p in parts):
-        return None
-    target = OUTPUT_DIR
-    for part in parts:
-        target = target / part
-    try:
-        resolved = target.resolve()
-        base = OUTPUT_DIR.resolve()
-        resolved.relative_to(base)
-    except (ValueError, RuntimeError):
-        return None
-    if not resolved.exists() or not resolved.is_file():
-        return None
-    return resolved
+    return _resolve_output_path(rel_path, OUTPUT_DIR)
 
 
 # ─── Pin Annotations ────────────────────────────────────────────────────
@@ -491,38 +441,6 @@ def save_pins(image_path: str, pins: List[Dict]):
         data[image_path] = pins
         save_json(PINS_DB, data)
     _with_json_lock(_do)
-
-
-def pin_id() -> str:
-    return uuid.uuid4().hex[:8]
-
-
-def pin_to_region(x: float, y: float) -> str:
-    """Convert normalized coords (0..1) to human-readable region."""
-    h = "top" if y < 0.33 else "middle" if y < 0.66 else "bottom"
-    w = "left" if x < 0.33 else "center" if x < 0.66 else "right"
-    if h == "middle" and w == "center":
-        return "center"
-    return f"{h}-{w}" if h != "middle" else w
-
-
-def build_pin_prompt(pins: List[Dict]) -> str:
-    """Build a spatially-aware refinement prompt from pins."""
-    if not pins:
-        return ""
-    lines = []
-    for i, p in enumerate(pins, 1):
-        region = pin_to_region(p.get("x", 0.5), p.get("y", 0.5))
-        text = p.get("text", "").strip()
-        if text:
-            lines.append(f"[{i}] {region}: {text}")
-    if not lines:
-        return ""
-    return (
-        "Make these targeted changes to specific areas of the image: "
-        + "; ".join(lines)
-        + ". Apply each change only to its specified region. Preserve all other areas exactly as they are."
-    )
 
 
 # ─── Image generation wrappers ────────────────────────────────────────

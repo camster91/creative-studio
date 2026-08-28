@@ -7,6 +7,17 @@ from flask import Flask
 
 from creative_studio_app.jobs import evict_old_jobs, job_id, run_job_background
 from creative_studio_app.rate_limit import create_rate_limiter
+from creative_studio_app.assets import (
+    build_pin_prompt,
+    image_url,
+    pin_to_region,
+    safe_output_relpath,
+)
+from creative_studio_app.costs import (
+    check_daily_limit,
+    load_costs,
+    track_cost,
+)
 
 
 def test_job_ids_are_unique_and_prefixed():
@@ -76,3 +87,46 @@ def test_rate_limiter_isolated_state_and_limit():
     assert client.get("/limited").status_code == 200
     assert client.get("/limited").status_code == 200
     assert client.get("/limited").status_code == 429
+
+
+def test_output_path_resolution_and_url_are_confined(tmp_path):
+    output_dir = tmp_path / "outputs"
+    image = output_dir / "session" / "image.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"png")
+
+    assert image_url(str(image), output_dir) == "/image/session/image.png"
+    assert safe_output_relpath("session/image.png", output_dir) == image.resolve()
+    assert safe_output_relpath("../secret", output_dir) is None
+
+
+def test_spatial_pin_prompt_preserves_region_semantics():
+    assert pin_to_region(0.1, 0.1) == "top-left"
+    assert pin_to_region(0.5, 0.5) == "center"
+    prompt = build_pin_prompt([
+        {"x": 0.8, "y": 0.8, "text": "remove the glare"},
+    ])
+    assert "bottom-right: remove the glare" in prompt
+    assert "Preserve all other areas" in prompt
+
+
+def test_cost_accounting_and_limit_are_atomic(tmp_path):
+    path = tmp_path / "costs.json"
+    lock = threading.Lock()
+    prices = {"model": {"1K": 0.25}}
+    tiers = {"fast": ("model", "1K")}
+
+    assert track_cost(path, prices, "model", "1K", 2, lock) == 0.5
+    assert load_costs(path)["image_count"] == 2
+    rejection = check_daily_limit(
+        path,
+        estimated_count=1,
+        tier="fast",
+        daily_limit=0.6,
+        tier_models=tiers,
+        price_card=prices,
+        lock=lock,
+    )
+
+    assert rejection["spent_today"] == 0.5
+    assert rejection["est_cost"] == 0.25
