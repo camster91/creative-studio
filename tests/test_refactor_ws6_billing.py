@@ -190,7 +190,7 @@ class TestBillingCheckout:
             json={"plan": "pro"},
             headers={"X-Session-Token": sess})
         assert r.status_code == 503
-        assert "STRIPE_PRICE_PRO" in r.get_json()["error"]
+        assert r.get_json()["error"] == "Billing plan is not configured"
 
     def test_invalid_plan_returns_400(self, cs_stripe):
         client = cs_stripe.app.test_client()

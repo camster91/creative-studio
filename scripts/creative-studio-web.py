@@ -44,6 +44,7 @@ from creative_studio_app import iterations as _iteration_service
 from creative_studio_app import chat as _chat_service
 from creative_studio_app import billing as _billing_service
 from creative_studio_app.uploads import save_image_upload as _persist_image_upload
+from creative_studio_app.observability import install_request_metrics
 from creative_studio_app.seo_routes import create_blueprint as _create_seo_blueprint
 from creative_studio_app.informational_routes import (
     create_blueprint as _create_informational_blueprint,
@@ -708,6 +709,22 @@ if not app.debug:
         # don't break the app boot over a logger setup failure
         logging.basicConfig(level=logging.WARNING)
         app.logger.warning("Failed to attach rotating file handler: %s", _e)
+
+try:
+    _metrics_logger = logging.getLogger("creative_studio.metrics")
+    _metrics_logger.propagate = False
+    _metrics_handler = RotatingFileHandler(
+        str(DATA_DIR / "request-metrics.jsonl"),
+        maxBytes=10_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    _metrics_handler.setFormatter(logging.Formatter("%(message)s"))
+    _metrics_logger.addHandler(_metrics_handler)
+    _metrics_logger.setLevel(logging.INFO)
+    install_request_metrics(app, _metrics_logger.info)
+except Exception:
+    install_request_metrics(app, lambda _event: None)
 
 # ── Auth and project persistence services ───────────────────────────────
 AUTH_DB = DATA_DIR / "users.db"
@@ -1483,6 +1500,7 @@ app.register_blueprint(
         jobs_lock=_jobs_lock,
         get_sessions_dir=lambda: SESSIONS_DIR,
         load_json=load_json,
+        admin_authed=_admin_authed,
     )
 )
 

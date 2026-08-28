@@ -61,8 +61,8 @@ def create_blueprint(
             ), 400
         try:
             price_id = resolve_price_id(plan)
-        except RuntimeError as error:
-            return jsonify({"error": str(error)}), 503
+        except RuntimeError:
+            return jsonify({"error": "Billing plan is not configured"}), 503
         with auth_db() as database:
             user = database.execute(
                 "SELECT * FROM users WHERE id = ?", (session["user_id"],)
@@ -81,10 +81,8 @@ def create_blueprint(
                 cancel_url=portal_return_url + "?checkout=canceled",
                 metadata={"photogen_user_id": user["id"], "plan": plan},
             )
-        except Exception as error:
-            return jsonify(
-                {"error": "Checkout creation failed", "message": str(error)}
-            ), 500
+        except Exception:
+            return jsonify({"error": "Checkout creation failed"}), 500
         return jsonify(
             {"url": checkout["url"], "session_id": checkout["id"], "plan": plan}
         )
@@ -107,10 +105,8 @@ def create_blueprint(
             portal = stripe_api().billing_portal.Session.create(
                 customer=user["stripe_customer_id"], return_url=portal_return_url
             )
-        except Exception as error:
-            return jsonify(
-                {"error": "Portal creation failed", "message": str(error)}
-            ), 500
+        except Exception:
+            return jsonify({"error": "Portal creation failed"}), 500
         return jsonify({"url": portal["url"]})
 
     @blueprint.post("/api/billing/webhook")

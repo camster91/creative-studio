@@ -141,8 +141,8 @@ def create_blueprint(
             return jsonify({"error": "Not found"}), 404
         try:
             resolved.unlink()
-        except OSError as error:
-            return jsonify({"error": "Delete failed", "message": str(error)}), 500
+        except OSError:
+            return jsonify({"error": "Delete failed"}), 500
         sidecar = resolved.with_suffix(".json")
         if sidecar.is_file():
             try:

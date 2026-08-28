@@ -58,11 +58,10 @@ def refine(
         if output_path.exists():
             model = "gemini-3.1-flash-image-preview" if tier in ("fast", "balanced") else "gemini-3-pro-image-preview"
             return [{"path": str(output_path), "url": to_image_url(str(output_path)), "name": output_path.name, "cost": record_cost(model), "model": model}]
-    except subprocess.CalledProcessError as error:
-        detail = error.stderr[:500] if error.stderr else error
-        return [{"error": f"Refine failed: {detail}"}]
-    except Exception as error:
-        return [{"error": str(error)}]
+    except subprocess.CalledProcessError:
+        return [{"error": "Refine provider request failed", "error_code": "provider_failed"}]
+    except Exception:
+        return [{"error": "Refine service unavailable", "error_code": "service_unavailable"}]
     return []
 
 
@@ -170,9 +169,8 @@ def refine_variation(
         run(arguments, capture_output=True, text=True, timeout=300, env=environment, check=True)
         if output_path.exists():
             return [{"path": str(output_path), "url": to_image_url(str(output_path)), "name": output_path.name, "cost": record_cost(model, resolution), "model": model}]
-    except subprocess.CalledProcessError as error:
-        detail = error.stderr[:500] if error.stderr else error
-        return [{"error": f"Refine failed: {detail}"}]
-    except Exception as error:
-        return [{"error": str(error)}]
+    except subprocess.CalledProcessError:
+        return [{"error": "Refine provider request failed", "error_code": "provider_failed"}]
+    except Exception:
+        return [{"error": "Refine service unavailable", "error_code": "service_unavailable"}]
     return [{"error": "Refine produced no output"}]

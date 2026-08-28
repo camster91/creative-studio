@@ -60,13 +60,12 @@ def turn(
                 "output": str(output_path),
             })
         return images, session
-    except subprocess.CalledProcessError as error:
+    except subprocess.CalledProcessError:
         session["turn"] -= 1
-        detail = error.stderr[:500] if error.stderr else error
-        return [{"error": f"Generation failed: {detail}"}], session
-    except Exception as error:
+        return [{"error": "Chat provider request failed", "error_code": "provider_failed"}], session
+    except Exception:
         session["turn"] -= 1
-        return [{"error": str(error)}], session
+        return [{"error": "Chat service unavailable", "error_code": "service_unavailable"}], session
 
 
 def history(sessions: dict[str, dict], session_key: str) -> list[dict]:
