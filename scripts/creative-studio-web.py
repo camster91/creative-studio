@@ -45,6 +45,7 @@ from creative_studio_app.seo_routes import create_blueprint as _create_seo_bluep
 from creative_studio_app.informational_routes import (
     create_blueprint as _create_informational_blueprint,
 )
+from creative_studio_app.account_routes import create_blueprint as _create_account_blueprint
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -2162,73 +2163,6 @@ def admin_waitlist_csv():
     }
 
 
-# ── Auth Routes (WS-2) ────────────────────────────────────────────────
-
-
-@app.route("/signup", methods=["GET", "POST"])
-def signup_page():
-    """Render the signup form. On POST, create a magic link token and
-    return it IN THE RESPONSE (no email sender yet — WS-2 doesn't ship
-    with SMTP; the operator can copy the token from the server or we
-    add Resend in a follow-up)."""
-    if request.method == "POST":
-        data = request.json or {}
-        email = (data.get("email") or "").strip().lower()
-        if not email or "@" not in email or "." not in email.split("@")[-1]:
-            return jsonify({"error": "Invalid email"}), 400
-        token = _create_magic_link_token(email)
-        # For now: return the token so the operator/developer can
-        # manually paste it into the login flow. When Resend free
-        # tier ships, this changes to send it via email.
-        return jsonify({"token": token, "email": email})
-    return render_template("signup.html")
-
-
-@app.route("/login", methods=["GET", "POST"])
-def login_page():
-    """Render the login form. On POST (magic link token), create or
-    find the user and return a session token."""
-    if request.method == "POST":
-        data = request.json or {}
-        token = (data.get("token") or "").strip()
-        if not token:
-            return jsonify({"error": "Token required"}), 400
-        session = _consume_magic_link(token)
-        if not session:
-            return jsonify({"error": "Invalid or expired token"}), 400
-        return jsonify({
-            "session_token": session["id"],
-            "email": session["email"],
-            "credits_remaining": session["credits_remaining"],
-            "expires_at": session["expires_at"],
-        })
-    return render_template("login.html")
-
-
-@app.route("/api/me", methods=["GET"])
-def api_me():
-    """Return the current user + account status, or 401 if not
-    signed in. This is the 'who am I' endpoint that the frontend
-    polls on boot to decide whether to show the key input or the
-    'you have N credits' badge."""
-    sess = _current_session()
-    if not sess:
-        return jsonify({"error": "Not signed in"}), 401
-    with _auth_db() as db:
-        user = db.execute("SELECT * FROM users WHERE id = ?", (sess["user_id"],)).fetchone()
-    if not user:
-        return jsonify({"error": "User not found"}), 401
-    return jsonify({
-        "email": user["email"],
-        "credits_remaining": user["credits_remaining"] or 0,
-        "credits_used_today": user["credits_used_today"] or 0,
-        "created_at": user["created_at"],
-        "subscription_tier": user["subscription_tier"],
-        "subscription_status": user["subscription_status"],
-        "subscription_renews_at": user["subscription_renews_at"],
-    })
-
-
 # ── Billing (WS-6) — Stripe Checkout + webhook + credit ledger ──────────
 # Three plans: Starter $19 (100 credits/mo), Pro $49 (500/mo),
 # Studio $99 (1500/mo). The credit ledger is a single column on
@@ -2851,6 +2785,14 @@ def _canonical_url(path: str) -> str:
 
 
 app.register_blueprint(_create_seo_blueprint(lambda: BLOG_CONTENT_DIR))
+app.register_blueprint(
+    _create_account_blueprint(
+        create_magic_link_token=_create_magic_link_token,
+        consume_magic_link=_consume_magic_link,
+        current_session=_current_session,
+        auth_db=_auth_db,
+    )
+)
 app.register_blueprint(
     _create_informational_blueprint(
         load_costs=load_costs,
