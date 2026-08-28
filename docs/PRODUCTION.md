@@ -15,6 +15,7 @@ The container fails closed when optional trust boundaries are not configured.
 | `CREATIVE_MAX_UPLOAD_BYTES` | Encoded upload limit; defaults to 16 MiB |
 | `CREATIVE_MAX_IMAGE_DIMENSION`, `CREATIVE_MAX_IMAGE_PIXELS` | Decoded image-bomb limits |
 | `CREATIVE_UPLOAD_RETENTION_DAYS` | Canonical upload expiry; defaults to 30 days |
+| `CREATIVE_QC_ESTIMATED_COST_USD` | Operator-maintained per-review cost estimate returned by QC |
 
 `CREATIVE_EXPOSE_MAGIC_LINK_TOKEN` and `CREATIVE_ALLOW_UNOWNED_ASSETS` are
 test/migration switches and must not be set in production. Shared Figma access

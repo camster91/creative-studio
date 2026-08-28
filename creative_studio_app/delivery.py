@@ -3,6 +3,7 @@
 import os
 import re
 import subprocess
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -17,6 +18,66 @@ EXPORT_PRESETS = {
     "pinterest": {"ratio": "2:3", "size": (1000, 1500), "background": "transparent", "dpi": 72},
     "print-dpi": {"ratio": "3:2", "size": None, "background": "white", "dpi": 300},
 }
+
+QC_RUBRIC_VERSION = "cpg-photo-v1"
+QC_CRITERIA = {
+    "physical_grounding": ("floating_products", False),
+    "text_integrity": ("garbled_text", False),
+    "shadow_attachment": ("detached_shadows", False),
+    "product_authenticity": ("fake_products", False),
+    "label_readability": ("readable_labels", True),
+}
+
+
+def normalize_qc_assessment(payload: dict, *, model: str) -> dict:
+    """Normalize provider output into a versioned advisory-only contract."""
+    criteria_payload = payload.get("criteria") if isinstance(payload.get("criteria"), dict) else {}
+    criteria = {}
+    known = 0
+    confidence_values = []
+    for name, (legacy_key, passing_value) in QC_CRITERIA.items():
+        supplied = criteria_payload.get(name, {})
+        if isinstance(supplied, dict) and supplied.get("status") in {"pass", "fail", "unknown"}:
+            status = supplied["status"]
+            evidence = str(supplied.get("evidence") or "")[:500]
+            confidence = supplied.get("confidence") if supplied.get("confidence") in {"low", "medium", "high"} else "low"
+        elif isinstance(payload.get(legacy_key), bool):
+            status = "pass" if payload[legacy_key] is passing_value else "fail"
+            evidence = "Legacy provider boolean; no criterion-level evidence supplied."
+            confidence = "low"
+        else:
+            status, evidence, confidence = "unknown", "Provider did not assess this criterion.", "low"
+        if status != "unknown":
+            known += 1
+        confidence_values.append(confidence)
+        criteria[name] = {
+            "status": status,
+            "passed": True if status == "pass" else False if status == "fail" else None,
+            "evidence": evidence,
+            "confidence": confidence,
+        }
+    raw_score = payload.get("quality_score")
+    score = raw_score if isinstance(raw_score, int) and 1 <= raw_score <= 10 else None
+    overall_confidence = "low"
+    if known == len(QC_CRITERIA) and all(value == "high" for value in confidence_values):
+        overall_confidence = "high"
+    elif known >= 3 and any(value in {"medium", "high"} for value in confidence_values):
+        overall_confidence = "medium"
+    issues = payload.get("issues") if isinstance(payload.get("issues"), list) else []
+    return {
+        "advisory": True,
+        "rubric_version": QC_RUBRIC_VERSION,
+        "model": model,
+        "quality_score": score,
+        "confidence": overall_confidence,
+        "criteria": criteria,
+        "issues": [str(issue)[:500] for issue in issues[:10]],
+        "limitations": [
+            "AI visual review can miss defects or flag acceptable creative choices.",
+            "The score is not proof of marketplace compliance, product authenticity, or readable legal copy.",
+            "Export is never blocked solely by this assessment; a human reviewer may override it.",
+        ],
+    }
 
 
 def _crop_to_ratio(image, ratio: str):
@@ -87,10 +148,18 @@ def export_images(
 
 
 def parse_qc_output(output: str) -> dict:
+    marker = re.search(r"^QC_JSON:\s*(\{.*\})$", output, re.MULTILINE)
+    if marker:
+        try:
+            parsed = json.loads(marker.group(1))
+            if parsed.get("rubric_version") == QC_RUBRIC_VERSION:
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
     score_match = re.search(r"QC SCORE:\s*(\d)/10", output)
     issues = [line.replace("⚠", "").strip() for line in output.splitlines() if "⚠" in line]
-    return {
-        "quality_score": int(score_match.group(1)) if score_match else 5,
+    legacy = {
+        "quality_score": int(score_match.group(1)) if score_match else None,
         "floating_products": "FAIL" in output and "Floating" in output,
         "garbled_text": "FAIL" in output and "Garbled" in output,
         "detached_shadows": "FAIL" in output and "Shadows" in output,
@@ -98,17 +167,35 @@ def parse_qc_output(output: str) -> dict:
         "readable_labels": "PASS" in output and "Labels" in output,
         "issues": issues[:5],
     }
+    return normalize_qc_assessment(legacy, model="legacy-cli-output")
 
 
-def run_qc(image_path: str, api_key: str, *, launch_script: Path, run: Callable) -> dict:
+def run_qc(
+    image_path: str,
+    api_key: str,
+    *,
+    launch_script: Path,
+    run: Callable,
+    estimated_cost_usd: float | None = None,
+) -> dict:
     arguments = ["bash", str(launch_script), "qc", "--input", image_path]
     environment = os.environ.copy()
     environment["GEMINI_API_KEY"] = api_key
     try:
         result = run(arguments, capture_output=True, text=True, timeout=120, env=environment, check=True)
-        return parse_qc_output(result.stdout + result.stderr)
-    except subprocess.CalledProcessError as error:
-        detail = error.stderr[:500] if error.stderr else error
-        return {"quality_score": 0, "error": f"QC failed: {detail}", "issues": []}
-    except Exception as error:
-        return {"quality_score": 0, "error": str(error), "issues": []}
+        assessment = parse_qc_output(result.stdout + result.stderr)
+    except subprocess.CalledProcessError:
+        assessment = normalize_qc_assessment(
+            {"issues": ["Provider assessment failed; review manually or retry later."]},
+            model="unavailable",
+        )
+        assessment["error"] = "QC provider request failed"
+    except Exception:
+        assessment = normalize_qc_assessment(
+            {"issues": ["QC service was unavailable; review manually or retry later."]},
+            model="unavailable",
+        )
+        assessment["error"] = "QC service unavailable"
+    assessment["estimated_cost_usd"] = estimated_cost_usd
+    assessment["cost_estimate_source"] = "CREATIVE_QC_ESTIMATED_COST_USD" if estimated_cost_usd is not None else "not_configured"
+    return assessment

@@ -243,4 +243,33 @@ def create_blueprint(
             return jsonify({"error": "Invalid Figma URL"}), 400
         return jsonify(fetch_figma_context(file_key, node_id))
 
+    @blueprint.post("/api/qc/override")
+    @rate_limited
+    def qc_override():
+        account = current_session()
+        if not account:
+            return jsonify({"error": "Sign in required"}), 401
+        data = request.json or {}
+        decision = data.get("decision")
+        reason = str(data.get("reason") or "").strip()
+        session_id = data.get("session_id")
+        if decision not in {"accept", "reject"}:
+            return jsonify({"error": "decision must be accept or reject"}), 400
+        if not reason or len(reason.encode("utf-8")) > 1000:
+            return jsonify({"error": "reason is required (max 1000 bytes)"}), 400
+        if not session_id:
+            return jsonify({"error": "session_id required"}), 400
+        try:
+            add_entry(session_id, {
+                "type": "qc_override",
+                "cost": 0,
+                "image_url": str(data.get("image_url") or "")[:2000],
+                "model": "human-review",
+                "note": f"{decision}: {reason}",
+                "qc_score": data.get("quality_score"),
+            })
+        except (ValueError, PermissionError):
+            return jsonify({"error": "Session not found"}), 404
+        return jsonify({"recorded": True, "decision": decision})
+
     return blueprint

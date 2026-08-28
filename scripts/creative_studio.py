@@ -33,7 +33,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime
 from io import BytesIO
-from creative_studio_app.delivery import EXPORT_PRESETS, export_presets
+from creative_studio_app.delivery import EXPORT_PRESETS, export_presets, normalize_qc_assessment
 from pathlib import Path
 from typing import Optional
 
@@ -758,10 +758,15 @@ def cmd_qc(args):
     client = get_genai_client()
     vision_prompt = (
         "You are a CPG/DTC product photography quality inspector. "
-        "Analyze this image and return ONLY JSON: "
-        '{"floating_products": bool, "garbled_text": bool, '
-        '"detached_shadows": bool, "fake_products": bool, "readable_labels": bool, '
-        '"quality_score": 1-10, "issues": ["..."]}'
+        "Return ONLY JSON. Treat the result as advisory, cite only visible evidence, "
+        "and use unknown when the image cannot support a conclusion. Schema: "
+        '{"quality_score": 1-10, "criteria": {'
+        '"physical_grounding": {"status":"pass|fail|unknown","evidence":"visible observation","confidence":"low|medium|high"},'
+        '"text_integrity": {"status":"pass|fail|unknown","evidence":"visible observation","confidence":"low|medium|high"},'
+        '"shadow_attachment": {"status":"pass|fail|unknown","evidence":"visible observation","confidence":"low|medium|high"},'
+        '"product_authenticity": {"status":"pass|fail|unknown","evidence":"visible observation","confidence":"low|medium|high"},'
+        '"label_readability": {"status":"pass|fail|unknown","evidence":"visible observation","confidence":"low|medium|high"}},'
+        '"issues":["concise visible issue"]}'
     )
     try:
         resp = client.models.generate_content(
@@ -778,7 +783,9 @@ def cmd_qc(args):
         )
         parsed = json.loads(raw)
     except Exception as e:
-        parsed = {"error": str(e)}
+        parsed = {"issues": ["Provider assessment failed; retry or review manually."]}
+    assessment = normalize_qc_assessment(parsed, model=NANO_MODEL)
+    print("QC_JSON: " + json.dumps(assessment, separators=(",", ":")))
     print(f"\n{'=' * 50}")
     print(f"  QC SCORE: {parsed.get('quality_score', 'N/A')}/10")
     print(f"{'=' * 50}")
