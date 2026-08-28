@@ -47,7 +47,7 @@ env GEMINI_API_KEY="..." FIGMA_ACCESS_TOKEN="..." bash launch.sh variations \
 
 ## Web App (Deployed at https://photogen.ashbi.ca)
 
-### Current (v4.5.1) — Shipped to photogen.ashbi.ca
+### Current (v4.6.0)
 
 - Direct generation (text-to-image, BYOK via Gemini API)
 - Product compositing (upload your packaging, AI builds the scene around it)
@@ -64,22 +64,10 @@ env GEMINI_API_KEY="..." FIGMA_ACCESS_TOKEN="..." bash launch.sh variations \
 
 ### Architecture
 
-```
-web/                       # Flask app (currently bundled in scripts/creative-studio-web.py)
-├── app.py                 # Flask server (3571 lines, monolithic — see Phase 3)
-├── services/
-│   ├── generator.py       # Wraps creative_studio.py (run_cli_generate, run_cli_composite, etc.)
-│   ├── session.py         # Session persistence (JSON in ~/.creative-studio-data/sessions)
-│   ├── costs.py           # Cost tracking + daily limit enforcement
-│   └── quality.py         # Vision-based QC scoring
-├── templates/
-│   ├── editor.html        # Main editor (currently inline in creative-studio-web.py)
-│   ├── status.html        # /status page
-│   └── history.html       # /history page
-└── static/
-    ├── app.js             # Frontend logic (currently inline)
-    └── style.css          # Dark theme + accent
-```
+The Flask entry script composes independently tested service modules and route
+blueprints from `creative_studio_app/`; it contains no route implementations.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the authoritative module,
+state, CLI/web, and verification boundaries.
 
 ### UX Flow
 
