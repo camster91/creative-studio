@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from .provider_errors import error_code
+
 
 EXPORT_PRESETS = {
     "amazon": {"ratio": "1:1", "size": (2000, 2000), "background": "white", "dpi": 72},
@@ -183,12 +185,13 @@ def run_qc(
     try:
         result = run(arguments, capture_output=True, text=True, timeout=120, env=environment, check=True)
         assessment = parse_qc_output(result.stdout + result.stderr)
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         assessment = normalize_qc_assessment(
             {"issues": ["Provider assessment failed; review manually or retry later."]},
             model="unavailable",
         )
         assessment["error"] = "QC provider request failed"
+        assessment["error_code"] = error_code(error)
     except Exception:
         assessment = normalize_qc_assessment(
             {"issues": ["QC service was unavailable; review manually or retry later."]},

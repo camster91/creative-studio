@@ -60,6 +60,7 @@ def test_synthetic_metrics_exercise_spend_error_latency_and_queue_alerts():
     lines = [
         json.dumps({"event": "http_request", "status": 200, "latency_ms": 100}),
         json.dumps({"event": "http_request", "status": 503, "latency_ms": 20_000}),
+        json.dumps({"event": "magic_link_delivery", "success": False, "consecutive_failures": 5}),
         "malformed",
     ]
     summary = summarize_request_metrics(
@@ -69,5 +70,6 @@ def test_synthetic_metrics_exercise_spend_error_latency_and_queue_alerts():
     assert summary["request_count"] == 2
     assert summary["error_rate"] == 0.5
     assert summary["alerts"] == [
-        "daily_spend_80_percent", "http_error_rate", "http_latency_p95", "queue_depth"
+        "daily_spend_80_percent", "http_error_rate", "http_latency_p95", "queue_depth",
+        "email_delivery_failures",
     ]

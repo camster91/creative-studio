@@ -32,6 +32,8 @@ def create_blueprint(
     rate_limited: Callable,
     validate_version_parent: Callable = lambda *_args: True,
     current_version_node: Callable = lambda *_args: None,
+    estimate_cost: Callable = lambda _tier: 0,
+    record_provider_results: Callable = lambda *_args, **_kwargs: None,
 ) -> Blueprint:
     blueprint = Blueprint("iteration_routes", __name__)
 
@@ -60,11 +62,16 @@ def create_blueprint(
         parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
         if not validate_version_parent(session_id, owner_id, parent_node_id):
             return jsonify({"error": "Parent version not found"}), 404
+        call_started = time.monotonic()
         images = run_refine(
             data.get("image_path", ""),
             full_changes,
             api_key,
             data.get("tier", "quality"),
+        )
+        record_provider_results(
+            owner_id, session_id, images, estimated_cost_each=estimate_cost(data.get("tier", "quality")),
+            latency_ms=(time.monotonic() - call_started) * 1000,
         )
         for image in images:
             node_id = add_entry(
@@ -117,6 +124,7 @@ def create_blueprint(
         parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
         if not validate_version_parent(session_id, owner_id, parent_node_id):
             return jsonify({"error": "Parent version not found"}), 404
+        call_started = time.monotonic()
         images, session_key = run_variations(
             api_key,
             prompt=prompt,
@@ -125,6 +133,12 @@ def create_blueprint(
             aspect=data.get("aspect_ratio", "1:1"),
             input_image=input_image,
         )
+        record_provider_results(
+            owner_id, session_id, images,
+            estimated_cost_each=estimate_cost(tier),
+            latency_ms=(time.monotonic() - call_started) * 1000,
+        )
+        images = [image for image in images if "error" not in image]
         for image in images:
             if "error" not in image:
                 node_id = add_entry(
@@ -183,12 +197,17 @@ def create_blueprint(
             prompt = scene_prompts[scene]
             aspect = scene_aspects[scene]
             try:
+                call_started = time.monotonic()
                 result = run_composite(
                     prompt,
                     str(product),
                     api_key,
                     aspect,
                     name_suffix=scene,
+                )
+                record_provider_results(
+                    owner_id, session_id, result, estimated_cost_each=estimate_cost(tier),
+                    latency_ms=(time.monotonic() - call_started) * 1000,
                 )
                 if not result or "error" in result[0]:
                     return
@@ -266,12 +285,18 @@ def create_blueprint(
         parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
         if not validate_version_parent(session_id, owner_id, parent_node_id):
             return jsonify({"error": "Parent version not found"}), 404
+        call_started = time.monotonic()
         images = run_refine_from_variation(
             session_key=session_key,
             pick_index=pick,
             changes=changes,
             tier=data.get("tier", "quality"),
             api_key=api_key,
+        )
+        record_provider_results(
+            owner_id, session_id, images,
+            estimated_cost_each=estimate_cost(data.get("tier", "quality")),
+            latency_ms=(time.monotonic() - call_started) * 1000,
         )
         for image in images:
             if "error" not in image:

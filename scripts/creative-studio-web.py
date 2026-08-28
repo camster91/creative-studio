@@ -68,6 +68,9 @@ from creative_studio_app.jobs import (
 )
 from creative_studio_app.version_graph import VersionGraphStore
 from creative_studio_app.version_routes import create_blueprint as _create_version_blueprint
+from creative_studio_app.provider_ledger import ProviderLedger, correlation_id as _provider_correlation_id
+from creative_studio_app.provider_metrics_routes import create_blueprint as _create_provider_metrics_blueprint
+from creative_studio_app.provider_errors import error_code as _provider_error_code
 from creative_studio_app.rate_limit import (
     client_ip as _client_ip,
     create_rate_limiter,
@@ -294,6 +297,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 _job_store = DurableJobStore(DATA_DIR / "jobs.db")
 _job_store.recover_interrupted()
 _version_store = VersionGraphStore(DATA_DIR / "versions.db")
+_provider_ledger = ProviderLedger(DATA_DIR / "provider-ledger.db")
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -407,6 +411,57 @@ def enforce_daily_limit(est_count: int = 1, tier: str = "balanced"):
 def cost_for_tier(tier: str) -> float:
     """Estimated per-image cost for a quality tier."""
     return _tier_cost(tier, _TIER_MODEL, COSTS)
+
+
+def _record_provider_results(
+    owner_id: str,
+    job_id: str,
+    results,
+    *,
+    estimated_cost_each: float,
+    latency_ms: float,
+    provider: str = "google-gemini",
+    model_hint: str = "unknown",
+):
+    """Account for each attempted provider call without creative payloads."""
+    items = results if isinstance(results, list) and results else [{}]
+    traces = _take_provider_traces()
+    if len(traces) > len(items):
+        items = list(items) + [
+            {"error": "failed", "error_code": trace.get("outcome")}
+            for trace in traces[len(items):]
+        ]
+    per_call_latency = max(0, latency_ms) / max(1, len(items))
+    for index, item in enumerate(items):
+        item = item if isinstance(item, dict) else {}
+        trace = traces[index] if index < len(traces) else {}
+        error_code = item.get("error_code")
+        outcome = {
+            "quota_exhausted": "quota_exhausted",
+            "timeout": "timeout",
+            "service_unavailable": "service_unavailable",
+            "provider_failed": "provider_failed",
+        }.get(
+            error_code,
+            trace.get("outcome") if not item.get("error") else "provider_failed",
+        ) or "completed"
+        call_id = (
+            item.get("provider_correlation_id")
+            or trace.get("correlation_id")
+            or _provider_correlation_id()
+        )
+        item["provider_correlation_id"] = call_id
+        _provider_ledger.record(
+            owner_id=owner_id,
+            job_id=job_id,
+            provider=provider,
+            model=item.get("model") or model_hint,
+            estimated_cost=estimated_cost_each,
+            actual_cost=item.get("cost") or 0,
+            latency_ms=trace.get("latency_ms", per_call_latency),
+            outcome=outcome,
+            correlation_id=call_id,
+        )
 
 
 def session_cost(session_id: str) -> float:
@@ -537,6 +592,38 @@ def save_pins(image_path: str, pins: List[Dict]):
 
 SCRIPT_DIR = Path(__file__).parent
 SCRIPT_PATH = str(SCRIPT_DIR / "creative_studio.py")
+_provider_trace_state = threading.local()
+
+
+def _tracked_provider_run(*args, **kwargs):
+    """Attach a caller-safe correlation ID before the provider subprocess."""
+    call_id = _provider_correlation_id()
+    environment = dict(kwargs.get("env") or os.environ)
+    environment["CREATIVE_PROVIDER_CORRELATION_ID"] = call_id
+    kwargs["env"] = environment
+    started = time.monotonic()
+    outcome = "completed"
+    try:
+        return subprocess.run(*args, **kwargs)
+    except BaseException as error:
+        outcome = _provider_error_code(error)
+        raise
+    finally:
+        traces = getattr(_provider_trace_state, "calls", None)
+        if traces is None:
+            traces = []
+            _provider_trace_state.calls = traces
+        traces.append({
+            "correlation_id": call_id,
+            "latency_ms": (time.monotonic() - started) * 1000,
+            "outcome": outcome,
+        })
+
+
+def _take_provider_traces() -> list[dict]:
+    traces = list(getattr(_provider_trace_state, "calls", []))
+    _provider_trace_state.calls = []
+    return traces
 
 # NOTE: _TIER_MODEL is defined earlier in the file (line ~89) as a (model, resolution) tuple map.
 # Don't redefine it here — old duplicates caused a critical bug where the second definition
@@ -566,7 +653,7 @@ def run_cli_generate(
         script_path=SCRIPT_PATH,
         python_executable=sys.executable,
         tier_models=_TIER_MODEL,
-        run=subprocess.run,
+        run=_tracked_provider_run,
         record_cost=track_cost,
         to_image_url=image_url,
     )
@@ -591,7 +678,7 @@ def run_cli_composite(
         output_dir=OUTPUT_DIR,
         script_path=SCRIPT_PATH,
         python_executable=sys.executable,
-        run=subprocess.run,
+        run=_tracked_provider_run,
         record_cost=track_cost,
         to_image_url=image_url,
     )
@@ -605,7 +692,7 @@ def run_cli_export(source_path: str, presets: str, api_key: str) -> List[Dict]:
         api_key,
         launch_script=Path(__file__).parent.parent / "launch.sh",
         output_dir=OUTPUT_DIR,
-        run=subprocess.run,
+        run=_tracked_provider_run,
         to_image_url=image_url,
     )
 
@@ -620,7 +707,7 @@ def run_cli_qc(image_path: str, api_key: str) -> dict:
         image_path,
         api_key,
         launch_script=Path(__file__).parent.parent / "launch.sh",
-        run=subprocess.run,
+        run=_tracked_provider_run,
         estimated_cost_usd=estimated_cost,
     )
 
@@ -634,7 +721,7 @@ def run_cli_refine(image_path: str, changes: str, api_key: str, tier: str) -> Li
         tier,
         output_dir=OUTPUT_DIR,
         launch_script=Path(__file__).parent.parent / "launch.sh",
-        run=subprocess.run,
+        run=_tracked_provider_run,
         record_cost=track_cost,
         to_image_url=image_url,
     )
@@ -662,7 +749,7 @@ def run_cli_variations(
         script_path=SCRIPT_PATH,
         python_executable=sys.executable,
         tier_models=_TIER_MODEL,
-        run=subprocess.run,
+        run=_tracked_provider_run,
         record_cost=track_cost,
         to_image_url=image_url,
     )
@@ -685,7 +772,7 @@ def run_cli_refine_from_variation(
         script_path=SCRIPT_PATH,
         python_executable=sys.executable,
         tier_models=_TIER_MODEL,
-        run=subprocess.run,
+        run=_tracked_provider_run,
         record_cost=track_cost,
         to_image_url=image_url,
     )
@@ -716,7 +803,7 @@ def run_cli_chat_turn(
         script_path=SCRIPT_PATH,
         python_executable=sys.executable,
         tier_models=_TIER_MODEL,
-        run=subprocess.run,
+        run=_tracked_provider_run,
         record_cost=track_cost,
         to_image_url=image_url,
     )
@@ -1466,6 +1553,8 @@ app.register_blueprint(
         rate_limited=rate_limited,
         validate_version_parent=_validate_version_parent,
         current_version_node=_current_version_node,
+        estimate_cost=cost_for_tier,
+        record_provider_results=_record_provider_results,
     )
 )
 app.register_blueprint(
@@ -1497,6 +1586,7 @@ app.register_blueprint(
         ).lower() in ("1", "true", "yes"),
         validate_version_parent=_validate_version_parent,
         current_version_node=_current_version_node,
+        record_provider_results=_record_provider_results,
     )
 )
 app.register_blueprint(
@@ -1525,6 +1615,8 @@ app.register_blueprint(
         rate_limited=rate_limited,
         validate_version_parent=_validate_version_parent,
         current_version_node=_current_version_node,
+        estimate_cost=cost_for_tier,
+        record_provider_results=_record_provider_results,
     )
 )
 app.register_blueprint(
@@ -1609,6 +1701,13 @@ app.register_blueprint(
     )
 )
 app.register_blueprint(
+    _create_provider_metrics_blueprint(
+        ledger=_provider_ledger,
+        admin_authed=_admin_authed,
+        rate_limited=rate_limited,
+    )
+)
+app.register_blueprint(
     _create_support_blueprint(
         waitlist_pattern=_WAITLIST_RE,
         request_lock=_request_log_lock,
@@ -1641,6 +1740,8 @@ app.register_blueprint(
         rate_limited=rate_limited,
         validate_version_parent=_validate_version_parent,
         current_version_node=_current_version_node,
+        estimate_cost=cost_for_tier,
+        record_provider_results=_record_provider_results,
     )
 )
 app.register_blueprint(

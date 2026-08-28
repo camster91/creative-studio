@@ -3,6 +3,7 @@
 from collections.abc import Callable
 import hashlib
 import json
+import time
 
 from flask import Blueprint, jsonify, request
 
@@ -34,6 +35,7 @@ def create_blueprint(
     durable_jobs_enabled: bool = True,
     validate_version_parent: Callable = lambda *_args: True,
     current_version_node: Callable = lambda *_args: None,
+    record_provider_results: Callable = lambda *_args, **_kwargs: None,
 ) -> Blueprint:
     blueprint = Blueprint("generation_routes", __name__)
 
@@ -148,8 +150,14 @@ def create_blueprint(
                             "session_id": session_id,
                             "message": f"Cancelled after {len(images)} image(s)",
                         }
+                    call_started = time.monotonic()
                     batch = run_generate(
                         prompt, mode, api_key, tier, aspect, True, variations=1
+                    )
+                    record_provider_results(
+                        owner_id, job_id, batch,
+                        estimated_cost_each=estimate_cost(tier),
+                        latency_ms=(time.monotonic() - call_started) * 1000,
                     )
                     if not batch or "error" in batch[0]:
                         failure = batch[0] if batch else {}
@@ -208,8 +216,14 @@ def create_blueprint(
                 }
             )
 
+        call_started = time.monotonic()
         images = run_generate(
             prompt, mode, api_key, tier, aspect, True, variations=variations
+        )
+        record_provider_results(
+            owner_id, session_id, images,
+            estimated_cost_each=estimate_cost(tier),
+            latency_ms=(time.monotonic() - call_started) * 1000,
         )
         for image in images:
             if "error" not in image:

@@ -36,6 +36,8 @@ def create_blueprint(
     rate_limited: Callable,
     validate_version_parent: Callable = lambda *_args: True,
     current_version_node: Callable = lambda *_args: None,
+    estimate_cost: Callable = lambda _tier: 0,
+    record_provider_results: Callable = lambda *_args, **_kwargs: None,
 ) -> Blueprint:
     blueprint = Blueprint("delivery_routes", __name__)
 
@@ -115,7 +117,12 @@ def create_blueprint(
         parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
         if not validate_version_parent(session_id, owner_id, parent_node_id):
             return jsonify({"error": "Parent version not found"}), 404
+        call_started = time.monotonic()
         images = run_composite(prompt, str(product), api_key, aspect)
+        record_provider_results(
+            owner_id, session_id, images, estimated_cost_each=estimate_cost(tier),
+            latency_ms=(time.monotonic() - call_started) * 1000,
+        )
         for image in images:
             if "error" in image:
                 continue
@@ -234,7 +241,17 @@ def create_blueprint(
                 return jsonify({"error": str(error)}), 400
         else:
             return jsonify({"error": "Image required"}), 400
+        actor_id = current_actor_id()
+        call_started = time.monotonic()
         result = run_qc(str(image), api_key)
+        ledger_result = dict(result)
+        ledger_result["cost"] = result.get("estimated_cost_usd") or 0
+        ledger_result["model"] = result.get("model") or "qc-unknown"
+        record_provider_results(
+            actor_id, data.get("session_id") or "qc", [ledger_result],
+            estimated_cost_each=result.get("estimated_cost_usd") or 0,
+            latency_ms=(time.monotonic() - call_started) * 1000,
+        )
         return jsonify(
             {"message": f"QC Score: {result['quality_score']}/10", "qc": result}
         )
@@ -253,7 +270,20 @@ def create_blueprint(
         file_key, node_id = parse_figma_url(url)
         if not file_key:
             return jsonify({"error": "Invalid Figma URL"}), 400
-        return jsonify(fetch_figma_context(file_key, node_id))
+        actor_id = current_actor_id()
+        call_started = time.monotonic()
+        result = fetch_figma_context(file_key, node_id)
+        ledger_result = {
+            "error": result.get("error") if isinstance(result, dict) else "failed",
+            "error_code": "provider_failed" if isinstance(result, dict) and result.get("error") else None,
+            "model": "figma-rest-api",
+        }
+        record_provider_results(
+            actor_id, "figma-context", [ledger_result], estimated_cost_each=0,
+            latency_ms=(time.monotonic() - call_started) * 1000,
+            provider="figma",
+        )
+        return jsonify(result)
 
     @blueprint.post("/api/qc/override")
     @rate_limited

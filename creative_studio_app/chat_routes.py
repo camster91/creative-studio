@@ -4,6 +4,7 @@ import shutil
 import time
 import uuid
 import re
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -28,6 +29,8 @@ def create_blueprint(
     rate_limited: Callable,
     validate_version_parent: Callable = lambda *_args: True,
     current_version_node: Callable = lambda *_args: None,
+    estimate_cost: Callable = lambda _tier: 0,
+    record_provider_results: Callable = lambda *_args, **_kwargs: None,
 ) -> Blueprint:
     blueprint = Blueprint("chat_routes", __name__)
 
@@ -70,6 +73,7 @@ def create_blueprint(
                 input_image = str(save_upload(request.files["image"], "chat_ref"))
             except ValueError as error:
                 return jsonify({"error": str(error)}), 400
+        call_started = time.monotonic()
         images, session = run_chat_turn(
             api_key,
             session_key=session_key,
@@ -77,6 +81,11 @@ def create_blueprint(
             tier=data.get("tier", "balanced"),
             aspect=data.get("aspect_ratio", "1:1"),
             input_image=input_image,
+        )
+        record_provider_results(
+            actor_id, session_id, images,
+            estimated_cost_each=estimate_cost(data.get("tier", "balanced")),
+            latency_ms=(time.monotonic() - call_started) * 1000,
         )
         session["_owner_id"] = actor_id
         for image in images:

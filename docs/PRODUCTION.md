@@ -40,6 +40,29 @@ provider unavailability. Roll back with `CREATIVE_SIGNUP_ENABLED=false`; this
 does not invalidate existing sessions. Never enable
 `CREATIVE_EXPOSE_MAGIC_LINK_TOKEN` outside isolated tests.
 
+## Provider accounting and alerts
+
+Every Gemini/QC/Figma call boundary writes a best-effort record to
+`provider-ledger.db`. Telemetry failure cannot fail the customer request.
+Authenticate as an operator and query
+`GET /api/admin/provider-metrics?hours=24` for grouped provider/model/outcome
+counts, estimated versus recorded cost, latency, and alert reasons. Supported
+provider alerts are spend at 80% of the supplied limit, error rate, latency,
+and quota exhaustion. Request metrics separately cover HTTP 5xx/p95 and queue
+depth; magic-link telemetry covers sustained email delivery failure. Route
+these stable alert names through the production log/dashboard integration and
+exercise that destination with synthetic records before launch.
+
+The ledger's `actual_cost` is the application price-card charge recorded when
+an output succeeds; it is not the provider's final invoice. Provider-side free
+tiers, cached work, rounding, delayed usage, failed-call charging, taxes, and
+price changes can produce variance. Export provider billing for the same UTC
+window, compare it with the dashboard's estimate and recorded charge, document
+the difference, and update the price card only through a reviewed release.
+Call correlation IDs are generated before accounting and returned with results;
+retain any provider-issued request ID when an SDK exposes one, but never store
+provider response bodies or creative payloads.
+
 ## Release and rollback
 
 Pull requests run CI only. A merge to `main` builds an immutable SHA-tagged
