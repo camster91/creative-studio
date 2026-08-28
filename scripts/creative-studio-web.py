@@ -43,6 +43,7 @@ from creative_studio_app import delivery as _delivery_service
 from creative_studio_app import iterations as _iteration_service
 from creative_studio_app import chat as _chat_service
 from creative_studio_app import billing as _billing_service
+from creative_studio_app.uploads import save_image_upload as _persist_image_upload
 from creative_studio_app.seo_routes import create_blueprint as _create_seo_blueprint
 from creative_studio_app.informational_routes import (
     create_blueprint as _create_informational_blueprint,
@@ -783,6 +784,22 @@ def _owned_asset_paths(user_id: str) -> set[str]:
     return result
 
 
+def _save_upload(upload, purpose: str) -> Path:
+    owner_id = _current_actor_id()
+    if not owner_id:
+        raise ValueError("Sign in or provide an API key before uploading")
+    return _persist_image_upload(
+        upload,
+        DATA_DIR / "uploads",
+        purpose=purpose,
+        owner_id=owner_id,
+        max_bytes=int(os.environ.get("CREATIVE_MAX_UPLOAD_BYTES", str(16 * 1024 * 1024))),
+        max_dimension=int(os.environ.get("CREATIVE_MAX_IMAGE_DIMENSION", "12000")),
+        max_pixels=int(os.environ.get("CREATIVE_MAX_IMAGE_PIXELS", "40000000")),
+        retention_days=int(os.environ.get("CREATIVE_UPLOAD_RETENTION_DAYS", "30")),
+    )
+
+
 def _deliver_magic_link(email: str, token: str) -> bool:
     host = os.environ.get("SMTP_HOST", "").strip()
     sender = os.environ.get("MAGIC_LINK_FROM", "").strip()
@@ -1292,6 +1309,7 @@ app.register_blueprint(
         enforce_prompt_length=_enforce_prompt_length,
         enforce_daily_limit=enforce_daily_limit,
         safe_filename=_safe_filename,
+        save_upload=_save_upload,
         safe_output_path=_safe_output_relpath,
         get_data_dir=lambda: DATA_DIR,
         new_session_id=new_session_id,
@@ -1336,6 +1354,7 @@ app.register_blueprint(
         enforce_daily_limit=enforce_daily_limit,
         build_pin_prompt=build_pin_prompt,
         safe_filename=_safe_filename,
+        save_upload=_save_upload,
         get_data_dir=lambda: DATA_DIR,
         image_extensions=_IMAGE_EXTS,
         tier_models=_TIER_MODEL,
@@ -1440,6 +1459,7 @@ app.register_blueprint(
         current_actor_id=_current_actor_id,
         enforce_prompt_length=_enforce_prompt_length,
         safe_filename=_safe_filename,
+        save_upload=_save_upload,
         get_data_dir=lambda: DATA_DIR,
         get_chat_sessions=lambda: _chat_sessions,
         run_chat_turn=run_cli_chat_turn,

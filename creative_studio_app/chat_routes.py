@@ -16,6 +16,7 @@ def create_blueprint(
     current_actor_id: Callable[[], str | None],
     enforce_prompt_length: Callable,
     safe_filename: Callable[[str], str],
+    save_upload: Callable,
     get_data_dir: Callable,
     get_chat_sessions: Callable[[], dict],
     run_chat_turn: Callable,
@@ -59,13 +60,10 @@ def create_blueprint(
         session_id = data.get("session_id", new_session_id())
         input_image = None
         if "image" in request.files:
-            upload = request.files["image"]
-            uploads = get_data_dir() / "uploads"
-            uploads.mkdir(exist_ok=True)
-            input_image = str(
-                uploads / f"chat_ref_{int(time.time())}_{safe_filename(upload.filename)}"
-            )
-            upload.save(input_image)
+            try:
+                input_image = str(save_upload(request.files["image"], "chat_ref"))
+            except ValueError as error:
+                return jsonify({"error": str(error)}), 400
         images, session = run_chat_turn(
             api_key,
             session_key=session_key,
