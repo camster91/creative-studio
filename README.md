@@ -108,7 +108,7 @@ state, CLI/web, and verification boundaries.
 |-------|--------|
 | Backend | Flask + gunicorn |
 | Database | SQLite |
-| Queue | Bounded in-process background jobs |
+| Queue | Durable SQLite lifecycle with bounded in-process workers |
 | Frontend | Vanilla JavaScript |
 | Storage | Owner-scoped metadata plus mounted local volumes |
 | AI | Google Gemini (same as CLI) |
@@ -144,7 +144,7 @@ state, CLI/web, and verification boundaries.
 - [x] Owner-scope sessions, pins, chats, and library assets
 - [x] Fail closed for email identity and shared Figma credentials
 - [x] Prevent pull-request deployment and require container smoke checks
-- [ ] Move from in-process jobs to a durable queue
+- [x] Persist owner-scoped, idempotent batch job state and partial results
 - [ ] Multi-brand workspaces (project → assets → export bundle)
 - [ ] Asset library (reuse product PNGs across sessions)
 - [ ] Review/comment system (collaborative)

@@ -32,6 +32,12 @@ function updateFetchOptions(opts = {}) {
   return opts;
 }
 
+const newIdempotencyKey = () => (
+  globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : 'req-' + Date.now() + '-' + Math.random().toString(16).slice(2)
+);
+
 async function validateApiKey(key) {
   try {
     const r = await fetch('/api/validate-key', {
@@ -689,12 +695,12 @@ outputGrid.addEventListener('click', e => {
     outputGrid.className = 'output-grid count-4';
     fetch('/api/generate', updateFetchOptions({
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newIdempotencyKey() },
       body: JSON.stringify({ prompt, mode: 'direct', tier: state.tier, aspect_ratio: aspect, variations: 4 })
     })).then(r => r.json()).then(data => {
       state.generating = false;
       if (data.error) { showToast(data.error, 'err'); return; }
-      if (data.job_id && data.status === 'running') {
+      if (data.job_id) {
         return pollJob(data.job_id, 4).then(result => {
           if (result.error) { showToast(result.error, 'err'); return; }
           showOutput(result.images || []);
@@ -775,7 +781,7 @@ genBtn.addEventListener('click', async () => {
       data = await resp.json();
     } else {
       const resp = await fetch('/api/generate', updateFetchOptions({
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newIdempotencyKey() },
         body: JSON.stringify({ prompt, mode: 'direct', tier: state.tier, aspect_ratio: state.aspect, variations: count })
       }));
       data = await resp.json();
@@ -788,7 +794,7 @@ genBtn.addEventListener('click', async () => {
       return;
     }
 
-    if (data.job_id && data.status === 'running') {
+    if (data.job_id) {
       showToast('Batch started — about 2 minutes', 'ok');
       const result = await pollJob(data.job_id, count);
       if (result.error) { showEmpty(); showToast(result.error, 'err'); return; }
@@ -936,9 +942,12 @@ async function pollJob(jobId, expected) {
       showOutput(state.outputImages, true);
       genMeta.textContent = '· ' + streamed + '/' + expected;
     }
-    if (d.status === 'done') return { images: d.images || state.outputImages };
-    if (d.status === 'error') return { error: d.error || 'Generation failed' };
-    if ((Date.now() - start) / 1000 > 300) return { error: 'Timed out' };
+    if (d.status === 'completed') return { images: d.images || state.outputImages };
+    if (d.status === 'failed' || d.status === 'cancelled') return { error: d.error || 'Generation failed' };
+    if ((Date.now() - start) / 1000 > 300) {
+      await fetch('/api/jobs/' + jobId + '/cancel', updateFetchOptions({ method: 'POST' })).catch(() => {});
+      return { error: 'Timed out; cancellation requested' };
+    }
   }
 }
 

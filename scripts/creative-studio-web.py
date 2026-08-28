@@ -61,6 +61,7 @@ from creative_studio_app.delivery_routes import create_blueprint as _create_deli
 from creative_studio_app.generation_routes import create_blueprint as _create_generation_blueprint
 from creative_studio_app.iteration_routes import create_blueprint as _create_iteration_blueprint
 from creative_studio_app.jobs import (
+    DurableJobStore,
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
     run_job_background as _start_job,
@@ -287,6 +288,9 @@ else:
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+_job_store = DurableJobStore(DATA_DIR / "jobs.db")
+_job_store.recover_interrupted()
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -972,15 +976,33 @@ def _run_job_background(
     *args,
     **kwargs,
 ):
-    """Compatibility wrapper around the independently tested job service."""
+    """Run a job while mirroring terminal state to durable owner-scoped storage."""
+    _job_store.update(job_id, status="running")
+
+    def durable_work():
+        try:
+            result = fn(*args, **kwargs)
+            terminal = result.pop("_job_status", "completed") if isinstance(result, dict) else "completed"
+            error_code = result.pop("_job_error_code", None) if isinstance(result, dict) else None
+            actual_cost = sum(item.get("cost", 0) for item in result.get("images", [])) if isinstance(result, dict) else 0
+            _job_store.update(
+                job_id,
+                status=terminal,
+                result=result,
+                error_code=error_code,
+                actual_cost=actual_cost,
+            )
+            return result
+        except Exception:
+            _job_store.update(job_id, status="failed", error_code="job_failed")
+            raise RuntimeError("job_failed")
+
     _start_job(
         job_id,
-        fn,
-        *args,
+        durable_work,
         jobs=_jobs,
         lock=_jobs_lock,
         evict=_evict_old_jobs,
-        **kwargs,
     )
 
 
@@ -1313,6 +1335,8 @@ app.register_blueprint(
         landing_template=LANDING_TEMPLATE,
         app_template=APP_TEMPLATE,
         require_api_key=_require_api_key,
+        current_actor_id=_current_actor_id,
+        job_store=_job_store,
         jobs=_jobs,
         jobs_lock=_jobs_lock,
         get_output_dir=lambda: OUTPUT_DIR,
@@ -1366,7 +1390,13 @@ app.register_blueprint(
         get_sessions_dir=lambda: SESSIONS_DIR,
         current_session=_current_session,
         current_actor_id=_current_actor_id,
+        job_store=_job_store,
+        estimate_cost=cost_for_tier,
+        max_job_cost=float(os.environ.get("CREATIVE_MAX_JOB_COST", "1.00")),
         rate_limited=rate_limited,
+        durable_jobs_enabled=os.environ.get(
+            "CREATIVE_DURABLE_JOBS_ENABLED", "true"
+        ).lower() in ("1", "true", "yes"),
     )
 )
 app.register_blueprint(
