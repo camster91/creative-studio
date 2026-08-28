@@ -17,7 +17,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 
-from flask import Flask, render_template, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_file
 
 from figma_utils import parse_figma_url, fetch_figma_context, enhance_prompt_with_figma
 from creative_studio_app.assets import (
@@ -52,6 +52,7 @@ from creative_studio_app.library_routes import create_blueprint as _create_libra
 from creative_studio_app.state_routes import create_blueprint as _create_state_blueprint
 from creative_studio_app.support_routes import create_blueprint as _create_support_blueprint
 from creative_studio_app.chat_routes import create_blueprint as _create_chat_blueprint
+from creative_studio_app.core_routes import create_blueprint as _create_core_blueprint
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -876,21 +877,6 @@ LANDING_TEMPLATE = "landing.html"
 APP_TEMPLATE = "app.html"
 
 
-# ── Frontend routes ────────────────────────────────────────────────────
-
-
-@app.route("/")
-def index():
-    """Marketing landing page. No auth, no editor. Shippable public surface."""
-    return render_template(LANDING_TEMPLATE)
-
-
-@app.route("/app")
-def app_editor():
-    """The editor. BYOK required for generation."""
-    return render_template(APP_TEMPLATE)
-
-
 # ── API Routes ──────────────────────────────────────────────────────────
 
 
@@ -1010,82 +996,6 @@ def api_generate():
                 "credits_remaining": sess["credits_remaining"],
             })
     return jsonify(response_payload)
-
-
-@app.route("/api/jobs/<job_id>", methods=["GET"])
-@rate_limited
-def api_job_status(job_id):
-    api_key, err, used_trial_credit = _require_api_key()
-    if err is not None:
-        return err
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-    resp = {
-        "job_id": job_id,
-        "status": job["status"],
-        "started_at": job["started_at"],
-    }
-    if job["status"] == "done":
-        resp.update(job["result"])
-    elif job["status"] == "error":
-        resp["error"] = job["error"]
-    elif job["status"] == "running" and job.get("result"):
-        # Stream partial results for batch generation
-        resp["partial"] = job["result"]
-    return jsonify(resp)
-
-
-@app.route("/api/validate-key", methods=["POST"])
-@rate_limited
-def api_validate_key():
-    """Check if a Gemini API key is valid.
-
-    Sends the key in the `x-goog-api-key` header (NOT as a ?key= query
-    parameter) so it doesn't appear in Google access logs, browser
-    history, or any intermediate proxy logs. Also never echoes the
-    key in error responses — the client gets a sanitized message.
-    """
-    data = request.json or {}
-    key = data.get("key", "").strip()
-    if not key:
-        return jsonify({"error": "Key required"}), 400
-    if not key.startswith("AIza"):
-        return jsonify({"error": "Invalid format — Gemini keys start with AIza..."}), 400
-    if len(key) > 200:
-        # Gemini keys are ~40 chars. 200 is a generous upper bound that
-        # also catches runaway clients trying to use this endpoint as
-        # an arbitrary HTTPS proxy.
-        return jsonify({"error": "Key too long"}), 400
-
-    # Probe by listing models with the key in a header, not a query string.
-    import urllib.request, urllib.error
-    req = urllib.request.Request(
-        "https://generativelanguage.googleapis.com/v1beta/models",
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": key,
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            if resp.status == 200:
-                return jsonify({"valid": True, "message": "Key is valid"})
-    except urllib.error.HTTPError as e:
-        if e.code == 400 or e.code == 403:
-            # 400 = "API key not valid" / 403 = "permission denied". Both
-            # mean the key is bad or the API isn't enabled. Don't echo
-            # Google's body — it can echo the key back.
-            return jsonify({"valid": False, "error": "Invalid API key"}), 200
-        # 429 = rate limit, 5xx = Google down. Neither is "invalid key".
-        return jsonify({"valid": False, "error": f"HTTP {e.code}"}), 200
-    except Exception:
-        # Don't include str(e) in the response — some exception classes
-        # include the URL (and therefore the key) in their string form.
-        return jsonify({"valid": False, "error": "Network error"}), 200
-
-    return jsonify({"valid": True, "message": "Key looks valid"})
 
 
 _SSRF_BLOCKED_SCHEMES = frozenset(("", "file", "ftp", "gopher", "ldap", "dict", "data", "javascript"))
@@ -1911,6 +1821,17 @@ def _canonical_url(path: str) -> str:
 
 app.register_blueprint(_create_seo_blueprint(lambda: BLOG_CONTENT_DIR))
 app.register_blueprint(
+    _create_core_blueprint(
+        landing_template=LANDING_TEMPLATE,
+        app_template=APP_TEMPLATE,
+        require_api_key=_require_api_key,
+        jobs=_jobs,
+        jobs_lock=_jobs_lock,
+        get_output_dir=lambda: OUTPUT_DIR,
+        rate_limited=rate_limited,
+    )
+)
+app.register_blueprint(
     _create_account_blueprint(
         create_magic_link_token=_create_magic_link_token,
         consume_magic_link=_consume_magic_link,
@@ -2012,39 +1933,6 @@ app.register_blueprint(
         load_json=load_json,
     )
 )
-
-
-@app.route("/image/<path:subpath>")
-@rate_limited
-def serve_image(subpath):
-    parts = subpath.split("/")
-    if any(p in ("", ".", "..") or p.startswith("..") for p in parts):
-        return jsonify({"error": "Invalid path"}), 400
-    target = OUTPUT_DIR
-    for part in parts:
-        target = target / part
-    # Prevent traversal outside OUTPUT_DIR
-    try:
-        resolved = target.resolve()
-        base = OUTPUT_DIR.resolve()
-        resolved.relative_to(base)
-    except (ValueError, RuntimeError):
-        return jsonify({"error": "Access denied"}), 403
-    if resolved.exists() and resolved.is_file():
-        # Generated output paths are immutable: refinements and retries create a
-        # new file instead of replacing an existing image. Let browsers and CDNs
-        # retain these multi-megabyte assets while preserving Flask's ETag and
-        # conditional-request support.
-        response = send_from_directory(
-            str(resolved.parent),
-            resolved.name,
-            conditional=True,
-            max_age=31536000,
-        )
-        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        return response
-    return jsonify({"error": "Not found"}), 404
 
 
 # ─── Main ───────────────────────────────────────────────────────────────
