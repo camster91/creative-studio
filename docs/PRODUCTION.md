@@ -49,6 +49,19 @@ they contain host-wide spend/job state and session prompts. Provider and billing
 exceptions are mapped to stable public messages; raw stderr and third-party
 exception text must not be returned to browsers.
 
+Batch generation state is stored in `jobs.db` under the persistent data
+directory. Callers must reuse the `Idempotency-Key` header when retrying the
+same request; a key cannot be reused for a different payload. Job reads and
+`POST /api/jobs/<id>/cancel` are owner-scoped. Cancellation is cooperative:
+an in-flight provider call may finish, its result and cost are retained, and no
+new call starts afterward. Provider calls have a 300-second process timeout and
+there are no automatic paid-call retries. On restart, interrupted jobs become
+`failed` with `service_restarted` (or `cancelled` when already requested), while
+partial results and actual cost remain queryable. `CREATIVE_MAX_JOB_COST`
+defaults to `1.00` and rejects an oversized batch before the provider is called.
+Set `CREATIVE_DURABLE_JOBS_ENABLED=false` to roll batch requests back to the
+legacy synchronous path without affecting single-image generation.
+
 All browser uploads are decoded, bounded, metadata-stripped, and re-encoded as
 canonical PNG files. Their `.meta.json` sidecars record owner, purpose, source
 format, dimensions, creation, and expiry. Preview cleanup without deletion:

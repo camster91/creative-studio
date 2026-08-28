@@ -1,6 +1,8 @@
 """Primary image-generation Flask route."""
 
 from collections.abc import Callable
+import hashlib
+import json
 
 from flask import Blueprint, jsonify, request
 
@@ -25,7 +27,11 @@ def create_blueprint(
     get_sessions_dir: Callable,
     current_session: Callable[[], dict | None],
     current_actor_id: Callable[[], str | None],
+    job_store,
+    estimate_cost: Callable[[str], float],
+    max_job_cost: float,
     rate_limited: Callable,
+    durable_jobs_enabled: bool = True,
 ) -> Blueprint:
     blueprint = Blueprint("generation_routes", __name__)
 
@@ -84,22 +90,91 @@ def create_blueprint(
                 if "error" not in context:
                     prompt = enhance_prompt_with_figma(prompt, context)
 
-        if variations > 1:
-            job_id = new_job_id()
+        if variations > 1 and durable_jobs_enabled:
+            estimated_cost = estimate_cost(tier) * variations
+            if max_job_cost > 0 and estimated_cost > max_job_cost:
+                return jsonify({
+                    "error": "Request exceeds per-job cost limit",
+                    "estimated_cost": round(estimated_cost, 4),
+                    "job_cost_limit": max_job_cost,
+                }), 400
+            idempotency_key = (
+                request.headers.get("Idempotency-Key")
+                or data.get("idempotency_key")
+                or new_job_id()
+            )
+            if not isinstance(idempotency_key, str) or not idempotency_key.isascii() or len(idempotency_key) > 128:
+                return jsonify({"error": "Invalid idempotency key"}), 400
+            owner_id = current_actor_id()
+            fingerprint = hashlib.sha256(json.dumps({
+                "prompt": prompt,
+                "mode": mode,
+                "tier": tier,
+                "aspect": aspect,
+                "variations": variations,
+                "session_id": session_id,
+            }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            try:
+                job, created = job_store.create_or_get(
+                    owner_id, idempotency_key, fingerprint, estimated_cost
+                )
+            except ValueError as error:
+                return jsonify({"error": str(error)}), 409
+            job_id = job["id"]
+            if not created:
+                return jsonify({
+                    "job_id": job_id,
+                    "status": job["status"],
+                    "idempotency_key": idempotency_key,
+                    "idempotent_replay": True,
+                    "estimated_cost": job["estimated_cost"],
+                })
 
             def generate_batch():
                 images = []
                 for index in range(variations):
+                    if job_store.cancellation_requested(job_id):
+                        return {
+                            "_job_status": "cancelled",
+                            "images": images,
+                            "session_id": session_id,
+                            "message": f"Cancelled after {len(images)} image(s)",
+                        }
                     batch = run_generate(
                         prompt, mode, api_key, tier, aspect, True, variations=1
                     )
                     if not batch or "error" in batch[0]:
-                        break
+                        failure = batch[0] if batch else {}
+                        return {
+                            "_job_status": "failed",
+                            "_job_error_code": failure.get("error_code", "provider_failed"),
+                            "images": images,
+                            "session_id": session_id,
+                            "message": "Image provider failed before the batch completed",
+                        }
                     image = batch[0]
                     record(session_id, mode, prompt, aspect, image, owner_id)
                     images.append(image)
+                    partial = {
+                        "images": images.copy(),
+                        "progress": f"{index + 1}/{variations}",
+                        "session_id": session_id,
+                    }
+                    job_store.update(
+                        job_id,
+                        result=partial,
+                        actual_cost=sum(item.get("cost", 0) for item in images),
+                    )
+                    if job_store.cancellation_requested(job_id):
+                        return {
+                            "_job_status": "cancelled",
+                            "images": images,
+                            "session_id": session_id,
+                            "message": f"Cancelled after {len(images)} image(s)",
+                        }
                     with jobs_lock:
-                        jobs[job_id].setdefault("result", {})
+                        if not isinstance(jobs[job_id].get("result"), dict):
+                            jobs[job_id]["result"] = {}
                         jobs[job_id]["result"]["images"] = images.copy()
                         jobs[job_id]["result"]["progress"] = (
                             f"{index + 1}/{variations}"
@@ -117,11 +192,13 @@ def create_blueprint(
                     "job_id": job_id,
                     "status": "running",
                     "message": "Generation started",
+                    "idempotency_key": idempotency_key,
+                    "estimated_cost": round(estimated_cost, 4),
                 }
             )
 
         images = run_generate(
-            prompt, mode, api_key, tier, aspect, True, variations=1
+            prompt, mode, api_key, tier, aspect, True, variations=variations
         )
         for image in images:
             if "error" not in image:

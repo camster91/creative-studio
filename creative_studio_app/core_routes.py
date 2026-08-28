@@ -12,6 +12,8 @@ def create_blueprint(
     landing_template: str,
     app_template: str,
     require_api_key: Callable,
+    current_actor_id: Callable[[], str | None],
+    job_store,
     jobs: dict,
     jobs_lock,
     get_output_dir: Callable,
@@ -30,25 +32,50 @@ def create_blueprint(
     @blueprint.get("/api/jobs/<job_id>")
     @rate_limited
     def job_status(job_id):
-        _key, error, _used_trial_credit = require_api_key()
-        if error is not None:
-            return error
-        with jobs_lock:
-            job = jobs.get(job_id)
+        _key, auth_error, _used_trial = require_api_key()
+        if auth_error:
+            return auth_error
+        actor_id = current_actor_id()
+        if not actor_id:
+            return jsonify({"error": "Sign in or provide an API key"}), 401
+        job = job_store.get(job_id, actor_id)
         if not job:
             return jsonify({"error": "Job not found"}), 404
         response = {
             "job_id": job_id,
             "status": job["status"],
-            "started_at": job["started_at"],
+            "started_at": job.get("started_at"),
+            "estimated_cost": job.get("estimated_cost", 0),
+            "actual_cost": job.get("actual_cost", 0),
         }
-        if job["status"] == "done":
+        if job["status"] == "completed" and job.get("result"):
             response.update(job["result"])
-        elif job["status"] == "error":
-            response["error"] = job["error"]
-        elif job["status"] == "running" and job.get("result"):
+        elif job["status"] == "failed":
+            response["error"] = "Generation job failed"
+            response["error_code"] = job.get("error_code") or "job_failed"
+            if job.get("result"):
+                response["partial"] = job["result"]
+        elif job["status"] == "cancelled":
+            response["error"] = "Generation job cancelled"
+            if job.get("result"):
+                response["partial"] = job["result"]
+        elif job.get("result"):
             response["partial"] = job["result"]
         return jsonify(response)
+
+    @blueprint.post("/api/jobs/<job_id>/cancel")
+    @rate_limited
+    def cancel_job(job_id):
+        _key, auth_error, _used_trial = require_api_key()
+        if auth_error:
+            return auth_error
+        actor_id = current_actor_id()
+        if not actor_id:
+            return jsonify({"error": "Sign in or provide an API key"}), 401
+        job = job_store.request_cancel(job_id, actor_id)
+        if not job:
+            return jsonify({"error": "Job not found"}), 404
+        return jsonify({"job_id": job_id, "status": job["status"]})
 
     @blueprint.post("/api/validate-key")
     @rate_limited
