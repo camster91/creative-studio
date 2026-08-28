@@ -18,6 +18,7 @@ from creative_studio_app.costs import (
     load_costs,
     track_cost,
 )
+from creative_studio_app.seo import markdown_to_html, parse_blog_post
 
 
 def test_job_ids_are_unique_and_prefixed():
@@ -130,3 +131,18 @@ def test_cost_accounting_and_limit_are_atomic(tmp_path):
 
     assert rejection["spent_today"] == 0.5
     assert rejection["est_cost"] == 0.25
+
+
+def test_seo_parser_sanitizes_blog_content(tmp_path):
+    post_path = tmp_path / "safe-post.md"
+    post_path.write_text(
+        "---\ntitle: Safe Post\ndate: 2026-08-28\n---\n"
+        "## Heading\n\n<script>alert(1)</script>"
+    )
+
+    post = parse_blog_post(post_path)
+
+    assert post["title"] == "Safe Post"
+    assert "<h2>Heading</h2>" in post["body_html"]
+    assert "<script>" not in post["body_html"]
+    assert "&lt;script&gt;" in markdown_to_html("<script>")
