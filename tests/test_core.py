@@ -101,6 +101,25 @@ class TestImageUrl:
             url = cs.image_url(str(fake_file))
             assert url.startswith("/image/")
 
+    def test_generated_images_are_cached_as_immutable(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            cs.OUTPUT_DIR = td / "outputs"
+            image = cs.OUTPUT_DIR / "2026-08-28" / "generated.png"
+            image.parent.mkdir(parents=True, exist_ok=True)
+            image.write_bytes(b"not-a-real-png")
+
+            response = cs.app.test_client().get(
+                "/image/2026-08-28/generated.png"
+            )
+
+            assert response.status_code == 200
+            assert response.headers["Cache-Control"] == (
+                "public, max-age=31536000, immutable"
+            )
+            assert response.headers["X-Content-Type-Options"] == "nosniff"
+            assert response.headers.get("ETag")
+
 
 class TestPins:
     def test_pin_to_region(self):
