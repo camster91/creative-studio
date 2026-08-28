@@ -58,6 +58,7 @@ env GEMINI_API_KEY="..." FIGMA_ACCESS_TOKEN="..." bash launch.sh variations \
 - Batch 4-up (parallel generation with streaming partial results)
 - Server-side daily cost guardrail (`CREATIVE_DAILY_LIMIT`, default $5/day)
 - Live session gallery with multi-select + ZIP export
+- Durable version history with branching, favorite, back/undo, and cost recovery
 - Pin annotations, refine, variations, chat mode, and an advisory QC API
 - Cost tracking (per-image, per-day, per-session)
 - Lightbox, skeleton loaders, prompt history, copy-prompt, Ctrl+Enter

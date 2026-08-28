@@ -551,6 +551,19 @@ a:hover { text-decoration: underline; }
    OUTPUT STAGE — honest empty state
    ════════════════════════════════════════════════════════════════════ */
 
+.version-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+}
+.version-actions { display: flex; gap: 12px; }
+
 .output-stage {
   background: var(--bg-elevated);
   border: 1px solid var(--border);

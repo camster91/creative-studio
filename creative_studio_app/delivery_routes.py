@@ -34,6 +34,8 @@ def create_blueprint(
     parse_figma_url: Callable,
     fetch_figma_context: Callable,
     rate_limited: Callable,
+    validate_version_parent: Callable = lambda *_args: True,
+    current_version_node: Callable = lambda *_args: None,
 ) -> Blueprint:
     blueprint = Blueprint("delivery_routes", __name__)
 
@@ -108,9 +110,16 @@ def create_blueprint(
             return jsonify({"error": str(error)}), 400
         aspect = request.form.get("aspect_ratio", "16:9")
         session_id = request.form.get("session_id", new_session_id())
+        owner_id = current_actor_id()
+        parent_node_id = request.form.get("parent_node_id") or None
+        parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
+        if not validate_version_parent(session_id, owner_id, parent_node_id):
+            return jsonify({"error": "Parent version not found"}), 404
         images = run_composite(prompt, str(product), api_key, aspect)
         for image in images:
-            add_entry(
+            if "error" in image:
+                continue
+            node_id = add_entry(
                 session_id,
                 {
                     "type": "composite",
@@ -120,8 +129,11 @@ def create_blueprint(
                     "model": image.get("model", ""),
                     "ratio": image.get("ratio", aspect),
                     "note": image.get("name", ""),
+                    "parent_node_id": parent_node_id,
                 },
+                owner_id,
             )
+            image["version_node_id"] = node_id
         return jsonify(
             {"message": "Composite generated", "images": images, "session_id": session_id}
         )
