@@ -3,6 +3,12 @@
 // ════════════════════════════════════════════════════════════════════
 
 const $ = id => document.getElementById(id);
+const escapeHtml = value => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
 
 const state = {
   tier: 'balanced',
@@ -831,6 +837,13 @@ outputGrid.addEventListener('click', e => {
 const genBtn = $('genBtn');
 const btnSpinner = $('btnSpinner');
 const genMeta = $('genMeta');
+const generationStatus = $('generationStatus');
+const outputStage = $('outputStage');
+
+function announceGeneration(message, busy = true) {
+  generationStatus.textContent = message;
+  outputStage.setAttribute('aria-busy', busy ? 'true' : 'false');
+}
 
 genBtn.addEventListener('click', async () => {
   const prompt = $('prompt').value.trim();
@@ -838,6 +851,7 @@ genBtn.addEventListener('click', async () => {
   if (state.generating) return;
   state.lastPrompt = prompt;
   state.generating = true;
+  announceGeneration('Generation starting.');
   genBtn.disabled = true;
   genBtn.classList.add('is-loading');
   btnSpinner.hidden = false;
@@ -890,6 +904,7 @@ genBtn.addEventListener('click', async () => {
       showOutput([]);
       showEmpty();
       showToast(data.error, 'err');
+      announceGeneration('Generation failed: ' + data.error, false);
       return;
     }
 
@@ -905,14 +920,17 @@ genBtn.addEventListener('click', async () => {
       acceptVersionImages(data.images);
       addToGallery(data.images);
       showToast('Done', 'ok');
+      announceGeneration('Generation completed.', false);
       refreshCost();
     } else {
       showEmpty();
       showToast('No images returned', 'err');
+      announceGeneration('Generation completed without images.', false);
     }
   } catch (e) {
     showEmpty();
     showToast('Network error: ' + e.message, 'err');
+    announceGeneration('Generation failed because of a network error.', false);
   } finally {
     state.generating = false;
     genBtn.disabled = false;
@@ -1029,9 +1047,14 @@ sceneSetBtn.addEventListener('click', async () => {
 async function pollJob(jobId, expected) {
   const start = Date.now();
   let streamed = 0;
+  announceGeneration('Generation queued.');
   while (true) {
     await new Promise(r => setTimeout(r, 3500));
     const d = await fetch('/api/jobs/' + jobId, updateFetchOptions()).then(r => r.json());
+    if (d.status === 'queued') announceGeneration('Generation queued.');
+    if (d.status === 'running') announceGeneration(
+      streamed ? `Generation running. ${streamed} of ${expected} images available.` : 'Generation running.'
+    );
     if (d.partial && d.partial.images && d.partial.images.length > streamed) {
       const newOnes = d.partial.images.slice(streamed);
       streamed = d.partial.images.length;
@@ -1044,11 +1067,23 @@ async function pollJob(jobId, expected) {
       addToGallery(newOnes);
       showOutput(state.outputImages, true);
       genMeta.textContent = '· ' + streamed + '/' + expected;
+      announceGeneration(`Generation running. ${streamed} of ${expected} images available.`);
     }
-    if (d.status === 'completed') return { images: d.images || state.outputImages };
-    if (d.status === 'failed' || d.status === 'cancelled') return { error: d.error || 'Generation failed' };
+    if (d.status === 'completed') {
+      announceGeneration('Generation completed.', false);
+      return { images: d.images || state.outputImages };
+    }
+    if (d.status === 'failed') {
+      announceGeneration(streamed ? `Generation failed after ${streamed} partial images.` : 'Generation failed.', false);
+      return { error: d.error || 'Generation failed' };
+    }
+    if (d.status === 'cancelled') {
+      announceGeneration(streamed ? `Generation cancelled with ${streamed} partial images.` : 'Generation cancelled.', false);
+      return { error: d.error || 'Generation cancelled' };
+    }
     if ((Date.now() - start) / 1000 > 300) {
       await fetch('/api/jobs/' + jobId + '/cancel', updateFetchOptions({ method: 'POST' })).catch(() => {});
+      announceGeneration('Generation timed out; cancellation requested.', false);
       return { error: 'Timed out; cancellation requested' };
     }
   }
@@ -1163,17 +1198,21 @@ const lightbox = $('lightbox');
 const lightboxImg = $('lightboxImg');
 let lightboxList = [];
 let lightboxIdx = 0;
+let lightboxReturnFocus = null;
 
 function lightboxOpen(list, idx) {
   lightboxList = list;
   lightboxIdx = idx;
   lightbox.hidden = false;
+  lightboxReturnFocus = document.activeElement;
   document.body.style.overflow = 'hidden';
   lightboxRender();
+  $('lightboxClose').focus();
 }
 function lightboxClose() {
   lightbox.hidden = true;
   document.body.style.overflow = '';
+  if (lightboxReturnFocus && typeof lightboxReturnFocus.focus === 'function') lightboxReturnFocus.focus();
 }
 function lightboxRender() {
   const img = lightboxList[lightboxIdx];
@@ -1191,6 +1230,14 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') lightboxClose();
   if (e.key === 'ArrowLeft') $('lightboxPrev').click();
   if (e.key === 'ArrowRight') $('lightboxNext').click();
+  if (e.key === 'Tab') {
+    const controls = [...lightbox.querySelectorAll('button:not([disabled])')];
+    if (!controls.length) return;
+    const index = controls.indexOf(document.activeElement);
+    const next = e.shiftKey ? (index <= 0 ? controls.length - 1 : index - 1) : (index + 1) % controls.length;
+    e.preventDefault();
+    controls[next].focus();
+  }
 });
 
 // ── Toast ────────────────────────────────────────────────────────

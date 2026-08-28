@@ -35,6 +35,9 @@ source-*
 
 # Local smoke-test artifacts
 .testdata/
+node_modules/
+test-results/
+playwright-report/
 
 # NOTE: figma_utils.py is a real source file imported by creative-studio-web.py.
 # The Dockerfile symlinks it into /app/figma_utils.py so the import works

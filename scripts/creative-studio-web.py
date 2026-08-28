@@ -1134,7 +1134,7 @@ def _delete_project(project_id: str, user_id: str) -> bool:
 # ── Simple in-memory rate limiter ───────────────────────────────────────
 _request_log: Dict[str, list] = {}
 _request_log_lock = threading.Lock()
-_RATE_LIMIT = 20  # requests per minute per IP
+_RATE_LIMIT = max(1, int(os.environ.get("RATE_LIMIT_PER_MINUTE", "60")))
 
 # Cap the number of distinct IPs the rate limiter tracks. Without this,
 # a botnet with rotating IPs (or a single IPv6-rich NAT) can grow the
