@@ -114,16 +114,18 @@ class TestExportZipSSRF:
             "/api/export-zip",
             json={"urls": ["/image/2026-06-12/foo.png"]},
         )
-        # No file actually exists, so the inner write fails but endpoint
-        # returns a 200 zip containing an error.txt — that's OK, what we
-        # care about is that the SSRF gate didn't reject it.
-        assert r.status_code == 200
-        assert r.mimetype == "application/zip"
+        # Same-origin paths pass URL validation, but exporting still requires
+        # an authenticated account session.
+        assert r.status_code == 401
 
 
 # ─── Path traversal in /api/qc and /api/export ──────────────────────────
 
 class TestPathTraversal:
+    def test_session_id_cannot_escape_session_directory(self, fs_isolated):
+        with pytest.raises(ValueError):
+            cs.session_path("../../outside")
+
     def _make_image(self, fs_isolated):
         p = fs_isolated / "outputs" / "real.png"
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -154,6 +156,43 @@ class TestPathTraversal:
         assert r.status_code in (400, 402)
         if r.status_code == 400:
             assert "outside" in r.get_json()["error"].lower() or "invalid" in r.get_json()["error"].lower()
+
+
+class TestProductionAuthorization:
+    def test_signup_never_exposes_token_without_explicit_test_flag(self, flask_client, monkeypatch):
+        monkeypatch.delenv("CREATIVE_EXPOSE_MAGIC_LINK_TOKEN", raising=False)
+        monkeypatch.delenv("SMTP_HOST", raising=False)
+        response = flask_client.post("/signup", json={"email": "victim@example.com"})
+        assert response.status_code == 503
+        assert "token" not in response.get_json()
+
+    def test_shared_figma_token_is_disabled_by_default(self, flask_client, monkeypatch):
+        monkeypatch.delenv("CREATIVE_ENABLE_SHARED_FIGMA_TOKEN", raising=False)
+        response = flask_client.post(
+            "/api/figma",
+            json={"url": "https://www.figma.com/file/AbCd1234/example"},
+            headers={"X-API-Key": "AIzaTest"},
+        )
+        assert response.status_code == 503
+
+    def test_export_tracking_requires_account_session(self, flask_client):
+        response = flask_client.post(
+            "/api/export-track",
+            json={"session_id": "sess_1234abcd", "image_url": "/image/x.png", "preset": "web"},
+        )
+        assert response.status_code == 401
+
+    def test_chat_state_is_bound_to_api_key_owner(self, flask_client):
+        import hashlib
+        cs._chat_sessions["chat-deadbeef"] = {
+            "turn": 1,
+            "_owner_id": "key:" + hashlib.sha256(b"owner-key").hexdigest(),
+        }
+        response = flask_client.get(
+            "/api/chat/chat-deadbeef/history",
+            headers={"X-API-Key": "different-key"},
+        )
+        assert response.status_code == 404
 
     def test_export_rejects_traversal_image_url(self, flask_client, fs_isolated):
         r = flask_client.post(

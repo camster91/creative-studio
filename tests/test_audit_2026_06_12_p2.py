@@ -214,7 +214,7 @@ class TestPinsAuth:
         monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", False)
         monkeypatch.setattr(cs, "SERVER_API_KEY", "")
         r = client.post("/api/pins", json={"image_path": "/x.png", "x": 0.5, "y": 0.5, "text": "hi"})
-        assert r.status_code == 402
+        assert r.status_code == 401
 
     def test_pins_add_rejects_empty_text(self):
         client = cs.app.test_client()
@@ -260,14 +260,14 @@ class TestPinsAuth:
         monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", False)
         monkeypatch.setattr(cs, "SERVER_API_KEY", "")
         r = client.get("/api/pins/some%2Fpath")
-        assert r.status_code == 402
+        assert r.status_code == 401
 
     def test_pins_delete_requires_key_and_hex_id(self, monkeypatch):
         client = cs.app.test_client()
         monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", False)
         monkeypatch.setattr(cs, "SERVER_API_KEY", "")
         r = client.delete("/api/pins/some%2Fpath/abc")
-        assert r.status_code == 402  # auth first
+        assert r.status_code == 401  # application identity first
         # With a key but a non-hex pin_id
         r = client.delete("/api/pins/some%2Fpath/../etc/passwd",
             headers={"X-API-Key": "AIzaTest"})
@@ -279,7 +279,7 @@ class TestPinsAuth:
         monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", False)
         monkeypatch.setattr(cs, "SERVER_API_KEY", "")
         r = client.delete("/api/pins/some%2Fpath")
-        assert r.status_code == 402
+        assert r.status_code == 401
 
 
 # ─── /api/scene-set: extension check uses _safe_filename ─────────────

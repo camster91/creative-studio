@@ -58,6 +58,7 @@ def create_blueprint(
     *,
     get_output_dir: Callable,
     current_session: Callable[[], dict | None],
+    owned_asset_paths: Callable[[str], set[str]],
     rate_limited: Callable,
 ) -> Blueprint:
     blueprint = Blueprint("library", __name__)
@@ -65,7 +66,8 @@ def create_blueprint(
     @blueprint.get("/api/library")
     @rate_limited
     def library():
-        if not current_session():
+        session = current_session()
+        if not session:
             return jsonify({"error": "Sign in required"}), 401
         output_dir = get_output_dir()
         search = (request.args.get("search") or "").strip().lower()
@@ -80,7 +82,8 @@ def create_blueprint(
             offset = 0
         aspect_filename = aspect_query.replace(":", "_") if aspect_query else ""
 
-        items = scan_output_dir(output_dir)
+        owned = owned_asset_paths(session["user_id"])
+        items = [item for item in scan_output_dir(output_dir) if item["path"] in owned]
         if search or aspect_filename:
             filtered = []
             for item in items:
@@ -119,9 +122,12 @@ def create_blueprint(
     @blueprint.post("/api/library/<path:subpath>/delete")
     @rate_limited
     def delete(subpath):
-        if not current_session():
+        session = current_session()
+        if not session:
             return jsonify({"error": "Sign in required"}), 401
         output_dir = get_output_dir()
+        if subpath not in owned_asset_paths(session["user_id"]):
+            return jsonify({"error": "Not found"}), 404
         parts = [part for part in subpath.split("/") if part]
         if not parts or any(part in (".", "..") for part in parts):
             return jsonify({"error": "Invalid path"}), 400

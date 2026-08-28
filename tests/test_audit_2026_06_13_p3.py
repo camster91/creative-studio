@@ -220,21 +220,21 @@ class TestReadEndpointsRequireKey:
         monkeypatch.setattr(cs, "SERVER_API_KEY", "")
         client = cs.app.test_client()
         r = client.get("/api/sessions")
-        assert r.status_code == 402
+        assert r.status_code == 401
 
     def test_session_get_requires_key(self, monkeypatch):
         monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", False)
         monkeypatch.setattr(cs, "SERVER_API_KEY", "")
         client = cs.app.test_client()
         r = client.get("/api/session/sess_test123")
-        assert r.status_code == 402
+        assert r.status_code == 401
 
     def test_costs_requires_key(self, monkeypatch):
         monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", False)
         monkeypatch.setattr(cs, "SERVER_API_KEY", "")
         client = cs.app.test_client()
         r = client.get("/api/costs")
-        assert r.status_code == 402
+        assert r.status_code == 401
 
     def test_chat_history_requires_key(self, monkeypatch):
         monkeypatch.setattr(cs, "ALLOW_SERVER_FALLBACK", False)
@@ -266,7 +266,11 @@ class TestReadEndpointsRequireKey:
         source = tmp_path / "source.png"
         source.write_bytes(b"image")
         monkeypatch.setattr(cs, "DATA_DIR", tmp_path)
-        cs._chat_sessions["chat-save"] = {"current_input": str(source)}
+        import hashlib
+        cs._chat_sessions["chat-save"] = {
+            "current_input": str(source),
+            "_owner_id": "key:" + hashlib.sha256(b"AIzaTest").hexdigest(),
+        }
 
         response = cs.app.test_client().post(
             "/api/chat/chat-save/save",

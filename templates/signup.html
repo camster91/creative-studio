@@ -26,12 +26,7 @@
   <button type="submit">Get magic link</button>
 </form>
 <div id="result" class="result" hidden>
-  <p>Here's your magic link token. <strong>Copy it</strong>, then go to <a href="/login">/login</a> and paste it.</p>
-  <p>Your token:</p>
-  <code id="token"></code>
-  <p style="margin-top:12px;font-size:12px;color:var(--text-3);">
-    (When the email delivery system ships, this will arrive in your inbox instead of showing here.)
-  </p>
+  <p>Check your inbox for a single-use sign-in token, then paste it on the <a href="/login">login page</a>.</p>
 </div>
 <script>
 document.getElementById('form').addEventListener('submit', async function(e) {
@@ -40,7 +35,6 @@ document.getElementById('form').addEventListener('submit', async function(e) {
   var r = await fetch('/signup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email:email})});
   var body = await r.json();
   if (r.ok) {
-    document.getElementById('token').textContent = body.token;
     document.getElementById('result').hidden = false;
   } else {
     alert(body.error || 'Error signing up');

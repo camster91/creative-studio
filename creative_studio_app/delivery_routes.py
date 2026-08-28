@@ -3,7 +3,6 @@
 import io
 import re
 import time
-import urllib.request
 import zipfile
 from collections.abc import Callable
 
@@ -13,6 +12,10 @@ from flask import Blueprint, jsonify, request, send_file
 def create_blueprint(
     *,
     safe_export_url: Callable[[str], bool],
+    current_session: Callable[[], dict | None],
+    current_actor_id: Callable[[], str | None],
+    owned_asset_paths: Callable[[str], set[str]],
+    shared_figma_enabled: Callable[[], bool],
     require_api_key: Callable,
     get_api_key: Callable[[], str],
     enforce_prompt_length: Callable,
@@ -49,17 +52,27 @@ def create_blueprint(
                     "rejected": rejected[:5],
                 }
             ), 400
+        account = current_session()
+        if not account:
+            return jsonify({"error": "Sign in required"}), 401
+        owned = owned_asset_paths(account["user_id"])
+        unauthorized = [url for url in urls if url[len("/image/") :] not in owned]
+        if unauthorized:
+            return jsonify({"error": "Image not found"}), 404
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
             for index, url in enumerate(urls, start=1):
                 try:
-                    probe = urllib.request.Request(
-                        url, headers={"User-Agent": "CreativeStudio/1.0"}
-                    )
-                    with urllib.request.urlopen(probe, timeout=30) as response:
-                        content_type = response.headers.get("Content-Type", "")
-                        extension = ".jpg" if "jpeg" in content_type or "jpg" in content_type else ".webp" if "webp" in content_type else ".png"
-                        archive.writestr(f"image-{index}{extension}", response.read())
+                    source = safe_output_path(url[len("/image/") :])
+                    if not source:
+                        raise ValueError("Image not found")
+                    data = source.read_bytes()
+                    if len(data) > 16 * 1024 * 1024:
+                        raise ValueError("Image exceeds 16MB export limit")
+                    extension = source.suffix.lower()
+                    if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
+                        raise ValueError("Unsupported image type")
+                    archive.writestr(f"image-{index}{extension}", data)
                 except Exception as error:
                     archive.writestr(f"image-{index}-error.txt", str(error))
         buffer.seek(0)
@@ -159,12 +172,16 @@ def create_blueprint(
     @blueprint.post("/api/export-track")
     @rate_limited
     def export_track():
+        if not current_session():
+            return jsonify({"error": "Sign in required"}), 401
         data = request.json or {}
         image_url = data.get("image_url", "")
         preset = data.get("preset", "")
         session_id = data.get("session_id") or None
         if session_id and image_url and preset:
             session = load_session(session_id)
+            if session.get("owner_id") != current_actor_id():
+                return jsonify({"error": "Session not found"}), 404
             for entry in reversed(session.get("entries", [])):
                 if entry.get("image_url") != image_url:
                     continue
@@ -207,6 +224,8 @@ def create_blueprint(
     @blueprint.post("/api/figma")
     @rate_limited
     def figma():
+        if not shared_figma_enabled():
+            return jsonify({"error": "Shared Figma token access is disabled; configure per-user OAuth"}), 503
         _api_key, error, _used_trial_credit = require_api_key()
         if error is not None:
             return error

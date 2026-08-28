@@ -8,6 +8,8 @@ from flask import Blueprint, jsonify, render_template, request
 def create_blueprint(
     *,
     create_magic_link_token: Callable[[str], str],
+    deliver_magic_link: Callable[[str, str], bool],
+    expose_magic_link_token: Callable[[], bool],
     consume_magic_link: Callable[[str], dict | None],
     current_session: Callable[[], dict | None],
     auth_db: Callable,
@@ -23,7 +25,12 @@ def create_blueprint(
         email = (data.get("email") or "").strip().lower()
         if not email or "@" not in email or "." not in email.split("@")[-1]:
             return jsonify({"error": "Invalid email"}), 400
-        return jsonify({"token": create_magic_link_token(email), "email": email})
+        token = create_magic_link_token(email)
+        if not deliver_magic_link(email, token):
+            if expose_magic_link_token():
+                return jsonify({"token": token, "email": email, "delivery": "development"})
+            return jsonify({"error": "Email delivery is not configured"}), 503
+        return jsonify({"email": email, "delivery": "email"}), 202
 
     @blueprint.route("/login", methods=["GET", "POST"])
     def login_page():
