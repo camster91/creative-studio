@@ -2,6 +2,7 @@
 
 import threading
 import time
+from pathlib import Path
 
 from flask import Flask
 
@@ -19,6 +20,7 @@ from creative_studio_app.costs import (
     track_cost,
 )
 from creative_studio_app.seo import markdown_to_html, parse_blog_post
+from creative_studio_app.informational import render_docs, render_history, render_status
 
 
 def test_job_ids_are_unique_and_prefixed():
@@ -146,3 +148,30 @@ def test_seo_parser_sanitizes_blog_content(tmp_path):
     assert "<h2>Heading</h2>" in post["body_html"]
     assert "<script>" not in post["body_html"]
     assert "&lt;script&gt;" in markdown_to_html("<script>")
+
+
+def test_informational_pages_cover_operations_and_escape_history(tmp_path):
+    status = render_status(
+        {"total": 1.25, "by_date": {}, "image_count": 3},
+        {"job_123": {"status": "running", "started_at": time.time()}},
+    )
+    docs = render_docs()
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "one.json").write_text(
+        '{"entries":[{"prompt":"<script>bad</script>","cost":0.1,"model":"test"}]}'
+    )
+    history = render_history(sessions, lambda path: __import__("json").loads(path.read_text()))
+
+    assert "Active jobs (1)" in status
+    assert "/api/generate" in docs and "X-API-Key" in docs
+    assert "<script>bad</script>" not in history
+    assert "&lt;script&gt;bad&lt;/script&gt;" in history
+
+
+def test_legacy_informational_routes_remain_available():
+    # The legacy module is exercised exhaustively elsewhere; this source-level
+    # contract catches accidental route loss during further controller splits.
+    source = (Path(__file__).parent.parent / "scripts" / "creative-studio-web.py").read_text()
+    for route in ('/status', '/docs', '/history'):
+        assert f'@app.route("{route}")' in source
