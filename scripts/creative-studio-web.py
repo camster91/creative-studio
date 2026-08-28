@@ -47,6 +47,7 @@ from creative_studio_app.informational_routes import (
 )
 from creative_studio_app.account_routes import create_blueprint as _create_account_blueprint
 from creative_studio_app.billing_routes import create_blueprint as _create_billing_blueprint
+from creative_studio_app.project_routes import create_blueprint as _create_project_blueprint
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -685,10 +686,6 @@ if not app.debug:
         app.logger.warning("Failed to attach rotating file handler: %s", _e)
 
 # ── Auth and project persistence services ───────────────────────────────
-import zipfile as _zipfile
-import io as _io
-import json as _json_projects
-
 AUTH_DB = DATA_DIR / "users.db"
 _SESSION_DAYS = 7
 _MAGIC_LINK_MINUTES = 60
@@ -2248,152 +2245,6 @@ def _top_up_credits(user_id: str) -> None:
 
 
 
-# ── Project routes (WS-4) ────────────────────────────────────────────
-# All routes here require a signed-in session. A user can only
-# see/operate on their own projects (filtered by user_id at the
-# SQL layer). Anonymous /api/projects/* requests return 401.
-
-@app.route("/api/projects", methods=["POST"])
-@rate_limited
-def api_projects_create():
-    """Create a new project. Body: {name?, source_session_id?}.
-    Returns the new project (with empty generations)."""
-    sess = _current_session()
-    if not sess:
-        return jsonify({"error": "Sign in required"}), 401
-    data = request.json or {}
-    name = (data.get("name") or "Untitled project").strip()[:_PROJECT_NAME_MAX]
-    source_session_id = (data.get("source_session_id") or "").strip()[:64] or None
-    proj = _create_project(sess["user_id"], name, source_session_id)
-    return jsonify(proj), 201
-
-
-@app.route("/api/projects", methods=["GET"])
-@rate_limited
-def api_projects_list():
-    """List the signed-in user's projects, newest first.
-    Skips generations on the list view (faster) — use
-    /api/projects/<id> to get full data."""
-    sess = _current_session()
-    if not sess:
-        return jsonify({"error": "Sign in required"}), 401
-    return jsonify({"projects": _list_projects_for_user(sess["user_id"])})
-
-
-@app.route("/api/projects/<project_id>", methods=["GET"])
-@rate_limited
-def api_projects_get(project_id):
-    """Get a single project. Returns 404 if the project doesn't
-    exist OR if the user doesn't own it (don't leak existence)."""
-    sess = _current_session()
-    if not sess:
-        return jsonify({"error": "Sign in required"}), 401
-    proj = _get_project_for_user(project_id, sess["user_id"])
-    if not proj:
-        return jsonify({"error": "Not found"}), 404
-    return jsonify(proj)
-
-
-@app.route("/api/projects/<project_id>", methods=["DELETE"])
-@rate_limited
-def api_projects_delete(project_id):
-    """Delete a project. Idempotent: returns 200 even if already gone."""
-    sess = _current_session()
-    if not sess:
-        return jsonify({"error": "Sign in required"}), 401
-    ok = _delete_project(project_id, sess["user_id"])
-    return jsonify({"deleted": ok})
-
-
-@app.route("/api/projects/<project_id>/generations", methods=["POST"])
-@rate_limited
-def api_projects_add_generation(project_id):
-    """Append a generation to a project. Body: {url, prompt, cost?, model?, ratio?}.
-    Called by the editor after a successful /api/generate response
-    to record the image against the active project."""
-    sess = _current_session()
-    if not sess:
-        return jsonify({"error": "Sign in required"}), 401
-    data = request.json or {}
-    url = (data.get("url") or "").strip()[:_GENERATION_URL_MAX]
-    if not url:
-        return jsonify({"error": "url required"}), 400
-    proj = _add_generation_to_project(
-        project_id, sess["user_id"],
-        url=url,
-        prompt=(data.get("prompt") or "").strip()[:_GENERATION_PROMPT_MAX],
-        cost=float(data.get("cost") or 0),
-        model=str(data.get("model") or "")[:120],
-        ratio=str(data.get("ratio") or "")[:16],
-    )
-    if not proj:
-        return jsonify({"error": "Not found"}), 404
-    return jsonify(proj)
-
-
-@app.route("/api/projects/<project_id>/export", methods=["GET"])
-@rate_limited
-def api_projects_export(project_id):
-    """Export a project as a zip with a JSON manifest + the image files.
-
-    Zip structure:
-      manifest.json     — {id, name, hero_url, created_at, updated_at, generations}
-      images/<n>.<ext>   — the generated image, downloaded server-side
-                          from the local file system. (Skipped for
-                          external URLs that the server can't reach —
-                          we still record the URL in the manifest.)
-    The manifest is canonical — the image filenames match the
-    'url' field in each generation. If the URL is local (/image/...)
-    we resolve it under OUTPUT_DIR and add the file. Otherwise the
-    image is referenced by URL only.
-    """
-    sess = _current_session()
-    if not sess:
-        return jsonify({"error": "Sign in required"}), 401
-    proj = _get_project_for_user(project_id, sess["user_id"])
-    if not proj:
-        return jsonify({"error": "Not found"}), 404
-
-    buf = _io.BytesIO()
-    with _zipfile.ZipFile(buf, "w", _zipfile.ZIP_DEFLATED) as zf:
-        # Manifest
-        zf.writestr("manifest.json",
-                    _json_projects.dumps({
-                        "id": proj["id"],
-                        "name": proj["name"],
-                        "hero_url": proj["hero_url"],
-                        "created_at": proj["created_at"],
-                        "updated_at": proj["updated_at"],
-                        "generations": proj["generations"],
-                    }, indent=2))
-        # Embed local images
-        for idx, gen in enumerate(proj["generations"], start=1):
-            url = gen.get("url") or ""
-            if url.startswith("/image/"):
-                # local file. Serve_image does the same
-                # path-validity check; reuse it.
-                safe_rel = _safe_output_relpath(url[len("/image/"):])
-                if safe_rel is not None:
-                    full = OUTPUT_DIR / safe_rel
-                    if full.is_file():
-                        arcname = f"images/{idx}_{safe_rel.name}"
-                        zf.write(str(full), arcname)
-            elif url.startswith("http://") or url.startswith("https://"):
-                # External URL: don't try to fetch it (could be slow or
-                # blocked). Just record the URL in the manifest (which
-                # we already did above). The user can download manually.
-                pass
-
-    data = buf.getvalue()
-    safe_name = (proj["name"] or "project").strip().replace(" ", "_")
-    safe_name = "".join(c for c in safe_name if c.isalnum() or c in "_-")
-    filename = f"photogen-{safe_name[:50]}-{proj['id'][:8]}.zip"
-    return data, 200, {
-        "Content-Type": "application/zip",
-        "Content-Disposition": f'attachment; filename="{filename}"',
-    }
-
-
 # ── Library (WS-7) — every generation the user has ever made ────────────
 # Scans OUTPUT_DIR for all PNG/JPG files. Each generation is a
 # {path, url, name, mtime, size} entry. Filterable by prompt text
@@ -2676,6 +2527,22 @@ app.register_blueprint(
         resolve_price_id=_resolve_price_id,
         handle_event=_billing_service.handle_event,
         rate_limited=rate_limited,
+    )
+)
+app.register_blueprint(
+    _create_project_blueprint(
+        current_session=_current_session,
+        create_project=_create_project,
+        list_projects=_list_projects_for_user,
+        get_project=_get_project_for_user,
+        delete_project=_delete_project,
+        add_generation=_add_generation_to_project,
+        safe_output_relpath=_safe_output_relpath,
+        output_dir=OUTPUT_DIR,
+        rate_limited=rate_limited,
+        project_name_max=_PROJECT_NAME_MAX,
+        generation_url_max=_GENERATION_URL_MAX,
+        generation_prompt_max=_GENERATION_PROMPT_MAX,
     )
 )
 app.register_blueprint(
