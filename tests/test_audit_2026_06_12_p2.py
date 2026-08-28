@@ -154,11 +154,10 @@ class TestValidateKeyPrivacy:
     def test_key_not_in_query_string(self):
         """Build the URL the way the endpoint does, verify the key is NOT
         in the query string."""
-        import urllib.request
         # The test reads the source to confirm the endpoint uses the header
-        src = (SCRIPT_DIR / "creative-studio-web.py").read_text()
-        # Find the api_validate_key function
-        idx = src.find("def api_validate_key():")
+        src = (SCRIPT_DIR.parent / "creative_studio_app" / "core_routes.py").read_text()
+        # Find the validate_key route in its owning blueprint.
+        idx = src.find("def validate_key():")
         assert idx != -1
         # Read until the next def
         next_def = src.find("\ndef ", idx + 1)
