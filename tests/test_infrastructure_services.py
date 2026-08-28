@@ -26,6 +26,7 @@ from creative_studio_app import projects as project_service
 from creative_studio_app import generation as generation_service
 from creative_studio_app.delivery import parse_qc_output
 from creative_studio_app import chat as chat_service
+from creative_studio_app import billing as billing_service
 
 
 def test_job_ids_are_unique_and_prefixed():
@@ -336,3 +337,26 @@ def test_chat_service_feeds_each_output_into_the_next_turn(tmp_path):
     assert first[0]["turn"] == 1 and second[0]["turn"] == 2
     assert calls[1][calls[1].index("--input-image") + 1] == first[0]["path"]
     assert len(session["history"]) == 2
+
+
+def test_billing_credit_top_up_is_retry_idempotent(tmp_path):
+    database = tmp_path / "users.db"
+    auth_service.init_schema(database)
+    with auth_service.connect(database) as connection:
+        connection.execute(
+            """INSERT INTO users
+               (id,email,created_at,credits_remaining,subscription_tier,subscription_status)
+               VALUES ('user','paid@example.com','now',3,'pro','active')"""
+        )
+        connection.commit()
+    plans = {"pro": {"monthly_credits": 500}}
+
+    billing_service.top_up_credits(database, "user", plans)
+    billing_service.top_up_credits(database, "user", plans)
+
+    with auth_service.connect(database) as connection:
+        user = connection.execute(
+            "SELECT credits_remaining,subscription_status FROM users WHERE id='user'"
+        ).fetchone()
+    assert user["credits_remaining"] == 500
+    assert user["subscription_status"] == "active"

@@ -45,6 +45,7 @@ from creative_studio_app import generation as _generation_service
 from creative_studio_app import delivery as _delivery_service
 from creative_studio_app import iterations as _iteration_service
 from creative_studio_app import chat as _chat_service
+from creative_studio_app import billing as _billing_service
 from creative_studio_app.jobs import (
     evict_old_jobs as _evict_jobs,
     job_id as _new_job_id,
@@ -2294,51 +2295,27 @@ _BILLING_PORTAL_RETURN_URL = os.environ.get(
 def _stripe_configured() -> bool:
     """Return True if STRIPE_SECRET_KEY is set. Used as a fail-closed
     gate so the rest of the app keeps working without Stripe."""
-    return bool(os.environ.get("STRIPE_SECRET_KEY", "").strip())
+    return _billing_service.configured()
 
 
 def _stripe_api():
     """Return a configured stripe module. Raises RuntimeError if
     Stripe is not configured — callers should call _stripe_configured
     first and return 503 if false."""
-    if not _stripe_configured():
-        raise RuntimeError("Stripe not configured (STRIPE_SECRET_KEY not set)")
-    _stripe_lib.api_key = os.environ["STRIPE_SECRET_KEY"]
-    return _stripe_lib
+    return _billing_service.stripe_api(_stripe_lib)
 
 
 def _get_or_create_stripe_customer(user: dict) -> str:
     """Find the user's Stripe customer id, creating one if needed.
     Stores the id on the user row so we don't re-lookup on every
     request."""
-    if user.get("stripe_customer_id"):
-        return user["stripe_customer_id"]
-    stripe = _stripe_api()
-    customer = stripe.Customer.create(
-        email=user["email"],
-        metadata={"photogen_user_id": user["id"]},
-    )
-    cid = customer["id"]
-    with _auth_db() as db:
-        db.execute(
-            "UPDATE users SET stripe_customer_id = ? WHERE id = ?",
-            (cid, user["id"]))
-        db.commit()
-    return cid
+    return _billing_service.get_or_create_customer(AUTH_DB, _stripe_api(), user)
 
 
 def _resolve_price_id(plan: str) -> str:
     """Look up the Stripe price id for a plan from the env. Raises
     ValueError if the plan is unknown or the price id isn't set."""
-    if plan not in _BILLING_PLANS:
-        raise ValueError(f"Unknown plan: {plan!r}")
-    price_id = os.environ.get(_BILLING_PLANS[plan]["price_id_env"], "").strip()
-    if not price_id:
-        raise RuntimeError(
-            f"Plan {plan!r} not configured: set "
-            f"{_BILLING_PLANS[plan]['price_id_env']} in /root/.env.photogen"
-        )
-    return price_id
+    return _billing_service.resolve_price_id(plan, _BILLING_PLANS)
 
 
 @app.route("/api/billing/plans", methods=["GET"])
@@ -2444,165 +2421,41 @@ def api_billing_portal():
 
 @app.route("/api/billing/webhook", methods=["POST"])
 def api_billing_webhook():
-    """Stripe webhook receiver. Verifies the signature, then handles
-    the events we care about: checkout.session.completed,
-    customer.subscription.{created,updated,deleted},
-    invoice.payment_{succeeded,failed}.
-
-    No auth required — auth is via the Stripe signature header
-    instead (STRIPE_WEBHOOK_SECRET env var)."""
+    """Verify a Stripe signature and apply an idempotent billing event."""
     if not _stripe_configured():
         return "Stripe not configured", 503
     webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
     if not webhook_secret:
         return "Webhook secret not configured", 503
-    payload = request.get_data()
-    sig_header = request.headers.get("Stripe-Signature", "")
     try:
         stripe = _stripe_api()
         event = stripe.Webhook.construct_event(
-            payload, sig_header, webhook_secret)
-    except Exception as e:
-        return f"Invalid signature: {e}", 400
-
-    etype = event.get("type", "")
-    data = event.get("data", {}).get("object", {})
-    user_id = (data.get("metadata") or {}).get("photogen_user_id") or None
-
-    # Map subscription status strings to ours
-    if etype == "checkout.session.completed":
-        # User just paid; record subscription
-        sub_id = data.get("subscription")
-        customer_id = data.get("customer")
-        # Resolve user from customer_id (more reliable than metadata)
-        if not user_id and customer_id:
-            with _auth_db() as db:
-                row = db.execute(
-                    "SELECT id FROM users WHERE stripe_customer_id = ?",
-                    (customer_id,)).fetchone()
-                if row:
-                    user_id = row["id"]
-        if user_id and sub_id:
-            try:
-                sub = stripe.Subscription.retrieve(sub_id)
-                _record_subscription(user_id, sub)
-            except Exception:
-                # Will be updated by the subscription.* event anyway
-                pass
-    elif etype in ("customer.subscription.created",
-                   "customer.subscription.updated"):
-        if user_id:
-            _record_subscription(user_id, data)
-    elif etype == "customer.subscription.deleted":
-        if user_id:
-            _cancel_subscription(user_id)
-    elif etype == "invoice.payment_succeeded":
-        # New billing cycle: reset credits_used_today, top up
-        # credits_remaining to the plan's monthly_credits. The plan
-        # comes from the subscription's price → tier mapping.
-        if user_id:
-            _top_up_credits(user_id)
-    elif etype == "invoice.payment_failed":
-        # Mark the user as past_due but don't take credits away yet.
-        # Stripe will retry. After enough failures the subscription
-        # is canceled automatically.
-        if user_id:
-            with _auth_db() as db:
-                db.execute(
-                    "UPDATE users SET subscription_status = 'past_due' WHERE id = ?",
-                    (user_id,))
-                db.commit()
+            request.get_data(),
+            request.headers.get("Stripe-Signature", ""),
+            webhook_secret,
+        )
+    except Exception as error:
+        return f"Invalid signature: {error}", 400
+    _billing_service.handle_event(AUTH_DB, stripe, event, _BILLING_PLANS)
     return "", 200
 
 
+
 def _tier_from_price_id(price_id: str) -> str | None:
-    """Map a Stripe price id back to our tier slug. Returns None if
-    the price id doesn't match any configured plan."""
-    for plan_id, plan in _BILLING_PLANS.items():
-        env_price = os.environ.get(plan["price_id_env"], "").strip()
-        if env_price and env_price == price_id:
-            return plan_id
-    return None
+    return _billing_service.tier_from_price_id(price_id, _BILLING_PLANS)
 
 
 def _record_subscription(user_id: str, sub: dict) -> None:
-    """Update the user's subscription state from a Stripe
-    subscription object. Adds the monthly credits the first time
-    the user upgrades (sub.status becomes 'active' or 'trialing')."""
-    status = sub.get("status", "active")
-    price_id = (sub.get("items", {}).get("data") or [{}])[0].get("price", {}).get("id")
-    tier = _tier_from_price_id(price_id) if price_id else None
-    renews_at = (sub.get("current_period_end")
-                 if sub.get("current_period_end") is not None else None)
-    renews_iso = (datetime.fromtimestamp(renews_at).strftime("%Y-%m-%d %H:%M:%S")
-                  if renews_at else None)
-    with _auth_db() as db:
-        # If the user just upgraded, top up credits. We always
-        # add the monthly_credits on subscription created/updated
-        # to "active"/"trialing"; for renewals the invoice
-        # event handles the top-up.
-        previous = db.execute(
-            "SELECT subscription_tier, credits_remaining FROM users WHERE id = ?",
-            (user_id,)).fetchone()
-        previous_dict = dict(previous) if previous else {}
-        is_new_active = (status in ("active", "trialing")
-                         and not previous_dict.get("subscription_tier"))
-        if is_new_active and tier:
-            plan = _BILLING_PLANS[tier]
-            db.execute(
-                """UPDATE users SET stripe_subscription_id = ?,
-                                      subscription_tier = ?,
-                                      subscription_status = ?,
-                                      subscription_renews_at = ?,
-                                      credits_remaining = ?
-                   WHERE id = ?""",
-                (sub.get("id"), tier, status, renews_iso,
-                 plan["monthly_credits"], user_id))
-        else:
-            db.execute(
-                """UPDATE users SET stripe_subscription_id = ?,
-                                      subscription_tier = ?,
-                                      subscription_status = ?,
-                                      subscription_renews_at = ?
-                   WHERE id = ?""",
-                (sub.get("id"), tier, status, renews_iso, user_id))
-        db.commit()
+    _billing_service.record_subscription(AUTH_DB, user_id, sub, _BILLING_PLANS)
 
 
 def _cancel_subscription(user_id: str) -> None:
-    """Subscription deleted (Stripe sends customer.subscription.deleted
-    when a user cancels + their period ends). Set tier to NULL,
-    status to canceled, leave credits_remaining as-is so the
-    user can keep using whatever they have until the period ends."""
-    with _auth_db() as db:
-        db.execute(
-            """UPDATE users SET subscription_tier = NULL,
-                                  subscription_status = 'canceled'
-               WHERE id = ?""", (user_id,))
-        db.commit()
+    _billing_service.cancel_subscription(AUTH_DB, user_id)
 
 
 def _top_up_credits(user_id: str) -> None:
-    """Called on invoice.payment_succeeded. Resets credits_used_today
-    and tops up credits_remaining to the plan's monthly_credits.
-    We do an absolute set rather than a +delta so re-running the
-    same webhook doesn't double-credit."""
-    with _auth_db() as db:
-        user = db.execute(
-            "SELECT subscription_tier FROM users WHERE id = ?",
-            (user_id,)).fetchone()
-        if not user or not user["subscription_tier"]:
-            return
-        plan = _BILLING_PLANS.get(user["subscription_tier"])
-        if not plan:
-            return
-        db.execute(
-            """UPDATE users SET credits_remaining = ?,
-                                  credits_used_today = 0,
-                                  subscription_status = 'active'
-               WHERE id = ?""",
-            (plan["monthly_credits"], user_id))
-        db.commit()
+    _billing_service.top_up_credits(AUTH_DB, user_id, _BILLING_PLANS)
+
 
 
 @app.route("/settings/billing", methods=["GET"])
