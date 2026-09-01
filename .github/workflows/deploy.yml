@@ -142,7 +142,7 @@ jobs:
           set -e
           HTML=$(curl -sf http://localhost:15173/app)
           # Must contain the 3 core editor surfaces
-          for marker in "dropzone" "Generate" "SCENE" "In-hand" "Studio" "Lifestyle"; do
+          for marker in "dropzone" "Generate" "Scene" "In-hand" "Studio" "Lifestyle"; do
             echo "$HTML" | grep -q "$marker" || (echo "FAIL: /app missing '$marker'"; exit 1)
           done
           echo "Editor OK — all 6 core markers present"
