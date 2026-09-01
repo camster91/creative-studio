@@ -9,6 +9,8 @@ from flask import Blueprint, jsonify, render_template, request, send_file
 
 def create_blueprint(*, current_session: Callable, create_campaign: Callable, list_campaigns: Callable,
                      list_brand_passports: Callable, list_product_truth: Callable,
+                     get_product_truth: Callable, create_product_claim: Callable,
+                     list_product_claims: Callable, retire_product_claim: Callable,
                      get_campaign: Callable, campaign_readiness: Callable, build_generation_plan: Callable,
                      mark_campaign_started: Callable, attach_pack_asset: Callable,
                      save_upload: Callable, owned_asset_paths: Callable,
@@ -62,6 +64,56 @@ def create_blueprint(*, current_session: Callable, create_campaign: Callable, li
             return error
         brand_id = request.args.get("brand_id", "").strip()[:64] or None
         return jsonify({"products": list_product_truth(session["user_id"], brand_id)})
+
+    @blueprint.get("/api/product-truth/<product_id>/claims")
+    @rate_limited
+    def product_claims(product_id):
+        session, error = signed_in()
+        if error:
+            return error
+        if not get_product_truth(product_id, session["user_id"]):
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"claims": list_product_claims(product_id, session["user_id"])})
+
+    @blueprint.post("/api/product-truth/<product_id>/claims")
+    @rate_limited
+    def create_claim(product_id):
+        session, error = signed_in()
+        if error:
+            return error
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "JSON object required"}), 400
+        try:
+            claim = create_product_claim(product_id, session["user_id"], data)
+        except ValueError as claim_error:
+            return jsonify({"error": str(claim_error)}), 400
+        if not claim:
+            return jsonify({"error": "Not found"}), 404
+        if claim["status"] != "approved":
+            return jsonify({"error": "Matching claim evidence is retired; submit a revised approval record"}), 409
+        return jsonify(claim), 201
+
+    @blueprint.post("/api/product-truth/<product_id>/claims/<claim_id>/retire")
+    @rate_limited
+    def retire_claim(product_id, claim_id):
+        session, error = signed_in()
+        if error:
+            return error
+        if not get_product_truth(product_id, session["user_id"]):
+            return jsonify({"error": "Not found"}), 404
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "JSON object required"}), 400
+        try:
+            claim = retire_product_claim(
+                claim_id, product_id, session["user_id"], data.get("reason", ""),
+            )
+        except ValueError as claim_error:
+            return jsonify({"error": str(claim_error)}), 400
+        if not claim:
+            return jsonify({"error": "Claim not found or already retired"}), 409
+        return jsonify(claim)
 
     @blueprint.get("/api/campaigns")
     @rate_limited

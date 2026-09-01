@@ -118,6 +118,7 @@ def build_bundle(campaign: dict, sources: list[tuple[str, Path]], private_root: 
         "channels": [recipe["channel"] for recipe in recipes],
         "sources": source_hashes,
         "exception_review": campaign.get("exception_summary") or {},
+        "approved_claim_ids": [item["id"] for item in campaign.get("applicable_claims") or []],
     }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     bundle_id = f"bundle_{fingerprint[:20]}"
     bundle_dir = private_root / campaign["id"] / bundle_id
@@ -178,6 +179,14 @@ def build_bundle(campaign: dict, sources: list[tuple[str, Path]], private_root: 
             "allowed": True, "blocking": [], "unusable": [], "exceptions": [],
             "open_warning_count": 0,
         },
+        "claim_evidence": [{
+            "id": item["id"], "exact_text": item["exact_text"],
+            "claim_type": item["claim_type"], "markets": item["markets"],
+            "channels": item["channels"], "substantiation_url": item["substantiation_url"],
+            "required_disclosure": item.get("required_disclosure") or "",
+            "approved_by": item["approved_by"], "approval_reason": item["approval_reason"],
+            "approved_at": item["created_at"], "expires_at": item.get("expires_at"),
+        } for item in campaign.get("applicable_claims") or []],
         "publishing_status": "not_published",
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")

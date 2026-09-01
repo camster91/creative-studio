@@ -1165,6 +1165,23 @@ def _list_product_truth(user_id: str, brand_id: str | None = None) -> list:
     return _campaign_service.list_product_truth(AUTH_DB, user_id, brand_id)
 
 
+def _get_product_truth(product_id: str, user_id: str) -> dict | None:
+    return _campaign_service.get_product_truth(AUTH_DB, product_id, user_id)
+
+
+def _create_product_claim(product_id: str, user_id: str, payload: dict) -> dict | None:
+    return _campaign_service.create_claim(AUTH_DB, product_id, user_id, payload)
+
+
+def _list_product_claims(product_id: str, user_id: str) -> list:
+    return _campaign_service.list_claims(AUTH_DB, product_id, user_id)
+
+
+def _retire_product_claim(claim_id: str, product_id: str, user_id: str,
+                          reason: str) -> dict | None:
+    return _campaign_service.retire_claim(AUTH_DB, claim_id, product_id, user_id, reason)
+
+
 def _get_campaign(campaign_id: str, user_id: str) -> dict | None:
     return _campaign_service.get(AUTH_DB, campaign_id, user_id)
 
@@ -1876,6 +1893,10 @@ app.register_blueprint(
         list_campaigns=_list_campaigns,
         list_brand_passports=_list_brand_passports,
         list_product_truth=_list_product_truth,
+        get_product_truth=_get_product_truth,
+        create_product_claim=_create_product_claim,
+        list_product_claims=_list_product_claims,
+        retire_product_claim=_retire_product_claim,
         get_campaign=_get_campaign,
         campaign_readiness=_campaign_service.readiness,
         build_generation_plan=_campaign_service.generation_plan,
