@@ -2,6 +2,7 @@
 
 import importlib.util
 import io
+import json
 import os
 import sys
 from pathlib import Path
@@ -23,6 +24,8 @@ def cs(tmp_path):
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     module.DATA_DIR = tmp_path
+    module.SESSIONS_DIR = tmp_path / "sessions"
+    module.OUTPUT_DIR = tmp_path / "outputs"
     module.AUTH_DB = tmp_path / "users.db"
     module._init_auth_schema()
     with module._request_log_lock:
@@ -103,6 +106,9 @@ def test_complete_work_order_is_ready_and_builds_bounded_plan(cs):
     assert "Contains 6 essential electrolytes" in plan["prompt"]
     assert "Do not invent packaging text" in plan["prompt"]
     assert "not-a-channel" not in plan["channels"]
+    assert [(item["channel"], item["size"]) for item in plan["channel_deliverables"]] == [
+        ("amazon", [2000, 2000]), ("meta-feed", [1080, 1350]),
+    ]
 
 
 def png_upload():
@@ -214,6 +220,53 @@ def test_campaign_composite_uses_server_owned_pack_and_bounded_variations(cs, mo
     )
     assert rejected.status_code == 404
     assert rejected.get_json()["error"] == "Campaign pack asset not found"
+
+
+def test_campaign_bundle_is_private_owner_scoped_and_marks_campaign_complete(cs):
+    client = cs.app.test_client()
+    token = login(client, "bundle-owner@example.com")
+    stranger = login(client, "bundle-stranger@example.com")
+    created = client.post("/api/campaigns", json=complete_payload(), headers=headers(token)).get_json()
+    source = cs.OUTPUT_DIR / "fixtures" / "concept.png"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (800, 1200), (20, 80, 190, 255)).save(source)
+    user_id = cs._session_from_cookie(token)["user_id"]
+    cs.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    (cs.SESSIONS_DIR / "sess_deadbeef.json").write_text(json.dumps({
+        "id": "sess_deadbeef", "owner_id": f"user:{user_id}",
+        "entries": [{"image_url": "/image/fixtures/concept.png"}],
+    }))
+    response = client.post(
+        f"/api/campaigns/{created['id']}/bundles",
+        json={"image_urls": ["/image/fixtures/concept.png"], "session_id": "sess_deadbeef"},
+        headers=headers(token),
+    )
+    assert response.status_code == 201
+    bundle = response.get_json()
+    assert bundle["manifest"]["deliverable_count"] == 2
+    assert bundle["manifest"]["channels"] == ["amazon", "meta-feed"]
+    assert bundle["manifest"]["publishing_status"] == "not_published"
+    assert client.get(bundle["download_url"], headers=headers(stranger)).status_code == 404
+    download = client.get(bundle["download_url"], headers=headers(token))
+    assert download.status_code == 200
+    assert download.mimetype == "application/zip"
+    listed = client.get(f"/api/campaigns/{created['id']}/bundles", headers=headers(token)).get_json()
+    assert [item["id"] for item in listed["bundles"]] == [bundle["bundle_id"]]
+    completed = client.get(f"/api/campaigns/{created['id']}", headers=headers(token)).get_json()
+    assert completed["status"] == "completed"
+    assert completed["last_session_id"] == "sess_deadbeef"
+
+
+def test_campaign_bundle_rejects_unowned_images(cs):
+    client = cs.app.test_client()
+    token = login(client, "bundle-reject@example.com")
+    created = client.post("/api/campaigns", json=complete_payload(), headers=headers(token)).get_json()
+    response = client.post(
+        f"/api/campaigns/{created['id']}/bundles",
+        json={"image_urls": ["/image/another-owner.png"]}, headers=headers(token),
+    )
+    assert response.status_code == 404
+    assert response.get_json()["error"] == "Campaign image not found"
 
 
 def test_readiness_blocks_go_with_actionable_missing_fields(cs):

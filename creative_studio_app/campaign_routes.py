@@ -4,14 +4,18 @@ from collections.abc import Callable
 
 import hashlib
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, jsonify, render_template, request, send_file
 
 
 def create_blueprint(*, current_session: Callable, create_campaign: Callable, list_campaigns: Callable,
                      list_brand_passports: Callable, list_product_truth: Callable,
                      get_campaign: Callable, campaign_readiness: Callable, build_generation_plan: Callable,
                      mark_campaign_started: Callable, attach_pack_asset: Callable,
-                     save_upload: Callable, rate_limited: Callable) -> Blueprint:
+                     save_upload: Callable, owned_asset_paths: Callable,
+                     safe_output_path: Callable, build_campaign_bundle: Callable,
+                     record_campaign_bundle: Callable, list_campaign_bundles: Callable,
+                     get_campaign_bundle: Callable, campaign_bundle_path: Callable,
+                     rate_limited: Callable) -> Blueprint:
     blueprint = Blueprint("campaigns", __name__)
 
     def signed_in():
@@ -107,5 +111,71 @@ def create_blueprint(*, current_session: Callable, create_campaign: Callable, li
             return jsonify({"error": "Campaign is not ready", "readiness": gate}), 409
         mark_campaign_started(campaign_id, session["user_id"], None)
         return jsonify({"campaign_id": campaign_id, "status": "ready", "generation_request": build_generation_plan(campaign)})
+
+    @blueprint.post("/api/campaigns/<campaign_id>/bundles")
+    @rate_limited
+    def create_bundle(campaign_id):
+        session, error = signed_in()
+        if error:
+            return error
+        campaign = get_campaign(campaign_id, session["user_id"])
+        if not campaign:
+            return jsonify({"error": "Not found"}), 404
+        data = request.get_json(silent=True)
+        image_urls = data.get("image_urls") if isinstance(data, dict) else None
+        if not isinstance(image_urls, list) or not 1 <= len(image_urls) <= 8:
+            return jsonify({"error": "image_urls must contain 1 to 8 campaign images"}), 400
+        if any(not isinstance(url, str) or not url.startswith("/image/") for url in image_urls):
+            return jsonify({"error": "Campaign images must use owned image URLs"}), 400
+        if len(set(image_urls)) != len(image_urls):
+            return jsonify({"error": "Campaign image URLs must be unique"}), 400
+        owned = owned_asset_paths(session["user_id"])
+        relative = [url[len("/image/"):] for url in image_urls]
+        if any(item not in owned for item in relative):
+            return jsonify({"error": "Campaign image not found"}), 404
+        sources = []
+        for url, item in zip(image_urls, relative):
+            source = safe_output_path(item)
+            if not source:
+                return jsonify({"error": "Campaign image not found"}), 404
+            sources.append((url, source))
+        try:
+            bundle_path, manifest = build_campaign_bundle(campaign, sources)
+            bundle = record_campaign_bundle(
+                campaign_id, session["user_id"], manifest, bundle_path,
+                data.get("session_id") if isinstance(data, dict) else None,
+            )
+        except ValueError as bundle_error:
+            return jsonify({"error": str(bundle_error)}), 400
+        return jsonify({
+            "bundle_id": bundle["id"],
+            "manifest": bundle["manifest"],
+            "download_url": f"/api/campaigns/{campaign_id}/bundles/{bundle['id']}/download",
+        }), 201
+
+    @blueprint.get("/api/campaigns/<campaign_id>/bundles")
+    @rate_limited
+    def bundles(campaign_id):
+        session, error = signed_in()
+        if error:
+            return error
+        if not get_campaign(campaign_id, session["user_id"]):
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"bundles": list_campaign_bundles(campaign_id, session["user_id"])})
+
+    @blueprint.get("/api/campaigns/<campaign_id>/bundles/<bundle_id>/download")
+    @rate_limited
+    def download_bundle(campaign_id, bundle_id):
+        session, error = signed_in()
+        if error:
+            return error
+        bundle = get_campaign_bundle(bundle_id, campaign_id, session["user_id"])
+        if not bundle:
+            return jsonify({"error": "Not found"}), 404
+        path = campaign_bundle_path(bundle)
+        if not path:
+            return jsonify({"error": "Bundle file not found"}), 404
+        return send_file(path, mimetype="application/zip", as_attachment=True,
+                         download_name=f"campaign-{campaign_id}-{bundle_id}.zip")
 
     return blueprint

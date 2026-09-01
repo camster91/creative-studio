@@ -5,6 +5,7 @@ import secrets
 from pathlib import Path
 
 from .auth import connect, now_iso
+from .campaign_delivery import channel_plan
 
 
 ALLOWED_ASPECTS = frozenset({"1:1", "4:5", "9:16", "16:9", "2:3", "4:3"})
@@ -245,6 +246,7 @@ def generation_plan(campaign: dict) -> dict:
         "aspect_ratio": campaign["aspect_ratio"],
         "variations": campaign["variations"],
         "channels": campaign["channels"],
+        "channel_deliverables": channel_plan(campaign["channels"]),
         "campaign_id": campaign["id"],
     }
 
@@ -283,3 +285,64 @@ def mark_started(path: Path, campaign_id: str, user_id: str, session_id: str | N
             (_clean(session_id, 80) or None, now_iso(), campaign_id, user_id),
         )
         database.commit()
+
+
+def record_bundle(path: Path, campaign_id: str, user_id: str, manifest: dict,
+                  zip_relpath: str, session_id: str | None = None) -> dict | None:
+    bundle_id = _clean(manifest.get("bundle_id"), 80)
+    if not bundle_id or Path(zip_relpath).is_absolute() or ".." in Path(zip_relpath).parts:
+        raise ValueError("Invalid campaign bundle record")
+    with connect(path) as database:
+        database.execute("BEGIN IMMEDIATE")
+        campaign = database.execute(
+            "SELECT id FROM campaign_work_orders WHERE id=? AND user_id=?",
+            (campaign_id, user_id),
+        ).fetchone()
+        if not campaign:
+            database.rollback()
+            return None
+        database.execute(
+            """INSERT OR IGNORE INTO campaign_bundles
+               (id,user_id,campaign_id,zip_relpath,manifest_json,source_session_id,created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (bundle_id, user_id, campaign_id, zip_relpath,
+             json.dumps(manifest, separators=(",", ":"), sort_keys=True),
+             _clean(session_id, 80) or None, now_iso()),
+        )
+        database.execute(
+            """UPDATE campaign_work_orders SET status='completed',last_session_id=?,updated_at=?
+               WHERE id=? AND user_id=?""",
+            (_clean(session_id, 80) or None, now_iso(), campaign_id, user_id),
+        )
+        database.commit()
+    return get_bundle(path, bundle_id, campaign_id, user_id)
+
+
+def get_bundle(path: Path, bundle_id: str, campaign_id: str, user_id: str) -> dict | None:
+    with connect(path) as database:
+        row = database.execute(
+            """SELECT id,campaign_id,zip_relpath,manifest_json,source_session_id,created_at
+               FROM campaign_bundles WHERE id=? AND campaign_id=? AND user_id=?""",
+            (bundle_id, campaign_id, user_id),
+        ).fetchone()
+    if not row:
+        return None
+    result = dict(row)
+    result["manifest"] = json.loads(result.pop("manifest_json"))
+    return result
+
+
+def list_bundles(path: Path, campaign_id: str, user_id: str) -> list[dict]:
+    with connect(path) as database:
+        rows = database.execute(
+            """SELECT id,campaign_id,manifest_json,source_session_id,created_at
+               FROM campaign_bundles WHERE campaign_id=? AND user_id=?
+               ORDER BY created_at DESC,id DESC LIMIT 50""",
+            (campaign_id, user_id),
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["manifest"] = json.loads(item.pop("manifest_json"))
+        result.append(item)
+    return result

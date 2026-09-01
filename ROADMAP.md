@@ -35,6 +35,9 @@ The dated market and technical evidence behind this direction lives in
 - A stacked candidate adds owner-scoped Brand Passport and Product Truth
   libraries so a new work order can reuse approved inputs without duplicating
   or silently rewriting them. It is not merged or deployed.
+- A further stacked candidate turns selected channels into exact deterministic
+  assets and a private manifest-backed ZIP after generation. It performs no
+  external publishing and is not merged or deployed.
 - Gemini remains the only production generation provider. OpenAI support is
   researched but not implemented or evaluated.
 - Deployment is operator-managed. Repository checks do not prove that the
@@ -64,9 +67,9 @@ Acceptance criteria:
 - [x] Reuse existing Brand Passports and Product Truth records across campaigns.
 - [x] Attach an exact product pack asset and default CPG campaigns to the
   deterministic composite path rather than text-only packaging generation.
-- [ ] Create channel recipes that fan one work order into exact format variants.
+- [x] Create channel recipes that fan one work order into exact format variants.
 - [ ] Route QC or claims failures into an exception inbox with repair/reject actions.
-- [ ] Save successful outputs back to the campaign and export a campaign bundle.
+- [x] Save successful outputs back to the campaign and export a campaign bundle.
 - [ ] Verify the end-to-end journey in desktop and mobile browser tests.
 
 Measurement hypothesis: a representative user can reach a generation-ready
@@ -103,10 +106,11 @@ proposed until measured with target customers.
 
 ### P1 — Channel production and delivery
 
-- Add versioned Amazon, Shopify, Meta, email, and web channel recipes.
-- Generate/crop/export one approved concept into exact channel deliverables.
-- Add campaign bundle manifests with inputs, provider/model, costs, checks,
-  approvals, and output lineage.
+- Versioned Amazon, Shopify, Meta, Pinterest, email, and web recipes plus private
+  bundle export are implemented in a stacked candidate.
+- Add safe-zone and subject-aware crop checks; deterministic center cropping
+  guarantees dimensions but not composition quality for every source.
+- Extend bundle manifests with QC, approval, provider/model, and cost evidence.
 
 ### P1 — Teams and governance
 

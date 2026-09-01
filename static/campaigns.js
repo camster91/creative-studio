@@ -40,6 +40,49 @@ function showReadiness(readiness) {
   goBtn.disabled = !readiness.ready;
 }
 
+const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+async function waitForCampaignJob(jobId) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    await pause(1500);
+    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, requestOptions());
+    const job = await response.json();
+    if (!response.ok) throw new Error(job.error || 'Could not read campaign job.');
+    if (job.status === 'completed') return job;
+    if (['failed', 'cancelled'].includes(job.status)) throw new Error(job.error || `Campaign ${job.status}.`);
+    const progress = job.partial && job.partial.progress;
+    statusEl.textContent = progress ? `Generating campaign variations — ${progress} complete…` : 'Generating campaign variations…';
+  }
+  throw new Error('Campaign is still running. Open Prompt Studio to continue monitoring it.');
+}
+
+async function createCampaignBundle(images, sessionId) {
+  const response = await fetch(`/api/campaigns/${encodeURIComponent(activeCampaignId)}/bundles`, requestOptions({
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({image_urls: images.map(image => image.url), session_id: sessionId}),
+  }));
+  const bundle = await response.json();
+  if (!response.ok) throw new Error(bundle.error || 'Could not build channel deliverables.');
+  statusEl.replaceChildren(document.createTextNode(`Created ${bundle.manifest.deliverable_count} channel-ready asset(s). `));
+  const link = document.createElement('a');
+  link.href = '#';
+  link.textContent = 'Download campaign bundle';
+  link.addEventListener('click', async event => {
+    event.preventDefault();
+    const download = await fetch(bundle.download_url, requestOptions());
+    if (!download.ok) { statusEl.append(document.createTextNode(' Download failed.')); return; }
+    const objectUrl = URL.createObjectURL(await download.blob());
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = `campaign-${activeCampaignId}-${bundle.bundle_id}.zip`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  });
+  statusEl.append(link);
+  loadCampaigns();
+}
+
 form.addEventListener('submit', async event => {
   event.preventDefault();
   statusEl.textContent = 'Checking…';
@@ -83,12 +126,16 @@ goBtn.addEventListener('click', async () => {
   } else {
     generationResponse = await fetch('/api/generate', requestOptions({method: 'POST', headers: {'Content-Type': 'application/json', 'Idempotency-Key': `campaign-${activeCampaignId}`}, body: JSON.stringify(plan.generation_request)}));
   }
-  const generation = await generationResponse.json();
+  let generation = await generationResponse.json();
   if (!generationResponse.ok) { statusEl.textContent = generation.message || generation.error || 'Generation failed.'; goBtn.disabled = false; return; }
-  if (generation.job_id) {
-    statusEl.textContent = 'Campaign is running. Open Prompt Studio to watch the job and review outputs.';
-  } else {
-    statusEl.textContent = `Created ${(generation.images || []).length} campaign image(s). Open Prompt Studio to review them.`;
+  try {
+    if (generation.job_id) generation = await waitForCampaignJob(generation.job_id);
+    const images = generation.images || [];
+    if (!images.length) throw new Error('Generation completed without campaign images.');
+    statusEl.textContent = `Creating exact channel deliverables from ${images.length} concept(s)…`;
+    await createCampaignBundle(images, generation.session_id);
+  } catch (error) {
+    statusEl.textContent = error.message;
   }
   goBtn.disabled = false;
 });

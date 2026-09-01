@@ -51,5 +51,5 @@ def test_unknown_preset_fails_instead_of_silently_skipping(source, tmp_path):
 def test_catalog_is_complete_and_explicit():
     assert set(EXPORT_PRESETS) == {
         "amazon", "shopify", "meta-feed", "meta-stories",
-        "web-hero", "pinterest", "print-dpi",
+        "web-hero", "pinterest", "email", "print-dpi",
     }
