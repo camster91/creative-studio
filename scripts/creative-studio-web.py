@@ -39,6 +39,7 @@ from creative_studio_app.costs import (
 )
 from creative_studio_app import auth as _auth_service
 from creative_studio_app import projects as _project_service
+from creative_studio_app import campaigns as _campaign_service
 from creative_studio_app import generation as _generation_service
 from creative_studio_app import delivery as _delivery_service
 from creative_studio_app import iterations as _iteration_service
@@ -53,6 +54,7 @@ from creative_studio_app.informational_routes import (
 from creative_studio_app.account_routes import create_blueprint as _create_account_blueprint
 from creative_studio_app.billing_routes import create_blueprint as _create_billing_blueprint
 from creative_studio_app.project_routes import create_blueprint as _create_project_blueprint
+from creative_studio_app.campaign_routes import create_blueprint as _create_campaign_blueprint
 from creative_studio_app.library_routes import create_blueprint as _create_library_blueprint
 from creative_studio_app.state_routes import create_blueprint as _create_state_blueprint
 from creative_studio_app.support_routes import create_blueprint as _create_support_blueprint
@@ -1014,10 +1016,10 @@ def _deliver_magic_link(email: str, token: str) -> bool:
         _record_delivery_result(False, "configuration")
         return False
     message = (
-        f"From: {sender}\r\nTo: {email}\r\nSubject: Your Photogen sign-in token\r\n"
+        f"From: {sender}\r\nTo: {email}\r\nSubject: Your Photogen sign-in link\r\n"
         "Content-Type: text/plain; charset=utf-8\r\n\r\n"
-        f"Open {public_url}/login and paste this single-use token:\n\n{token}\n"
-        "\nThis token expires in 60 minutes.\n"
+        f"Open this single-use sign-in link:\n\n{public_url}/login#token={token}\n"
+        "\nThe link expires in 60 minutes. If you did not request it, ignore this email.\n"
     )
     try:
         with smtplib.SMTP(host, port, timeout=15) as client:
@@ -1128,6 +1130,22 @@ def _add_generation_to_project(
 
 def _delete_project(project_id: str, user_id: str) -> bool:
     return _project_service.delete(AUTH_DB, project_id, user_id)
+
+
+def _create_campaign(user_id: str, payload: dict) -> dict:
+    return _campaign_service.create_bundle(AUTH_DB, user_id, payload)
+
+
+def _list_campaigns(user_id: str) -> list:
+    return _campaign_service.list_for_user(AUTH_DB, user_id)
+
+
+def _get_campaign(campaign_id: str, user_id: str) -> dict | None:
+    return _campaign_service.get(AUTH_DB, campaign_id, user_id)
+
+
+def _mark_campaign_started(campaign_id: str, user_id: str, session_id: str | None = None) -> None:
+    _campaign_service.mark_started(AUTH_DB, campaign_id, user_id, session_id)
 
 
 
@@ -1722,6 +1740,18 @@ app.register_blueprint(
         project_name_max=_PROJECT_NAME_MAX,
         generation_url_max=_GENERATION_URL_MAX,
         generation_prompt_max=_GENERATION_PROMPT_MAX,
+    )
+)
+app.register_blueprint(
+    _create_campaign_blueprint(
+        current_session=_current_session,
+        create_campaign=_create_campaign,
+        list_campaigns=_list_campaigns,
+        get_campaign=_get_campaign,
+        campaign_readiness=_campaign_service.readiness,
+        build_generation_plan=_campaign_service.generation_plan,
+        mark_campaign_started=_mark_campaign_started,
+        rate_limited=rate_limited,
     )
 )
 app.register_blueprint(

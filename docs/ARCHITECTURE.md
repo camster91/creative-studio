@@ -22,6 +22,8 @@ same subprocess-compatible service boundaries:
 - `costs.py`: pricing, persistence, and daily spend checks
 - `version_graph.py`: owner-scoped creative lineage, selection, and branch costs
 - `provider_ledger.py`: privacy-safe call accounting, correlation, and alert inputs
+- `campaigns.py`: owner-scoped Brand Passport, Product Truth, Campaign Work Order,
+  deterministic readiness, and provider-independent generation-plan assembly
 
 ## HTTP ownership
 
@@ -40,6 +42,7 @@ same subprocess-compatible service boundaries:
 | `account_routes.py` | signup, magic-link login, account status |
 | `billing_routes.py` | plans, Checkout, portal, Stripe webhook |
 | `project_routes.py` | ownership-scoped project CRUD and ZIP export |
+| `campaign_routes.py` | Campaign Factory page, work orders, readiness gate, and Go plan |
 | `library_routes.py` | generated-asset listing, filtering, deletion |
 | `support_routes.py` | waitlist, templates, runtime metadata, operator export |
 | `seo_routes.py` | robots, sitemap, blog index/posts |

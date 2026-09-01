@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f1ea">
+  <title>Campaign Factory · Creative Studio</title>
+  <link rel="stylesheet" href="/static/campaigns.css">
+  <script src="/static/campaigns.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span>CS</span> Creative Studio</a>
+    <nav><a href="/campaigns" aria-current="page">Campaign Factory</a><a href="/app">Prompt Studio</a><a href="/signup" id="accountLink">Sign in</a></nav>
+  </header>
+  <main>
+    <section class="hero">
+      <p class="eyebrow">CPG CAMPAIGN FACTORY</p>
+      <h1>From product truth to campaign-ready creative.</h1>
+      <p>Define the facts once. Set the work order. The readiness gate catches gaps before generation starts.</p>
+    </section>
+
+    <div class="layout">
+      <form id="campaignForm" class="work-order">
+        <p class="signin-notice" id="signinNotice"><strong>Sign in to save and run campaigns.</strong> You can review the work order first, then <a href="/signup">use a password-free email link</a>.</p>
+        <section class="card">
+          <div class="step"><span>1</span><div><h2>Brand Passport</h2><p>The rules every output must follow.</p></div></div>
+          <label>Brand name<input name="brandName" required maxlength="200" placeholder="Northstar Nutrition"></label>
+          <label>Brand voice<textarea name="brandVoice" rows="2" placeholder="Clear, energetic, science-aware — never clinical"></textarea></label>
+          <label>Visual rules <small>one per line</small><textarea name="visualRules" required rows="3" placeholder="Use cobalt blue as the anchor color&#10;Keep packaging label unobstructed"></textarea></label>
+          <label>Forbidden content <small>one per line</small><textarea name="forbiddenContent" rows="2" placeholder="No competitor packaging&#10;No medical imagery"></textarea></label>
+        </section>
+
+        <section class="card">
+          <div class="step"><span>2</span><div><h2>Product Truth</h2><p>Only verified facts and approved claims enter the plan.</p></div></div>
+          <div class="grid2"><label>Product name<input name="productName" required maxlength="200" placeholder="Daily Hydration Mix"></label><label>SKU<input name="sku" required maxlength="120" placeholder="HYD-BLU-12"></label></div>
+          <label>Verified facts <small>one per line</small><textarea name="facts" required rows="3" placeholder="12 single-serve sachets&#10;Blue raspberry flavour"></textarea></label>
+          <label>Approved claims <small>leave empty to prohibit claims</small><textarea name="claims" rows="2" placeholder="Contains 6 essential electrolytes"></textarea></label>
+          <label>Required disclosures <small>one per line</small><textarea name="disclosures" rows="2" placeholder="Always read and follow the label"></textarea></label>
+        </section>
+
+        <section class="card">
+          <div class="step"><span>3</span><div><h2>Campaign Work Order</h2><p>A bounded job, not an open-ended chat.</p></div></div>
+          <label>Campaign name<input name="campaignName" required maxlength="200" placeholder="Summer retail launch"></label>
+          <div class="grid2"><label>Objective<input name="objective" required placeholder="Drive trial at retail"></label><label>Audience<input name="audience" required placeholder="Active adults, 25–44"></label></div>
+          <label>Offer <small>optional</small><input name="offer" placeholder="Introductory 15% off"></label>
+          <fieldset><legend>Channels</legend><div class="choices" id="channels">
+            <label><input type="checkbox" value="amazon"> Amazon</label><label><input type="checkbox" value="shopify"> Shopify</label><label><input type="checkbox" value="meta-feed"> Meta feed</label><label><input type="checkbox" value="meta-story"> Meta story</label><label><input type="checkbox" value="email"> Email</label><label><input type="checkbox" value="web"> Web</label>
+          </div></fieldset>
+          <label>Creative direction<textarea name="direction" required rows="4" placeholder="A crisp summer tabletop scene with condensation and bright directional sunlight. Product remains the hero."></textarea></label>
+          <div class="grid3"><label>Aspect<select name="aspect"><option>1:1</option><option>4:5</option><option>9:16</option><option>16:9</option></select></label><label>Quality<select name="tier"><option value="fast">Fast</option><option value="balanced" selected>Balanced</option><option value="quality">Quality</option><option value="ultra">Ultra</option></select></label><label>Variations<select name="variations"><option>1</option><option selected>4</option><option>6</option><option>8</option></select></label></div>
+        </section>
+        <button class="save" type="submit">Check campaign readiness</button>
+      </form>
+
+      <aside class="rail">
+        <section class="card readiness" id="readinessCard">
+          <p class="eyebrow">READINESS GATE</p><h2 id="readinessTitle">Complete the work order</h2>
+          <div class="meter"><span id="readinessMeter"></span></div>
+          <ul id="readinessList"><li>Nothing is sent to a model until you press Go.</li></ul>
+          <label class="api-key">Gemini API key <small>stored only in this browser</small><input type="password" id="apiKey" placeholder="AIza…" autocomplete="off"></label>
+          <button id="goBtn" class="go" type="button" disabled>Go — generate campaign</button>
+          <p id="goStatus" class="status" role="status" aria-live="polite"></p>
+        </section>
+        <section class="card saved"><p class="eyebrow">RECENT WORK ORDERS</p><div id="campaignList"><p>No campaigns yet.</p></div></section>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

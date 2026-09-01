@@ -58,6 +58,53 @@ def init_schema(path: Path) -> None:
             updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
+        CREATE TABLE IF NOT EXISTS brand_passports (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            voice TEXT NOT NULL DEFAULT '',
+            visual_rules_json TEXT NOT NULL DEFAULT '[]',
+            forbidden_content_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_brand_passports_user
+            ON brand_passports(user_id);
+        CREATE TABLE IF NOT EXISTS product_truth (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            brand_id TEXT NOT NULL REFERENCES brand_passports(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            sku TEXT NOT NULL,
+            facts_json TEXT NOT NULL DEFAULT '[]',
+            approved_claims_json TEXT NOT NULL DEFAULT '[]',
+            required_disclosures_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_product_truth_user
+            ON product_truth(user_id);
+        CREATE TABLE IF NOT EXISTS campaign_work_orders (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            brand_id TEXT NOT NULL REFERENCES brand_passports(id) ON DELETE CASCADE,
+            product_id TEXT NOT NULL REFERENCES product_truth(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            objective TEXT NOT NULL DEFAULT '',
+            audience TEXT NOT NULL DEFAULT '',
+            offer TEXT NOT NULL DEFAULT '',
+            channels_json TEXT NOT NULL DEFAULT '[]',
+            creative_direction TEXT NOT NULL DEFAULT '',
+            aspect_ratio TEXT NOT NULL DEFAULT '1:1',
+            tier TEXT NOT NULL DEFAULT 'balanced',
+            variations INTEGER NOT NULL DEFAULT 4,
+            status TEXT NOT NULL DEFAULT 'draft',
+            last_session_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_campaign_work_orders_user
+            ON campaign_work_orders(user_id);
         """)
         existing = {row[1] for row in database.execute("PRAGMA table_info(users)")}
         for column, declaration in [

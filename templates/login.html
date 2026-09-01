@@ -20,34 +20,41 @@
 <body>
 <p class="back"><a href="/">&larr; Photogen</a></p>
 <h1>Login</h1>
-<p>Paste the magic link token you got after signing up.</p>
+<p>Open the sign-in link from your email. If you copied only the token, paste it below.</p>
 <form id="form">
   <input type="text" id="token-input" name="token" required placeholder="Paste token here" aria-label="Magic link token">
   <button type="submit">Login</button>
 </form>
 <div id="result" class="result" hidden>
   <p><strong>You're signed in.</strong> Your session is active for 7 days.</p>
-  <p>Session token (save this — put it in the editor sidebar as 'Session Token'):</p>
-  <code id="session-token"></code>
   <p style="margin-top:12px;">Credits remaining: <strong id="credits"></strong></p>
-  <p style="margin-top:12px;"><a href="/app">Open the editor →</a></p>
+  <p style="margin-top:12px;"><a href="/campaigns">Open Campaign Factory →</a></p>
 </div>
 <script>
-document.getElementById('form').addEventListener('submit', async function(e) {
-  e.preventDefault();
-  var token = document.getElementById('token-input').value.trim();
+async function signIn(token) {
+  if (!token) return;
   var r = await fetch('/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token:token})});
   var body = await r.json();
   if (r.ok) {
-    document.getElementById('session-token').textContent = body.session_token;
     document.getElementById('credits').textContent = body.credits_remaining;
     document.getElementById('result').hidden = false;
-    // Persist the session token in localStorage for the /app editor
     localStorage.setItem('photogen_session', body.session_token);
+    document.getElementById('form').hidden = true;
   } else {
     alert(body.error || 'Error logging in');
   }
+}
+document.getElementById('form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  await signIn(document.getElementById('token-input').value.trim());
 });
+var fragment = new URLSearchParams(location.hash.slice(1));
+var emailedToken = fragment.get('token') || '';
+if (emailedToken) {
+  history.replaceState(null, '', location.pathname);
+  document.getElementById('token-input').value = emailedToken;
+  signIn(emailedToken);
+}
 </script>
 </body>
 </html>

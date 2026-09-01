@@ -195,6 +195,7 @@ class TestProductionAuthorization:
         cs._consecutive_delivery_failures = 0
         assert cs._deliver_magic_link("private@example.com", "bearer-secret") is True
         assert sent
+        assert b"https://studio.example.com/login#token=bearer-secret" in sent[0][2]
         assert "private@example.com" not in events[0]
         assert "bearer-secret" not in events[0]
 

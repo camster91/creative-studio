@@ -64,6 +64,8 @@ env GEMINI_API_KEY="..." FIGMA_ACCESS_TOKEN="..." bash launch.sh variations \
 - Privacy-safe provider ledger with cost variance, latency, outcomes, and alerts
 - Lightbox, skeleton loaders, prompt history, copy-prompt, Ctrl+Enter
 - `/api/whoami` endpoint to surface BYOK vs shared-key status
+- Guided Campaign Factory with Brand Passport, SKU Product Truth, deterministic
+  readiness checks, and a one-click handoff to the durable generator
 
 ### Architecture
 
@@ -73,6 +75,10 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the authoritative module,
 state, CLI/web, and verification boundaries.
 
 ### UX Flow
+
+For repeatable CPG production, start at `/campaigns`: define the brand and SKU
+truth, complete a bounded work order, pass readiness, and press Go. The `/app`
+editor remains available for direct prompt work and detailed iteration.
 
 1. **Login** → See projects: "G FUEL Summer 2026", "Prymal Rebrand"
 2. **New Project** → Select brand profile → Pick scene template
