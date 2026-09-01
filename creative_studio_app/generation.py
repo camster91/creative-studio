@@ -1,5 +1,6 @@
 """CLI-backed direct generation and product compositing orchestration."""
 
+import json
 import os
 import subprocess
 import time
@@ -106,11 +107,19 @@ def composite(
         run(arguments, capture_output=True, text=True, timeout=300, env=environment, check=True)
         if output_path.exists():
             model = "gemini-3-pro-image-preview"
-            return [{
+            result = {
                 "path": str(output_path), "url": to_image_url(str(output_path)),
                 "name": filename, "cost": record_cost(model), "model": model,
                 "ratio": aspect,
-            }]
+            }
+            manifest_path = output_path.with_suffix(".composite.json")
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if manifest.get("schema_version") == 1:
+                    result["composite_manifest"] = manifest
+            except (OSError, ValueError, TypeError):
+                pass
+            return [result]
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         return [{"error": "Composite provider request failed", "error_code": error_code(error)}]
     except Exception:

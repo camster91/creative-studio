@@ -19,14 +19,22 @@ Status: **local candidate; not approved for production**
 - Disclose that background cleanup and scaling may alter edge pixels. This
   candidate does not close the subjective and pinned-provider fixture work in
   issue #102.
+- Replace global white-pixel deletion and fixed placement with edge-connected
+  background removal and aspect-preserving, centered, bounded placement.
+- Reject empty and sub-32px detected products before provider credentials,
+  credits, or calls are used.
+- Persist a composite manifest containing SHA-256 lineage for the canonical
+  source, prepared foreground, generated environment, and final output plus
+  exact placement geometry; propagate it into session and version metadata.
 
 ## Local verification
 
 - Python compile succeeded.
-- Python suite: 412 passed, 1 intentionally skipped.
-- Campaign contract: 9 passed, including cross-owner rejection, canonical pack
+- Python suite: 425 passed, 1 intentionally skipped.
+- Campaign and synthetic composite contracts cover cross-owner rejection, canonical pack
   provenance, readiness gating, server-side pack resolution, and three bounded
-  composite variations.
+  composite variations, supplied transparency, enclosed white labels, tiny and
+  empty failures, portrait/landscape geometry, non-clipping, and manifest lineage.
 - Browser release gate: 10 passed across phone, tablet, and desktop, including
   WCAG checks and horizontal-overflow budgets.
 - JavaScript syntax and `git diff --check` passed.
@@ -44,8 +52,9 @@ Status: **local candidate; not approved for production**
 
 ## Known residual risk
 
-The current PIL cleanup uses a white-background heuristic, fixed placement,
-fixed scale, and a synthetic contact shadow. It does not yet prove transparent,
-opaque, tiny, huge, rotated, low-quality, occluded, or color/light-matched cases.
-Issue #102 remains the acceptance record for those fixture and live-provider
-observations.
+The current PIL cleanup still uses a near-white threshold and a synthetic
+contact shadow. Deterministic tests cover transparency, opaque white-edge
+backgrounds, tiny/empty rejection, rotated aspect ratios, and bounded geometry;
+they do not prove subjective realism, perspective, occlusion, low-quality source
+recovery, or color/light match. Issue #102 remains the acceptance record for
+licensed visual review and live-provider observations.

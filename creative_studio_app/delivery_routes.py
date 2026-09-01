@@ -153,6 +153,7 @@ def create_blueprint(
                     "model": image.get("model", ""),
                     "ratio": image.get("ratio", aspect),
                     "note": image.get("name", ""),
+                    "composite_manifest": image.get("composite_manifest"),
                     "parent_node_id": parent_node_id,
                 },
                 owner_id,

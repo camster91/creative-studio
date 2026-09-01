@@ -46,6 +46,7 @@ from creative_studio_app import iterations as _iteration_service
 from creative_studio_app import chat as _chat_service
 from creative_studio_app import billing as _billing_service
 from creative_studio_app.uploads import save_image_upload as _persist_image_upload
+from creative_studio_app.compositing import validate_foreground_file as _validate_foreground_file
 from creative_studio_app.observability import install_request_metrics
 from creative_studio_app.seo_routes import create_blueprint as _create_seo_blueprint
 from creative_studio_app.informational_routes import (
@@ -561,7 +562,11 @@ def add_entry(session_id: str, entry: dict, owner_id: str | None = None):
                 model=entry.get("model") or "",
                 cost=entry.get("cost") or 0,
                 status="completed" if entry.get("image_url") else "partial",
-                metadata={"note": str(entry.get("note") or "")[:200]},
+                metadata={
+                    "note": str(entry.get("note") or "")[:200],
+                    **({"composite_manifest": entry["composite_manifest"]}
+                       if isinstance(entry.get("composite_manifest"), dict) else {}),
+                },
             )
             result["node_id"] = node["id"]
     _with_json_lock(_do)
@@ -985,7 +990,7 @@ def _save_upload(upload, purpose: str) -> Path:
     owner_id = _current_actor_id()
     if not owner_id:
         raise ValueError("Sign in or provide an API key before uploading")
-    return _persist_image_upload(
+    destination = _persist_image_upload(
         upload,
         DATA_DIR / "uploads",
         purpose=purpose,
@@ -998,6 +1003,14 @@ def _save_upload(upload, purpose: str) -> Path:
             "3650" if purpose == "campaign-pack" else "30",
         )),
     )
+    if purpose == "campaign-pack":
+        try:
+            _validate_foreground_file(destination)
+        except ValueError:
+            destination.unlink(missing_ok=True)
+            destination.with_suffix(".meta.json").unlink(missing_ok=True)
+            raise
+    return destination
 
 
 def _deliver_magic_link(email: str, token: str) -> bool:

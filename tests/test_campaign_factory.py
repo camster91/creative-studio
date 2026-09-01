@@ -105,7 +105,7 @@ def test_complete_work_order_is_ready_and_builds_bounded_plan(cs):
 
 def png_upload():
     data = io.BytesIO()
-    Image.new("RGBA", (24, 36), (20, 80, 190, 255)).save(data, "PNG")
+    Image.new("RGBA", (64, 96), (20, 80, 190, 255)).save(data, "PNG")
     data.seek(0)
     return data
 
@@ -153,6 +153,26 @@ def test_waiver_requires_a_reason(cs):
     created = client.post("/api/campaigns", json=payload, headers=headers(token)).get_json()
     assert created["readiness"]["ready"] is False
     assert {item["field"] for item in created["readiness"]["missing"]} == {"product.pack_asset_waiver_reason"}
+
+
+def test_unusable_pack_is_rejected_before_attachment_and_cleaned_up(cs):
+    client = cs.app.test_client()
+    token = login(client, "tiny-pack@example.com")
+    payload = complete_payload()
+    payload["product"].update(pack_asset_waived=False, pack_asset_waiver_reason="")
+    campaign_id = client.post("/api/campaigns", json=payload, headers=headers(token)).get_json()["id"]
+    tiny = io.BytesIO()
+    Image.new("RGB", (8, 8), (20, 80, 190)).save(tiny, "PNG")
+    tiny.seek(0)
+    rejected = client.post(
+        f"/api/campaigns/{campaign_id}/pack",
+        data={"pack": (tiny, "tiny.png")}, headers=headers(token),
+    )
+    assert rejected.status_code == 400
+    assert "too small" in rejected.get_json()["error"]
+    assert not list((cs.DATA_DIR / "uploads").glob("campaign-pack_*"))
+    campaign = client.get(f"/api/campaigns/{campaign_id}", headers=headers(token)).get_json()
+    assert campaign["has_pack_asset"] is False
 
 
 def test_campaign_composite_uses_server_owned_pack_and_bounded_variations(cs, monkeypatch):

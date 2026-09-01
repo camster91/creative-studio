@@ -80,6 +80,11 @@ proposed until measured with target customers.
 - Measure and improve alpha edges, background cleanup, scale, contact shadow,
   perspective, occlusion, and light/color match. The current composite uses the
   validated pack source but can alter edge pixels during cleanup and scaling.
+- Synthetic deterministic criteria now cover supplied alpha preservation,
+  edge-connected white removal, enclosed white label survival, tiny/empty input
+  rejection, aspect preservation, bounded placement, no clipping, and
+  content-addressed source/foreground/environment/output lineage. Licensed
+  visual review and live pinned-provider evidence remain outstanding.
 - Never present concept-only packaging generation as exact fidelity.
 - Add audit history for claim/rule changes that affect a campaign.
 

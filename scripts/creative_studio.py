@@ -34,6 +34,11 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime
 from io import BytesIO
 from creative_studio_app.delivery import EXPORT_PRESETS, export_presets, normalize_qc_assessment
+from creative_studio_app.compositing import (
+    composite_foreground,
+    prepare_foreground_file,
+    write_composite_manifest,
+)
 from pathlib import Path
 from typing import Optional
 
@@ -601,45 +606,11 @@ def generate_imagen(
 
 
 def remove_background_pil(input_path: str) -> str:
-    """Remove background from product photo using PIL edge detection."""
-    from PIL import Image, ImageFilter, ImageChops
-
-    img = Image.open(input_path).convert("RGBA")
-    gray = img.convert("L")
-    # Build mask: pure white bg gets removed, everything else kept
-    mask = gray.point(lambda x: 0 if x > 245 else 255, mode="L")
-    # Feather edges slightly to avoid hard white halos
-    mask = mask.filter(ImageFilter.GaussianBlur(2))
-    # Blend original alpha with computed mask
-    r, g, b, a = img.split()
-    # Only reduce alpha where mask is dark (near-white background was cut)
-    combined = ImageChops.multiply(a, mask)
-    img.putalpha(combined)
+    """Prepare a bounded foreground while preserving supplied transparency."""
     out = f"/tmp/cs_composite_fg_{hashlib.md5(input_path.encode()).hexdigest()[:8]}.png"
-    img.save(out)
+    prepare_foreground_file(input_path, out)
     print(f"  🧊 Background removed: {out}")
     return out
-
-
-def _add_drop_shadow(bg, fg, pos_tuple, blur=8, alpha=80):
-    """Add a soft drop shadow beneath the pasted product."""
-    from PIL import ImageFilter, Image
-
-    shadow = fg.copy()
-    r, g, b, a = shadow.split()
-    shadow = Image.merge(
-        "RGBA",
-        (
-            Image.new("L", fg.size, 0),
-            Image.new("L", fg.size, 0),
-            Image.new("L", fg.size, 0),
-            a.point(lambda x: alpha if x > 50 else 0),
-        ),
-    )
-    shadow = shadow.filter(ImageFilter.GaussianBlur(blur))
-    x, y = pos_tuple
-    bg.paste(shadow, (x + 4, y + 4), shadow)
-    return bg
 
 
 def cmd_composite(args):
@@ -654,7 +625,6 @@ def cmd_composite(args):
     print("  Step 1: Remove background from product...")
     fg_path = remove_background_pil(product_path)
     fg = Image.open(fg_path)
-    fg_w, fg_h = fg.size
     print("  Step 2: Generate clean environment...")
     env_file = (
         _OUT
@@ -692,15 +662,8 @@ def cmd_composite(args):
         print("  ✗ Environment generation failed.", file=sys.stderr)
         sys.exit(1)
     print("  Step 3: Compositing product onto environment...")
-    bg = Image.open(env_file).convert("RGBA")
-    target_w = int(bg.size[0] * 0.22)
-    scale = target_w / fg_w
-    target_h = int(fg_h * scale)
-    fg = fg.resize((target_w, target_h), Image.Resampling.LANCZOS)
-    x = int(bg.size[0] * 0.38)
-    y = int(bg.size[1] * 0.72)
-    bg = _add_drop_shadow(bg, fg, (x, y), blur=14, alpha=60)
-    bg.paste(fg, (x, y), fg)
+    bg, placement = composite_foreground(Image.open(env_file), fg)
+    print(f"  Placement: {placement.as_dict()}")
     outdir = ensure_dir(_OUT / datetime.now().strftime("%Y-%m-%d") / "composite")
     fname = _ensure_png(
         args.filename
@@ -708,6 +671,13 @@ def cmd_composite(args):
     )
     outpath = outdir / fname
     bg.convert("RGB").save(str(outpath), "PNG", quality=95)
+    write_composite_manifest(
+        outpath,
+        source_path=product_path,
+        foreground_path=fg_path,
+        environment_path=env_file,
+        placement=placement,
+    )
     print(f"\n✓ {outpath}")
 
 
