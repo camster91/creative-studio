@@ -55,22 +55,26 @@ jobs:
           REMOTE_SNAPSHOT="$REMOTE_ROOT/$SNAPSHOT_NAME"
           ARCHIVE_NAME="photogen-$(date -u +%Y%m%dT%H%M%SZ)-$RUN_KEY.tar.gz"
           REMOTE_ARCHIVE="$REMOTE_ROOT/$ARCHIVE_NAME"
-          SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS")
-          # This host intentionally has no SFTP subsystem; -O selects the
-          # legacy SCP transport over the same pinned SSH connection.
-          SCP=(scp -O -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS")
+          SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS" -o ConnectTimeout=15 \
+            -o ConnectionAttempts=3 -o ServerAliveInterval=10 -o ServerAliveCountMax=3)
           TARGET="$BACKUP_USER@$BACKUP_HOST"
 
-          "${SSH[@]}" "$TARGET" "install -d -m 700 '$REMOTE_ROOT' '$REMOTE_TOOL/creative_studio_app' '$REMOTE_TOOL/scripts'"
-          "${SCP[@]}" creative_studio_app/backups.py "$TARGET:$REMOTE_TOOL/creative_studio_app/backups.py"
-          "${SCP[@]}" scripts/backup-photogen.py "$TARGET:$REMOTE_TOOL/scripts/backup-photogen.py"
-          "${SSH[@]}" "$TARGET" \
-            "PYTHONPATH='$REMOTE_TOOL' python3 '$REMOTE_TOOL/scripts/backup-photogen.py' create \
-             --data-dir /root/photogen-data --outputs-dir /root/photogen-outputs \
-             --destination '$REMOTE_SNAPSHOT'"
-          "${SSH[@]}" "$TARGET" \
-            "tar -C '$REMOTE_ROOT' -czf '$REMOTE_ARCHIVE' '$SNAPSHOT_NAME' && chmod 600 '$REMOTE_ARCHIVE'"
-          "${SCP[@]}" "$TARGET:$REMOTE_ARCHIVE" "$RUNNER_TEMP/photogen-backup.tar.gz"
+          # One SSH stream sends the reviewed snapshot code, creates the
+          # consistent snapshot, and returns its archive. This avoids relying
+          # on SFTP and minimizes handshakes on an intermittently reachable VPS.
+          tar -cf - creative_studio_app/backups.py scripts/backup-photogen.py |
+            "${SSH[@]}" "$TARGET" \
+              "set -e; \
+               install -d -m 700 '$REMOTE_ROOT' '$REMOTE_TOOL'; \
+               tar -C '$REMOTE_TOOL' -xf -; \
+               PYTHONPATH='$REMOTE_TOOL' python3 '$REMOTE_TOOL/scripts/backup-photogen.py' create \
+                 --data-dir /root/photogen-data --outputs-dir /root/photogen-outputs \
+                 --destination '$REMOTE_SNAPSHOT' >&2; \
+               tar -C '$REMOTE_ROOT' -czf '$REMOTE_ARCHIVE' '$SNAPSHOT_NAME'; \
+               chmod 600 '$REMOTE_ARCHIVE'; \
+               cat '$REMOTE_ARCHIVE'" \
+              > "$RUNNER_TEMP/photogen-backup.tar.gz"
 
           echo "remote_root=$REMOTE_ROOT" >> "$GITHUB_OUTPUT"
           echo "remote_tool=$REMOTE_TOOL" >> "$GITHUB_OUTPUT"
@@ -129,7 +133,9 @@ jobs:
           REMOTE_ROOT="/root/backups/creative-studio"
           REMOTE_TOOL="$REMOTE_ROOT/tool-$RUN_KEY"
           REMOTE_SNAPSHOT="$REMOTE_ROOT/snapshot-$RUN_KEY"
-          SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS")
+          SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS" -o ConnectTimeout=15 \
+            -o ConnectionAttempts=3 -o ServerAliveInterval=10 -o ServerAliveCountMax=3)
           TARGET="$BACKUP_USER@$BACKUP_HOST"
           "${SSH[@]}" "$TARGET" \
             "rm -rf -- '$REMOTE_TOOL' '$REMOTE_SNAPSHOT'; \
