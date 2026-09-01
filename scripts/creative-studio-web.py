@@ -1219,6 +1219,18 @@ def _record_campaign_qc(campaign_id: str, user_id: str, assessment: dict,
     )
 
 
+def _record_campaign_preflight(campaign_id: str, user_id: str, campaign: dict,
+                               sources: list) -> list:
+    recorded = []
+    for finding in _campaign_delivery.preflight_findings(campaign, sources):
+        item = _campaign_service.create_exception(
+            AUTH_DB, campaign_id, user_id, source="channel", **finding,
+        )
+        if item:
+            recorded.append(item)
+    return recorded
+
+
 def _get_campaign_bundle(bundle_id: str, campaign_id: str, user_id: str) -> dict | None:
     return _campaign_service.get_bundle(AUTH_DB, bundle_id, campaign_id, user_id)
 
@@ -1881,6 +1893,7 @@ app.register_blueprint(
         list_campaign_exceptions=_list_campaign_exceptions,
         resolve_campaign_exception=_resolve_campaign_exception,
         campaign_exception_gate=_campaign_exception_gate,
+        record_campaign_preflight=_record_campaign_preflight,
         rate_limited=rate_limited,
     )
 )

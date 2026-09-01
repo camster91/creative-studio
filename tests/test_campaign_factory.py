@@ -326,8 +326,9 @@ def test_blocking_exception_requires_reasoned_approval_and_is_in_bundle_manifest
     assert bundle.status_code == 201
     review = bundle.get_json()["manifest"]["exception_review"]
     assert review["allowed"] is True
-    assert review["exceptions"][0]["status"] == "approved"
-    assert review["exceptions"][0]["resolution_reason"] == "Legal verified the wording."
+    approved_review = next(item for item in review["exceptions"] if item["id"] == exception["id"])
+    assert approved_review["status"] == "approved"
+    assert approved_review["resolution_reason"] == "Legal verified the wording."
 
 
 def test_rejected_and_repaired_original_assets_cannot_enter_bundle(cs):
@@ -425,6 +426,39 @@ def test_qc_route_records_only_failed_criteria_for_owned_campaign_asset(cs, monk
     assert len(exceptions) == 1
     assert exceptions[0]["criterion"] == "label_readability"
     assert exceptions[0]["severity"] == "blocking"
+
+
+def test_bundle_preflight_routes_alpha_crop_loss_to_exception_inbox(cs):
+    client = cs.app.test_client()
+    token = login(client, "preflight-crop@example.com")
+    payload = complete_payload()
+    payload["work_order"]["channels"] = ["meta-story"]
+    campaign = client.post("/api/campaigns", json=payload, headers=headers(token)).get_json()
+    relative = "fixtures/edge-subject.png"
+    source = cs.OUTPUT_DIR / relative
+    source.parent.mkdir(parents=True, exist_ok=True)
+    canvas = Image.new("RGBA", (1200, 800), (0, 0, 0, 0))
+    canvas.alpha_composite(Image.new("RGBA", (300, 600), (20, 80, 190, 255)), (0, 100))
+    canvas.save(source)
+    user_id = cs._session_from_cookie(token)["user_id"]
+    cs.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    (cs.SESSIONS_DIR / "sess_edge_subject.json").write_text(json.dumps({
+        "id": "sess_edge_subject", "owner_id": f"user:{user_id}",
+        "entries": [{"image_url": f"/image/{relative}"}],
+    }))
+    blocked = client.post(
+        f"/api/campaigns/{campaign['id']}/bundles", headers=headers(token),
+        json={"image_urls": [f"/image/{relative}"]},
+    )
+    assert blocked.status_code == 409
+    criteria = {item["criterion"] for item in blocked.get_json()["exception_gate"]["blocking"]}
+    assert criteria == {"meta-story_subject_crop"}
+    inbox = client.get(
+        f"/api/campaigns/{campaign['id']}/exceptions", headers=headers(token),
+    ).get_json()["exceptions"]
+    assert {item["criterion"] for item in inbox} == {
+        "meta-story_subject_crop", "claims_copy_unverified",
+    }
 
 
 def test_readiness_blocks_go_with_actionable_missing_fields(cs):

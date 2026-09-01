@@ -36,6 +36,73 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _center_crop_box(width: int, height: int, ratio: str) -> tuple[int, int, int, int]:
+    ratio_width, ratio_height = (int(value) for value in ratio.split(":"))
+    target = ratio_width / ratio_height
+    current = width / height
+    if current > target:
+        crop_width = round(height * target)
+        left = (width - crop_width) // 2
+        return left, 0, left + crop_width, height
+    crop_height = round(width / target)
+    top = (height - crop_height) // 2
+    return 0, top, width, top + crop_height
+
+
+def preflight_findings(campaign: dict, sources: list[tuple[str, Path]]) -> list[dict]:
+    """Return deterministic source/crop findings without claiming visual understanding."""
+    findings = []
+    recipes = channel_plan(campaign.get("channels") or [])
+    for source_url, source in sources:
+        if campaign.get("approved_claims") or campaign.get("required_disclosures"):
+            findings.append({
+                "criterion": "claims_copy_unverified", "severity": "warning",
+                "evidence": "This deterministic preflight does not OCR or legally validate rendered claims and disclosures; human copy review is required.",
+                "asset_url": source_url,
+            })
+        with Image.open(source) as opened:
+            image = opened.convert("RGBA")
+            alpha = image.getchannel("A")
+            extrema = alpha.getextrema()
+            bbox = alpha.getbbox()
+            if not bbox:
+                findings.append({
+                    "criterion": "non_empty_source", "severity": "blocking",
+                    "evidence": "The source contains no visible alpha pixels.", "asset_url": source_url,
+                })
+                continue
+            if extrema == (255, 255):
+                findings.append({
+                    "criterion": "subject_safe_area_unverified", "severity": "warning",
+                    "evidence": "The source is fully opaque, so deterministic alpha bounds cannot verify subject crop safety.",
+                    "asset_url": source_url,
+                })
+                continue
+            for recipe in recipes:
+                crop = _center_crop_box(image.width, image.height, recipe["ratio"])
+                left, top, right, bottom = bbox
+                crop_left, crop_top, crop_right, crop_bottom = crop
+                outside = left < crop_left or top < crop_top or right > crop_right or bottom > crop_bottom
+                criterion = f"{recipe['channel']}_subject_crop"
+                if outside:
+                    findings.append({
+                        "criterion": criterion, "severity": "blocking",
+                        "evidence": f"Visible alpha bounds {bbox} extend outside the {recipe['channel']} center-crop box {crop}.",
+                        "asset_url": source_url,
+                    })
+                    continue
+                margin_x = max(1, round((crop_right - crop_left) * 0.05))
+                margin_y = max(1, round((crop_bottom - crop_top) * 0.05))
+                if (left - crop_left < margin_x or crop_right - right < margin_x
+                        or top - crop_top < margin_y or crop_bottom - bottom < margin_y):
+                    findings.append({
+                        "criterion": criterion, "severity": "warning",
+                        "evidence": f"Visible alpha bounds {bbox} are within the 5% review margin of the {recipe['channel']} crop {crop}.",
+                        "asset_url": source_url,
+                    })
+    return findings
+
+
 def build_bundle(campaign: dict, sources: list[tuple[str, Path]], private_root: Path,
                  *, max_bundle_bytes: int = 256 * 1024 * 1024) -> tuple[Path, dict]:
     """Render every source through selected recipes and persist one private ZIP + manifest."""

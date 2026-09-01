@@ -17,6 +17,7 @@ def create_blueprint(*, current_session: Callable, create_campaign: Callable, li
                      get_campaign_bundle: Callable, campaign_bundle_path: Callable,
                      create_campaign_exception: Callable, list_campaign_exceptions: Callable,
                      resolve_campaign_exception: Callable, campaign_exception_gate: Callable,
+                     record_campaign_preflight: Callable,
                      rate_limited: Callable) -> Blueprint:
     blueprint = Blueprint("campaigns", __name__)
 
@@ -135,6 +136,13 @@ def create_blueprint(*, current_session: Callable, create_campaign: Callable, li
         relative = [url[len("/image/"):] for url in image_urls]
         if any(item not in owned for item in relative):
             return jsonify({"error": "Campaign image not found"}), 404
+        sources = []
+        for url, item in zip(image_urls, relative):
+            source = safe_output_path(item)
+            if not source:
+                return jsonify({"error": "Campaign image not found"}), 404
+            sources.append((url, source))
+        record_campaign_preflight(campaign_id, session["user_id"], campaign, sources)
         exception_gate = campaign_exception_gate(campaign_id, session["user_id"], image_urls)
         if exception_gate is None:
             return jsonify({"error": "Not found"}), 404
@@ -143,12 +151,6 @@ def create_blueprint(*, current_session: Callable, create_campaign: Callable, li
                 "error": "Resolve blocking campaign exceptions before building this bundle",
                 "exception_gate": exception_gate,
             }), 409
-        sources = []
-        for url, item in zip(image_urls, relative):
-            source = safe_output_path(item)
-            if not source:
-                return jsonify({"error": "Campaign image not found"}), 404
-            sources.append((url, source))
         try:
             bundle_campaign = {**campaign, "exception_summary": exception_gate}
             bundle_path, manifest = build_campaign_bundle(bundle_campaign, sources)

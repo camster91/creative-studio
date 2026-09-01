@@ -110,8 +110,9 @@ proposed until measured with target customers.
 
 - Versioned Amazon, Shopify, Meta, Pinterest, email, and web recipes plus private
   bundle export are implemented in a stacked candidate.
-- Add safe-zone and subject-aware crop checks; deterministic center cropping
-  guarantees dimensions but not composition quality for every source.
+- Alpha-bounded source and center-crop checks now block visible subject loss and
+  warn at a 5% crop margin. Fully opaque sources remain explicitly unverified;
+  semantic subject detection and platform-specific safe zones remain pending.
 - Bundle manifests now preserve applicable exception, approval, QC model, and
   rubric evidence. Provider generation lineage and cost evidence remain pending.
 
