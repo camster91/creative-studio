@@ -81,6 +81,68 @@ async function createCampaignBundle(images, sessionId) {
   });
   statusEl.append(link);
   loadCampaigns();
+  loadExceptions(activeCampaignId);
+}
+
+function exceptionField(label, placeholder = '') {
+  const wrapper = document.createElement('label');
+  wrapper.textContent = label;
+  const input = document.createElement('input');
+  input.placeholder = placeholder;
+  wrapper.append(input);
+  return {wrapper, input};
+}
+
+async function resolveException(exceptionId, action, reason, replacementUrl) {
+  if (!activeCampaignId) return;
+  const response = await fetch(`/api/campaigns/${encodeURIComponent(activeCampaignId)}/exceptions/${encodeURIComponent(exceptionId)}/resolve`, requestOptions({
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action, reason, replacement_url: replacementUrl || undefined}),
+  }));
+  const body = await response.json();
+  statusEl.textContent = response.ok ? `Exception ${body.status}.` : (body.error || 'Could not resolve exception.');
+  await loadExceptions(activeCampaignId);
+}
+
+function renderException(item) {
+  const article = document.createElement('article');
+  article.className = 'exception-row';
+  const title = document.createElement('strong');
+  title.textContent = `${item.severity.toUpperCase()} · ${item.criterion}`;
+  const meta = document.createElement('small');
+  meta.textContent = `${item.source} · ${item.status}`;
+  const evidence = document.createElement('p');
+  evidence.textContent = item.evidence;
+  article.append(title, meta, evidence);
+  if (item.status !== 'open') {
+    const resolution = document.createElement('p');
+    resolution.textContent = `Resolution: ${item.resolution_reason || 'Recorded'}`;
+    article.append(resolution);
+    return article;
+  }
+  const reason = exceptionField('Review reason', 'Required for every decision');
+  const replacement = exceptionField('Replacement asset URL', '/image/… (required for repair)');
+  const actions = document.createElement('div');
+  actions.className = 'choices';
+  [['approve', 'Approve'], ['reject', 'Reject'], ['repair', 'Mark repaired']].forEach(([action, label]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.addEventListener('click', () => resolveException(item.id, action, reason.input.value, replacement.input.value));
+    actions.append(button);
+  });
+  article.append(reason.wrapper, replacement.wrapper, actions);
+  return article;
+}
+
+async function loadExceptions(campaignId) {
+  const list = document.getElementById('exceptionList');
+  if (!campaignId) { list.replaceChildren(document.createTextNode('Select a campaign to review findings.')); return; }
+  const response = await fetch(`/api/campaigns/${encodeURIComponent(campaignId)}/exceptions`, requestOptions());
+  const body = await response.json();
+  if (!response.ok) { list.replaceChildren(document.createTextNode(body.error || 'Could not load exceptions.')); return; }
+  if (!body.exceptions.length) { list.replaceChildren(document.createTextNode('No recorded exceptions.')); return; }
+  list.replaceChildren(...body.exceptions.map(renderException));
 }
 
 form.addEventListener('submit', async event => {
@@ -93,6 +155,7 @@ form.addEventListener('submit', async event => {
     return;
   }
   activeCampaignId = body.id;
+  loadExceptions(activeCampaignId);
   const pack = form.elements.packAsset.files[0];
   if (pack) {
     statusEl.textContent = 'Validating and attaching the exact pack asset…';
@@ -136,6 +199,7 @@ goBtn.addEventListener('click', async () => {
     await createCampaignBundle(images, generation.session_id);
   } catch (error) {
     statusEl.textContent = error.message;
+    loadExceptions(activeCampaignId);
   }
   goBtn.disabled = false;
 });
@@ -156,6 +220,7 @@ async function loadCampaigns() {
     activeCampaignId = campaign.id;
     showReadiness(campaign.readiness);
     statusEl.textContent = `Selected ${campaign.name}.`;
+    loadExceptions(activeCampaignId);
   }));
 }
 

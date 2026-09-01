@@ -1193,6 +1193,32 @@ def _list_campaign_bundles(campaign_id: str, user_id: str) -> list:
     return _campaign_service.list_bundles(AUTH_DB, campaign_id, user_id)
 
 
+def _create_campaign_exception(campaign_id: str, user_id: str, **fields) -> dict | None:
+    return _campaign_service.create_exception(AUTH_DB, campaign_id, user_id, **fields)
+
+
+def _list_campaign_exceptions(campaign_id: str, user_id: str) -> list:
+    return _campaign_service.list_exceptions(AUTH_DB, campaign_id, user_id)
+
+
+def _resolve_campaign_exception(exception_id: str, campaign_id: str, user_id: str,
+                                **resolution) -> dict | None:
+    return _campaign_service.resolve_exception(
+        AUTH_DB, exception_id, campaign_id, user_id, **resolution,
+    )
+
+
+def _campaign_exception_gate(campaign_id: str, user_id: str, image_urls: list[str]) -> dict | None:
+    return _campaign_service.bundle_exception_gate(AUTH_DB, campaign_id, user_id, image_urls)
+
+
+def _record_campaign_qc(campaign_id: str, user_id: str, assessment: dict,
+                        asset_url: str | None = None) -> list | None:
+    return _campaign_service.record_qc_exceptions(
+        AUTH_DB, campaign_id, user_id, assessment, asset_url,
+    )
+
+
 def _get_campaign_bundle(bundle_id: str, campaign_id: str, user_id: str) -> dict | None:
     return _campaign_service.get_bundle(AUTH_DB, bundle_id, campaign_id, user_id)
 
@@ -1688,6 +1714,8 @@ app.register_blueprint(
         estimate_cost=cost_for_tier,
         record_provider_results=_record_provider_results,
         resolve_campaign_pack=_resolve_campaign_pack,
+        record_campaign_qc=_record_campaign_qc,
+        get_campaign=_get_campaign,
     )
 )
 
@@ -1849,6 +1877,10 @@ app.register_blueprint(
         list_campaign_bundles=_list_campaign_bundles,
         get_campaign_bundle=_get_campaign_bundle,
         campaign_bundle_path=_campaign_bundle_path,
+        create_campaign_exception=_create_campaign_exception,
+        list_campaign_exceptions=_list_campaign_exceptions,
+        resolve_campaign_exception=_resolve_campaign_exception,
+        campaign_exception_gate=_campaign_exception_gate,
         rate_limited=rate_limited,
     )
 )

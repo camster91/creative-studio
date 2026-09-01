@@ -42,6 +42,19 @@ def headers(token):
     return {"X-Session-Token": token}
 
 
+def register_owned_image(cs, token, relative="fixtures/concept.png", color=(20, 80, 190, 255)):
+    source = cs.OUTPUT_DIR / relative
+    source.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (800, 1200), color).save(source)
+    user_id = cs._session_from_cookie(token)["user_id"]
+    cs.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    (cs.SESSIONS_DIR / f"sess_{Path(relative).stem}.json").write_text(json.dumps({
+        "id": f"sess_{Path(relative).stem}", "owner_id": f"user:{user_id}",
+        "entries": [{"image_url": f"/image/{relative}"}],
+    }))
+    return f"/image/{relative}"
+
+
 def complete_payload():
     return {
         "brand": {
@@ -267,6 +280,151 @@ def test_campaign_bundle_rejects_unowned_images(cs):
     )
     assert response.status_code == 404
     assert response.get_json()["error"] == "Campaign image not found"
+
+
+def test_blocking_exception_requires_reasoned_approval_and_is_in_bundle_manifest(cs):
+    client = cs.app.test_client()
+    token = login(client, "exception-owner@example.com")
+    campaign = client.post("/api/campaigns", json=complete_payload(), headers=headers(token)).get_json()
+    image_url = register_owned_image(cs, token)
+    created = client.post(
+        f"/api/campaigns/{campaign['id']}/exceptions", headers=headers(token),
+        json={"source": "claims", "criterion": "approved_claims", "severity": "blocking",
+              "evidence": "Generated copy adds an unapproved efficacy claim.", "asset_url": image_url},
+    )
+    assert created.status_code == 201
+    exception = created.get_json()
+    duplicate = client.post(
+        f"/api/campaigns/{campaign['id']}/exceptions", headers=headers(token),
+        json={"source": "claims", "criterion": "approved_claims", "severity": "blocking",
+              "evidence": "Generated copy adds an unapproved efficacy claim.", "asset_url": image_url},
+    )
+    assert duplicate.get_json()["id"] == exception["id"]
+    assert len(client.get(
+        f"/api/campaigns/{campaign['id']}/exceptions", headers=headers(token)
+    ).get_json()["exceptions"]) == 1
+
+    blocked = client.post(
+        f"/api/campaigns/{campaign['id']}/bundles", headers=headers(token),
+        json={"image_urls": [image_url]},
+    )
+    assert blocked.status_code == 409
+    assert blocked.get_json()["exception_gate"]["blocking"][0]["id"] == exception["id"]
+    assert client.post(
+        f"/api/campaigns/{campaign['id']}/exceptions/{exception['id']}/resolve",
+        headers=headers(token), json={"action": "approve", "reason": ""},
+    ).status_code == 400
+    approved = client.post(
+        f"/api/campaigns/{campaign['id']}/exceptions/{exception['id']}/resolve",
+        headers=headers(token), json={"action": "approve", "reason": "Legal verified the wording."},
+    )
+    assert approved.status_code == 200
+    bundle = client.post(
+        f"/api/campaigns/{campaign['id']}/bundles", headers=headers(token),
+        json={"image_urls": [image_url]},
+    )
+    assert bundle.status_code == 201
+    review = bundle.get_json()["manifest"]["exception_review"]
+    assert review["allowed"] is True
+    assert review["exceptions"][0]["status"] == "approved"
+    assert review["exceptions"][0]["resolution_reason"] == "Legal verified the wording."
+
+
+def test_rejected_and_repaired_original_assets_cannot_enter_bundle(cs):
+    client = cs.app.test_client()
+    token = login(client, "exception-repair@example.com")
+    campaign = client.post("/api/campaigns", json=complete_payload(), headers=headers(token)).get_json()
+    original = register_owned_image(cs, token, "fixtures/original.png")
+    replacement = register_owned_image(cs, token, "fixtures/replacement.png", (40, 160, 80, 255))
+    exception = client.post(
+        f"/api/campaigns/{campaign['id']}/exceptions", headers=headers(token),
+        json={"source": "channel", "criterion": "safe_area", "severity": "blocking",
+              "evidence": "Disclosure is outside the safe area.", "asset_url": original},
+    ).get_json()
+    assert client.post(
+        f"/api/campaigns/{campaign['id']}/exceptions/{exception['id']}/resolve",
+        headers=headers(token), json={"action": "repair", "reason": "Repositioned disclosure."},
+    ).status_code == 400
+    assert client.post(
+        f"/api/campaigns/{campaign['id']}/exceptions/{exception['id']}/resolve",
+        headers=headers(token), json={"action": "repair", "reason": "Repositioned disclosure.",
+                                     "replacement_url": replacement},
+    ).status_code == 200
+    blocked = client.post(
+        f"/api/campaigns/{campaign['id']}/bundles", headers=headers(token),
+        json={"image_urls": [original]},
+    )
+    assert blocked.status_code == 409
+    assert blocked.get_json()["exception_gate"]["unusable"][0]["status"] == "repaired"
+    assert client.post(
+        f"/api/campaigns/{campaign['id']}/bundles", headers=headers(token),
+        json={"image_urls": [replacement]},
+    ).status_code == 201
+
+
+def test_exception_inbox_is_private_and_qc_failures_are_recorded(cs):
+    client = cs.app.test_client()
+    owner = login(client, "exception-private@example.com")
+    stranger = login(client, "exception-stranger@example.com")
+    campaign = client.post("/api/campaigns", json=complete_payload(), headers=headers(owner)).get_json()
+    assert client.get(f"/api/campaigns/{campaign['id']}/exceptions").status_code == 401
+    assert client.get(
+        f"/api/campaigns/{campaign['id']}/exceptions", headers=headers(stranger)
+    ).status_code == 404
+    user_id = cs._session_from_cookie(owner)["user_id"]
+    recorded = cs._campaign_service.record_qc_exceptions(
+        cs.AUTH_DB, campaign["id"], user_id,
+        {"model": "qc-test", "rubric_version": "v1", "criteria": {
+            "text_integrity": {"status": "fail", "evidence": "Label characters are malformed."},
+            "physical_grounding": {"status": "fail", "evidence": "Shadow direction is inconsistent."},
+            "brand_alignment": {"status": "pass", "evidence": "Palette matches."},
+        }}, "/image/fixtures/concept.png",
+    )
+    assert [item["severity"] for item in recorded] == ["blocking", "warning"]
+    assert {item["criterion"] for item in recorded} == {"text_integrity", "physical_grounding"}
+
+
+def test_identical_exception_evidence_is_scoped_to_each_campaign(cs):
+    client = cs.app.test_client()
+    token = login(client, "exception-fingerprint@example.com")
+    first = client.post("/api/campaigns", json=complete_payload(), headers=headers(token)).get_json()
+    second_payload = complete_payload()
+    second_payload["work_order"]["name"] = "Second campaign"
+    second = client.post("/api/campaigns", json=second_payload, headers=headers(token)).get_json()
+    finding = {"source": "human", "criterion": "brand_review", "severity": "warning",
+               "evidence": "Confirm the final color treatment."}
+    first_exception = client.post(
+        f"/api/campaigns/{first['id']}/exceptions", headers=headers(token), json=finding,
+    ).get_json()
+    second_exception = client.post(
+        f"/api/campaigns/{second['id']}/exceptions", headers=headers(token), json=finding,
+    ).get_json()
+    assert first_exception["id"] != second_exception["id"]
+
+
+def test_qc_route_records_only_failed_criteria_for_owned_campaign_asset(cs, monkeypatch):
+    client = cs.app.test_client()
+    token = login(client, "exception-qc-route@example.com")
+    campaign = client.post("/api/campaigns", json=complete_payload(), headers=headers(token)).get_json()
+    image_url = register_owned_image(cs, token, "fixtures/qc-source.png")
+
+    def fake_qc(*_args, **_kwargs):
+        return {"quality_score": 6, "model": "qc-route-test", "rubric_version": "v1",
+                "criteria": {
+                    "label_readability": {"status": "fail", "evidence": "Required text is unreadable."},
+                    "brand_alignment": {"status": "pass", "evidence": "Brand palette is correct."},
+                }}
+
+    monkeypatch.setattr(cs._delivery_service, "run_qc", fake_qc)
+    response = client.post(
+        "/api/qc", headers={**headers(token), "X-API-Key": "test-key"},
+        json={"campaign_id": campaign["id"], "image_url": image_url},
+    )
+    assert response.status_code == 200
+    exceptions = response.get_json()["exceptions"]
+    assert len(exceptions) == 1
+    assert exceptions[0]["criterion"] == "label_readability"
+    assert exceptions[0]["severity"] == "blocking"
 
 
 def test_readiness_blocks_go_with_actionable_missing_fields(cs):

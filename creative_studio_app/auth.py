@@ -121,6 +121,28 @@ def init_schema(path: Path) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_campaign_bundles_owner
             ON campaign_bundles(user_id,campaign_id,created_at);
+        CREATE TABLE IF NOT EXISTS campaign_exceptions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            campaign_id TEXT NOT NULL REFERENCES campaign_work_orders(id) ON DELETE CASCADE,
+            fingerprint TEXT NOT NULL,
+            source TEXT NOT NULL,
+            criterion TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            evidence TEXT NOT NULL,
+            asset_url TEXT,
+            model TEXT,
+            rubric_version TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            resolution_reason TEXT,
+            resolution_asset_url TEXT,
+            resolved_by TEXT,
+            created_at TEXT NOT NULL,
+            resolved_at TEXT,
+            UNIQUE(user_id,campaign_id,fingerprint)
+        );
+        CREATE INDEX IF NOT EXISTS idx_campaign_exceptions_owner
+            ON campaign_exceptions(user_id,campaign_id,status,created_at);
         """)
         existing = {row[1] for row in database.execute("PRAGMA table_info(users)")}
         for column, declaration in [

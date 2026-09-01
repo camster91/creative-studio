@@ -68,7 +68,8 @@ Acceptance criteria:
 - [x] Attach an exact product pack asset and default CPG campaigns to the
   deterministic composite path rather than text-only packaging generation.
 - [x] Create channel recipes that fan one work order into exact format variants.
-- [ ] Route QC or claims failures into an exception inbox with repair/reject actions.
+- [x] Route criterion-level QC, claims, channel, or human findings into an
+  owner-scoped exception inbox with reason-required approve/reject/repair actions.
 - [x] Save successful outputs back to the campaign and export a campaign bundle.
 - [ ] Verify the end-to-end journey in desktop and mobile browser tests.
 
@@ -102,7 +103,8 @@ proposed until measured with target customers.
   composition, channel compliance, latency, and cost.
 - Run Gemini as the baseline; add OpenAI Responses API and GPT Image behind a
   provider interface only after the evaluation contract exists.
-- Convert advisory QC into rules-first pass/fail checks plus an exception inbox.
+- Criterion-level QC failures now enter an immutable-evidence exception inbox;
+  deterministic rules, corpus calibration, and threshold validation remain pending.
 
 ### P1 — Channel production and delivery
 
@@ -110,7 +112,8 @@ proposed until measured with target customers.
   bundle export are implemented in a stacked candidate.
 - Add safe-zone and subject-aware crop checks; deterministic center cropping
   guarantees dimensions but not composition quality for every source.
-- Extend bundle manifests with QC, approval, provider/model, and cost evidence.
+- Bundle manifests now preserve applicable exception, approval, QC model, and
+  rubric evidence. Provider generation lineage and cost evidence remain pending.
 
 ### P1 — Teams and governance
 

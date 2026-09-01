@@ -39,6 +39,8 @@ def create_blueprint(
     estimate_cost: Callable = lambda _tier: 0,
     record_provider_results: Callable = lambda *_args, **_kwargs: None,
     resolve_campaign_pack: Callable = lambda *_args: None,
+    record_campaign_qc: Callable = lambda *_args: None,
+    get_campaign: Callable = lambda *_args: None,
 ) -> Blueprint:
     blueprint = Blueprint("delivery_routes", __name__)
 
@@ -241,12 +243,20 @@ def create_blueprint(
     @blueprint.post("/api/qc")
     @rate_limited
     def qc():
+        data = request.get_json(silent=True) or request.form
+        campaign_id = str(data.get("campaign_id") or "").strip()
+        account = current_session() if campaign_id else None
+        if campaign_id and not account:
+            return jsonify({"error": "Sign in required"}), 401
+        if campaign_id and not get_campaign(campaign_id, account["user_id"]):
+            return jsonify({"error": "Campaign not found"}), 404
         api_key, error, _used_trial_credit = require_api_key()
         if error is not None:
             return error
-        data = request.json or request.form
         image_url = data.get("image_url")
         if image_url and image_url.startswith("/image/"):
+            if campaign_id and image_url[len("/image/"):] not in owned_asset_paths(account["user_id"]):
+                return jsonify({"error": "Image not found"}), 404
             image = safe_output_path(image_url[len("/image/") :])
             if not image:
                 return jsonify(
@@ -270,8 +280,14 @@ def create_blueprint(
             estimated_cost_each=result.get("estimated_cost_usd") or 0,
             latency_ms=(time.monotonic() - call_started) * 1000,
         )
+        exceptions = []
+        if campaign_id:
+            exceptions = record_campaign_qc(campaign_id, account["user_id"], result, image_url)
+            if exceptions is None:
+                return jsonify({"error": "Campaign not found"}), 404
         return jsonify(
-            {"message": f"QC Score: {result['quality_score']}/10", "qc": result}
+            {"message": f"QC Score: {result['quality_score']}/10", "qc": result,
+             "exceptions": exceptions}
         )
 
     @blueprint.post("/api/figma")
