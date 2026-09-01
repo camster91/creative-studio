@@ -100,7 +100,7 @@ jobs:
           age --decrypt --identity "${{ steps.ssh.outputs.key }}" \
             "$RUNNER_TEMP/${{ steps.snapshot.outputs.archive_name }}.age" |
             tar -xz -C "$RESTORE_ROOT"
-          python scripts/backup-photogen.py verify \
+          PYTHONPATH=. python scripts/backup-photogen.py verify \
             --snapshot-dir "$RESTORE_ROOT/${{ steps.snapshot.outputs.snapshot_name }}" \
             > "$RUNNER_TEMP/restore-verification-base.json"
           jq --argjson seconds "$((SECONDS - RESTORE_STARTED))" \
