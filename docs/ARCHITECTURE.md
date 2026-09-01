@@ -24,6 +24,8 @@ same subprocess-compatible service boundaries:
 - `provider_ledger.py`: privacy-safe call accounting, correlation, and alert inputs
 - `campaigns.py`: owner-scoped Brand Passport, Product Truth, Campaign Work Order,
   deterministic readiness, and provider-independent generation-plan assembly
+- `campaign_delivery.py`: versioned channel recipes, deterministic exports,
+  private bundle manifests, and ZIP assembly
 
 ## HTTP ownership
 
@@ -42,7 +44,7 @@ same subprocess-compatible service boundaries:
 | `account_routes.py` | signup, magic-link login, account status |
 | `billing_routes.py` | plans, Checkout, portal, Stripe webhook |
 | `project_routes.py` | ownership-scoped project CRUD and ZIP export |
-| `campaign_routes.py` | Campaign Factory page, work orders, readiness gate, and Go plan |
+| `campaign_routes.py` | Campaign Factory, reusable truth, readiness, Go, and private bundles |
 | `library_routes.py` | generated-asset listing, filtering, deletion |
 | `support_routes.py` | waitlist, templates, runtime metadata, operator export |
 | `seo_routes.py` | robots, sitemap, blog index/posts |
@@ -51,8 +53,8 @@ same subprocess-compatible service boundaries:
 ## Runtime state
 
 `CREATIVE_DATA_DIR` contains SQLite auth/project state, JSON sessions, cost
-records, pins, templates, waitlist data, approved chat outputs, and the
-`versions.db` lineage graph.
+records, pins, templates, waitlist data, approved chat outputs, private campaign
+bundles, and the `versions.db` lineage graph.
 `provider-ledger.db` stores only owner/job identifiers, provider/model,
 estimate/recorded charge, latency, stable outcome, and a random call
 correlation ID. It has no prompt, image, token, key, email, or provider error

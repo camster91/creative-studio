@@ -7,10 +7,10 @@ Operational reference for photogen.ashbi.ca. If you're paged at 2am, start here.
 | Thing | Value |
 |---|---|
 | Live URL | https://photogen.ashbi.ca |
-| Staging URL | https://stage.photogen.ashbi.ca (not yet set up) |
+| Staging URL | Internal host check on `127.0.0.1:5174`; public staging DNS is not configured |
 | Server | `coolify` (vps.ashbi.ca / 187.77.26.99) — `ssh coolify` |
 | Container name (prod) | `photogen` |
-| Container name (stage) | `photogen-stage` (planned) |
+| Container name (stage) | `photogen-stage` |
 | Data dir (prod) | `/root/photogen-data` (bind mount) |
 | Outputs dir (prod) | `/root/photogen-outputs` (bind mount) |
 | Data dir (stage) | `/root/photogen-stage-data` (bind mount) |
@@ -18,12 +18,13 @@ Operational reference for photogen.ashbi.ca. If you're paged at 2am, start here.
 | Env file (prod) | `/root/.env.photogen` (chmod 600) |
 | Env file (stage) | `/root/.env.photogen-stage` (chmod 600) |
 | Caddy block (prod) | `/opt/caddy/Caddyfile` → `photogen.ashbi.ca { reverse_proxy 127.0.0.1:32778 }` |
-| Caddy block (stage) | `/opt/caddy/Caddyfile` → `stage.photogen.ashbi.ca { reverse_proxy 127.0.0.1:<port> }` (when set up) |
-| Image tag (server-built) | `creative-studio:<sha>` (local Docker, not registry) |
-| Backups | `/root/backups/creative-studio/<YYYY-MM-DD>/` |
+| Caddy block (stage) | None; staging is intentionally verified over SSH on host port `5174` |
+| Image tag | `ghcr.io/camster91/creative-studio:<full-sha>` |
+| Local backups | `/root/backups/creative-studio/photogen-<timestamp>-<run>.tar.gz` |
+| Off-host backups | Encrypted GitHub Actions artifact, 14-day retention |
 | Health check | `curl -sf https://photogen.ashbi.ca/api/whoami` |
 | Cost tracking | `curl -s https://photogen.ashbi.ca/api/costs` |
-| Last deployed SHA | `cab721c` (built 2026-06-11) |
+| Last deployed SHA | `0aa3bcaac3c469347f8c16068245a54c156aaebb` (verified 2026-09-01) |
 
 ## Architecture
 
@@ -214,7 +215,48 @@ ssh coolify "find /var/lib/caddy -name 'photogen.ashbi.ca.crt'"  # must exist
 ssh coolify "journalctl -u caddy --since '5 min ago' | grep -i acme"
 ```
 
-## Backup procedure (manual, when cron is down)
+## Backup and restore
+
+The authoritative scheduled path is `.github/workflows/backup-data.yml`. It:
+
+1. uses SQLite's online backup API for every persistent database;
+2. copies regular data/output files while rejecting symlinks;
+3. writes a size/SHA-256 manifest and checks every copied SQLite database;
+4. encrypts the archive with `age` before off-host storage;
+5. decrypts into an isolated runner and verifies the complete manifest; and
+6. retains the encrypted Actions artifact for 14 days and local archives for
+   seven days.
+
+The recovery recipient is `.github/backup-recipients.txt`. Its current SSH key
+fingerprint is `SHA256:+pJjM5Sq5bK9Xe2yvhwLc/BIWZuld5RNYEl5n4YqN8A`.
+Keep the matching private recovery key outside the VPS. When rotating it, retain
+the old identity until every backup encrypted to it has expired or been
+reencrypted.
+
+Trigger and inspect a controlled drill:
+
+```bash
+gh workflow run backup-data.yml --ref main
+gh run list --workflow "Backup photogen data" --limit 3
+gh run view <RUN_ID> --log
+```
+
+Download the selected encrypted artifact, decrypt it into an isolated empty
+directory, then run the verifier before replacing any production path:
+
+```bash
+age --decrypt --identity /secure/path/to/recovery-key photogen-<RUN>.tar.gz.age \
+  | tar -xz -C /isolated/restore
+PYTHONPATH=. python scripts/backup-photogen.py verify \
+  --snapshot-dir /isolated/restore/snapshot-<RUN>
+```
+
+Only after verification should an operator stop `photogen`, preserve the
+current directories, copy the verified `data/` and `outputs/` trees into place,
+restore ownership to `1000:1000`, restart the exact intended image, and verify
+the public and authenticated journeys.
+
+### Legacy manual snapshot (when Actions is unavailable)
 
 ```bash
 ssh coolify
@@ -237,4 +279,5 @@ chmod 600 /root/.env.photogen
 docker start photogen
 ```
 
-The `backup-data.yml` GitHub workflow handles daily snapshots via SSH if it's still wired up. If it's been broken, run this manually.
+This legacy copy is local-only and is not a substitute for the encrypted
+off-host workflow or an isolated restore drill.

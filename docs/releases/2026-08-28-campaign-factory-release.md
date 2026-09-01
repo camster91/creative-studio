@@ -2,7 +2,7 @@
 
 Date: 2026-08-28
 
-Status: **approved; publication pending external deployment access**
+Status: **released and independently verified 2026-09-01**
 
 ## Scope
 
@@ -34,27 +34,36 @@ of a critical/high release risk.
 - JavaScript syntax and repository diff checks passed.
 - Live pre-release baseline: `/api/whoami` returned HTTP 200 and version 4.6.0;
   `/campaigns` returned 404 as expected before release.
+- Final image build and isolated container smoke checks passed for immutable SHA
+  `0aa3bcaac3c469347f8c16068245a54c156aaebb`.
+- Staging and production ran that exact image as non-root `appuser`; both
+  containers reported healthy.
+- Independent public verification returned HTTP 200 for `/`, `/campaigns`,
+  `/app`, `/privacy`, and `/api/whoami`; anonymous `/api/costs` returned 401.
+- Production deployment run:
+  <https://github.com/camster91/creative-studio/actions/runs/33461507115>
 
-## External blockers
+## Resolved deployment blockers
 
-1. GitHub rejects CI, CodeQL, image build, and deployment jobs before execution:
-   “recent account payments have failed or your spending limit needs to be
-   increased.” The owner must resolve GitHub Billing & plans or provide a
-   separate authorized VPS SSH path.
-2. Current production backup/restore evidence and SMTP delivery cannot be read
-   from this machine because the VPS key is unavailable. Those gates must run
-   through the restored deployment job or an authorized operator session.
+1. Hosted Actions execution was restored and the required Node, Python,
+   browser, secret-scan, image, staging, and production gates executed.
+2. The stale deployment SSH secret was replaced with the already-authorized
+   Ashbi recovery key; no server key rotation or service interruption occurred.
+3. The image packaging omission, obsolete staging network, stale smoke markers,
+   and legacy bind-mount ownership were corrected before promotion.
+4. Encrypted off-host backup and isolated restore evidence was subsequently
+   established in run `33462661827`; see the 2026-09-01 recovery evidence.
 
 ## Release and rollback
 
-Recommended release: merge the reviewed SHA to `main` after GitHub Actions is
-restored. The workflow builds one immutable SHA image, smoke-tests it, deploys
-staging, then deploys the identical image to production on `32778`.
+Released image: `ghcr.io/camster91/creative-studio:0aa3bcaac3c469347f8c16068245a54c156aaebb`.
+The workflow built one immutable SHA image, smoke-tested it, deployed staging,
+then deployed the identical image to production on `32778`.
 
-Before the container swap, record the current immutable image ID and confirm a
-recent backup/restore test. Roll back by running that exact prior image with the
-same persistent mounts and environment, then verify `/api/whoami`, `/`,
-`/campaigns`, sign-in delivery, and one non-billable authenticated read.
+For later releases, record the current immutable image ID and confirm a recent
+backup/restore test. Roll back by running that exact prior image with the same
+persistent mounts and environment, then verify `/api/whoami`, `/`, `/campaigns`,
+sign-in delivery, and one non-billable authenticated read.
 
 ## Post-release checks
 

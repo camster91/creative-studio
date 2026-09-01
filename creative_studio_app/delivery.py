@@ -18,6 +18,7 @@ EXPORT_PRESETS = {
     "meta-stories": {"ratio": "9:16", "size": (1080, 1920), "background": "transparent", "dpi": 72},
     "web-hero": {"ratio": "16:9", "size": (1920, 1080), "background": "transparent", "dpi": 72},
     "pinterest": {"ratio": "2:3", "size": (1000, 1500), "background": "transparent", "dpi": 72},
+    "email": {"ratio": "1200:628", "size": (1200, 628), "background": "transparent", "dpi": 72},
     "print-dpi": {"ratio": "3:2", "size": None, "background": "white", "dpi": 300},
 }
 
