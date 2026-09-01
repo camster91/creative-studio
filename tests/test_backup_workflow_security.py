@@ -38,7 +38,7 @@ def test_privileged_backup_actions_are_pinned_to_reviewed_commits():
 
     assert references == [
         ["actions/checkout", "3d3c42e5aac5ba805825da76410c181273ba90b1"],
-        ["actions/upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02"],
+        ["actions/upload-artifact", "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"],
     ]
     assert all(FULL_COMMIT_SHA.fullmatch(ref) for _, ref in references)
 
