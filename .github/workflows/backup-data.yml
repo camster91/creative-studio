@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: backup-photogen-production
+  group: backup-photogen-production-v2
   cancel-in-progress: false
 
 jobs:
