@@ -13,6 +13,7 @@ WORKDIR /app
 
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
+COPY creative_studio_app/ ./creative_studio_app/
 COPY scripts/ ./scripts/
 COPY templates/ ./templates/
 COPY static/ ./static/
