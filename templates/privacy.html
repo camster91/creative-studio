@@ -18,38 +18,39 @@
 <body>
 <p><a href="/">&larr; Back to Photogen</a></p>
 <h1>Privacy Policy</h1>
-<p class="meta">Photogen — short version: we collect as little as possible, we don't train on your data, and you can ask us to delete it at any time.</p>
+<p class="meta">This notice describes what the Photogen application handles, where generation data is sent, and how to request access, correction, or deletion.</p>
 
 <h2>What we collect</h2>
-<p><b>Waitlist signups:</b> your email address, the source ("landing-page", "twitter", etc.) and a timestamp. We do not collect your name, IP, browser fingerprint, or anything else.</p>
-<p><b>Generated images:</b> when you use the app, your prompts and uploaded product photos are sent to Google Gemini for image generation. If you connect Figma and provide a file URL, read-only design context from that file is also incorporated into the prompt sent to Gemini. Figma access and refresh tokens are encrypted on the host and deleted when you disconnect. Outputs are stored in <code>/app/data</code> on the host. We do not store these on a third-party service.</p>
-<p><b>API keys:</b> if you paste a Google Gemini API key, it lives in your browser's localStorage only. We never see it. (The server has its own key for the shared demo; check the &lt;title&gt; of the editor to see if the server fallback is enabled.)</p>
-<p><b>Server logs:</b> standard HTTP access logs (path, status, user agent). No body capture.</p>
+<p><b>Accounts, waitlist, and campaigns:</b> we store the email address you submit, account and subscription state, campaign work orders, Brand Passport and Product Truth records, creation/update times, and the source associated with a waitlist signup.</p>
+<p><b>Generation inputs and outputs:</b> prompts, campaign instructions, and supplied images are sent to Google Gemini when you request generation. Generated outputs, session history, version metadata, jobs, and costs are stored on the Photogen host. If you connect Figma and provide a file URL, read-only design context is incorporated into the prompt sent to Gemini; Figma access and refresh tokens are encrypted on the host and deleted from Photogen when you disconnect.</p>
+<p><b>API keys:</b> a Gemini API key you enter is stored in your browser's <code>localStorage</code> and transmitted to the Photogen server with provider-backed requests. Photogen uses it to call Gemini and is designed not to write it to application databases, request metrics, or logs.</p>
+<p><b>Operational records:</b> we record bounded request metadata such as method, route template, status, latency, random request identifier, job state, provider/model outcome, estimated cost, and alert inputs. These records are designed not to contain prompts, image bytes, provider keys, login tokens, or raw provider errors.</p>
 
-<h2>What we don't do</h2>
-<p>We do not train any AI model on your inputs or outputs. We do not sell, share, or rent your email. We do not run third-party analytics, ad networks, or tracking pixels.</p>
+<h2>Model-provider data use</h2>
+<p>We do not train an AI model on your campaign inputs or outputs. Google processes generation inputs and outputs under the terms associated with the Gemini service and API key used for the request. Google's terms distinguish paid and unpaid services: unpaid-service content may be used to improve Google products and may be reviewed by people, while paid-service prompts and responses are not used to improve Google's products but may be retained for a limited period for abuse monitoring and required disclosures. Review the current <a href="https://ai.google.dev/gemini-api/terms" rel="noopener">Gemini API Additional Terms</a> before submitting confidential or personal information.</p>
+<p>Photogen does not include an advertising network or third-party behavioral analytics script. We do not sell or rent waitlist or account email addresses.</p>
 
 <h2>Where the data lives</h2>
-<p>Photogen is self-hosted. If you signed up at <a href="https://photogen.ashbi.ca">photogen.ashbi.ca</a>, your data lives on Ashbi Design's VPS at vps.ashbi.ca (187.77.26.99). No third-party data processor is involved.</p>
+<p>Application records and generated files for <a href="https://photogen.ashbi.ca">photogen.ashbi.ca</a> are stored on infrastructure operated for Ashbi Design. Depending on the feature used, scoped data may also be processed by Google Gemini, Figma, the configured email provider, Stripe, GitHub/container infrastructure, and hosting or backup providers for generation, design context, authentication email, billing, deployment, hosting, security, and recovery.</p>
 
 <h2>How long we keep it</h2>
-<p>Waitlist signups are kept until you ask us to delete them or until Photogen shuts down. Generated images and session history are kept as long as the host is running. If you want something deleted sooner, email <a href="mailto:hello@ashbi.ca">hello@ashbi.ca</a> and we will do it within 30 days.</p>
+<p>Uploaded source files have a configured 30-day expiry and are removed by the scheduled retention job when it runs. Account, campaign, session, output, cost, waitlist, and billing records are retained until they are no longer needed to provide and operate the service or until an applicable deletion request is completed. Encrypted backups may retain copies until their configured backup-retention period expires. Provider copies are governed by the provider terms linked above.</p>
 
 <h2>Your rights</h2>
-<p>You can ask us at any time to: (a) tell you what data we have on you, (b) delete your data, (c) correct any inaccurate data. Email <a href="mailto:hello@ashbi.ca">hello@ashbi.ca</a>.</p>
+<p>You can request access to, correction of, or deletion of Photogen-held account data by emailing <a href="mailto:hello@ashbi.ca">hello@ashbi.ca</a>. We may need to verify that you control the relevant account before acting on a request. Some information may need to be retained where required for security, billing, dispute resolution, or legal obligations.</p>
 
-<h2>Cookies</h2>
-<p>Photogen does not set any cookies. (The Flask session cookie is configured but unused. See the "API key" section above for how your Gemini key is stored.)</p>
+<h2>Browser storage</h2>
+<p>Photogen stores the application session token, optional Gemini API key, editor session identifier, and interface state in browser local storage. Clearing site data removes those browser-held values but does not by itself delete server-held account, campaign, or output records.</p>
 
 <h2>Children's privacy</h2>
 <p>Photogen is not directed at children under 13 and we do not knowingly collect data from children.</p>
 
 <h2>Changes to this policy</h2>
-<p>If we change this policy, we'll update the "last updated" date below and post a note in our release notes. Material changes will be announced via email to anyone on the waitlist.</p>
+<p>If this notice changes, the "last updated" date below will be revised. Material changes may also be described in release notes or through an appropriate account communication.</p>
 
 <h2>Contact</h2>
 <p>Ashbi Design (Bianca + Cameron Ashley) &middot; <a href="mailto:hello@ashbi.ca">hello@ashbi.ca</a> &middot; Toronto, Canada</p>
 
-<p class="updated">Last updated: 2026-06-14</p>
+<p class="updated">Last updated: 2026-08-28</p>
 </body>
 </html>

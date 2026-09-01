@@ -2,7 +2,7 @@
 
 Date: 2026-08-28
 
-Status: **blocked before production publication**
+Status: **approved; publication pending external deployment access**
 
 ## Scope
 
@@ -41,11 +41,7 @@ of a critical/high release risk.
    “recent account payments have failed or your spending limit needs to be
    increased.” The owner must resolve GitHub Billing & plans or provide a
    separate authorized VPS SSH path.
-2. The production privacy notice contains statements contradicted by the
-   implementation and provider data flow. See
-   [`../PRIVACY-NOTICE-FACT-CHECK.md`](../PRIVACY-NOTICE-FACT-CHECK.md).
-   Accountable approval is required before publishing revised legal text.
-3. Current production backup/restore evidence and SMTP delivery cannot be read
+2. Current production backup/restore evidence and SMTP delivery cannot be read
    from this machine because the VPS key is unavailable. Those gates must run
    through the restored deployment job or an authorized operator session.
 

@@ -2,7 +2,7 @@
 
 Date: 2026-08-28
 
-Status: **draft findings; not approved legal text**
+Status: **approved for factual correction and implemented; not legal advice**
 
 The current public notice should not be republished unchanged. These statements
 are contradicted by the application or are broader than available evidence:
@@ -16,10 +16,10 @@ are contradicted by the application or are broader than available evidence:
 | Generated content is kept “as long as the host is running.” | Upload retention defaults to 30 days, while other records/outputs have different or incompletely documented lifecycles and backups may retain copies. | Publish a verified retention table covering uploads, outputs, campaign records, accounts, logs, email, and backups. |
 | “Photogen does not set any cookies.” | Authentication uses a session token stored in browser local storage rather than a cookie today, but the notice omits campaign/account storage and third-party request behavior. | State actual browser storage and avoid categorical claims that can drift. |
 
-## Approval needed
+## Approval record
 
-The owner should approve a revised notice that accurately names the controller,
-purposes, data categories, processors, retention, deletion process, security
-limitations, international transfers where applicable, and contact channel.
-Legal review may be appropriate before public commercial use. This fact check
-is product evidence, not legal advice.
+The owner approved the factual privacy corrections on 2026-08-28. The revised
+notice now describes the implemented data flow and links the current official
+Gemini API terms without representing provider behavior as Photogen behavior.
+Legal review may still be appropriate before broader commercial use. This fact
+check is product evidence, not legal advice.
