@@ -1,11 +1,13 @@
 """Campaign Factory contract: ownership, readiness, and safe generation plans."""
 
 import importlib.util
+import io
 import os
 import sys
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 
 SCRIPT_DIR = Path(__file__).parent.parent / "scripts"
@@ -20,6 +22,7 @@ def cs(tmp_path):
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    module.DATA_DIR = tmp_path
     module.AUTH_DB = tmp_path / "users.db"
     module._init_auth_schema()
     with module._request_log_lock:
@@ -50,6 +53,8 @@ def complete_payload():
             "facts": ["12 single-serve sachets", "Blue raspberry flavour"],
             "approved_claims": ["Contains 6 essential electrolytes"],
             "required_disclosures": ["Always read and follow the label"],
+            "pack_asset_waived": True,
+            "pack_asset_waiver_reason": "Packaging photography is pending; early art-direction concept only.",
         },
         "work_order": {
             "name": "Summer retail launch",
@@ -91,9 +96,102 @@ def test_complete_work_order_is_ready_and_builds_bounded_plan(cs):
     assert plan["variations"] == 4
     assert plan["tier"] == "quality"
     assert plan["aspect_ratio"] == "4:5"
+    assert plan["execution_mode"] == "concept-only-direct"
+    assert "Packaging fidelity is not guaranteed" in plan["fidelity_notice"]
     assert "Contains 6 essential electrolytes" in plan["prompt"]
     assert "Do not invent packaging text" in plan["prompt"]
     assert "not-a-channel" not in plan["channels"]
+
+
+def png_upload():
+    data = io.BytesIO()
+    Image.new("RGBA", (24, 36), (20, 80, 190, 255)).save(data, "PNG")
+    data.seek(0)
+    return data
+
+
+def test_exact_pack_is_owner_scoped_and_selects_composite_execution(cs):
+    client = cs.app.test_client()
+    owner = login(client, "pack-owner@example.com")
+    stranger = login(client, "pack-stranger@example.com")
+    payload = complete_payload()
+    payload["product"]["pack_asset_waived"] = False
+    payload["product"]["pack_asset_waiver_reason"] = ""
+    created = client.post("/api/campaigns", json=payload, headers=headers(owner)).get_json()
+    assert created["readiness"]["ready"] is False
+    assert {item["field"] for item in created["readiness"]["missing"]} == {"product.pack_asset"}
+
+    assert client.post(
+        f"/api/campaigns/{created['id']}/pack",
+        data={"pack": (png_upload(), "approved-pack.png")},
+        headers=headers(stranger),
+    ).status_code == 404
+    attached = client.post(
+        f"/api/campaigns/{created['id']}/pack",
+        data={"pack": (png_upload(), "approved-pack.png")},
+        headers=headers(owner),
+    )
+    assert attached.status_code == 200
+    body = attached.get_json()
+    assert body["has_pack_asset"] is True
+    assert len(body["pack_asset_sha256"]) == 64
+    assert body["readiness"]["ready"] is True
+
+    plan = client.post(f"/api/campaigns/{created['id']}/go", headers=headers(owner)).get_json()["generation_request"]
+    assert plan["mode"] == "composite"
+    assert plan["execution_mode"] == "deterministic-pack-composite"
+    assert plan["pack_asset_sha256"] == body["pack_asset_sha256"]
+    assert "Generate an empty environment only" in plan["prompt"]
+    assert "may alter edge pixels" in plan["fidelity_notice"]
+
+
+def test_waiver_requires_a_reason(cs):
+    client = cs.app.test_client()
+    token = login(client)
+    payload = complete_payload()
+    payload["product"]["pack_asset_waiver_reason"] = ""
+    created = client.post("/api/campaigns", json=payload, headers=headers(token)).get_json()
+    assert created["readiness"]["ready"] is False
+    assert {item["field"] for item in created["readiness"]["missing"]} == {"product.pack_asset_waiver_reason"}
+
+
+def test_campaign_composite_uses_server_owned_pack_and_bounded_variations(cs, monkeypatch):
+    client = cs.app.test_client()
+    token = login(client, "composite@example.com")
+    payload = complete_payload()
+    payload["product"].update(pack_asset_waived=False, pack_asset_waiver_reason="")
+    campaign_id = client.post("/api/campaigns", json=payload, headers=headers(token)).get_json()["id"]
+    client.post(
+        f"/api/campaigns/{campaign_id}/pack",
+        data={"pack": (png_upload(), "approved-pack.png")},
+        headers=headers(token),
+    )
+    calls = []
+
+    def fake_composite(prompt, product_path, api_key, aspect, tier, **kwargs):
+        calls.append((Path(product_path).name, aspect, tier, kwargs["name_suffix"]))
+        return [{"url": f"/image/result-{len(calls)}.png", "name": f"result-{len(calls)}.png", "model": "test", "ratio": aspect}]
+
+    monkeypatch.setattr(cs._generation_service, "composite", fake_composite)
+    response = client.post(
+        "/api/composite",
+        data={"campaign_id": campaign_id, "prompt": "Clean summer tabletop", "aspect_ratio": "4:5", "tier": "quality", "variations": "3"},
+        headers={**headers(token), "X-API-Key": "test-key"},
+    )
+    assert response.status_code == 200
+    assert len(response.get_json()["images"]) == 3
+    assert len(calls) == 3
+    assert all(name.startswith("campaign-pack_") for name, _aspect, _tier, _suffix in calls)
+    assert all(aspect == "4:5" and tier == "quality" for _name, aspect, tier, _suffix in calls)
+
+    (cs.DATA_DIR / "uploads" / calls[0][0]).write_bytes(b"tampered")
+    rejected = client.post(
+        "/api/composite",
+        data={"campaign_id": campaign_id, "prompt": "Clean summer tabletop"},
+        headers={**headers(token), "X-API-Key": "test-key"},
+    )
+    assert rejected.status_code == 404
+    assert rejected.get_json()["error"] == "Campaign pack asset not found"
 
 
 def test_readiness_blocks_go_with_actionable_missing_fields(cs):

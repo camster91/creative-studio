@@ -1,6 +1,6 @@
 # Creative Studio product roadmap
 
-Last reconciled: 2026-08-28
+Last reconciled: 2026-09-01
 
 Repository version: 4.6.0
 
@@ -28,6 +28,10 @@ The dated market and technical evidence behind this direction lives in
 - The first Campaign Factory slice is implemented: Brand Passport, Product
   Truth, Campaign Work Order, deterministic readiness, and a Go action that
   compiles approved inputs into the existing generation request.
+- The current candidate adds owner-scoped canonical pack assets, SHA-256
+  provenance, an explicit concept-only waiver, and bounded deterministic
+  composite execution. It is not production until its exact SHA is approved,
+  merged, deployed, and verified.
 - Gemini remains the only production generation provider. OpenAI support is
   researched but not implemented or evaluated.
 - Deployment is operator-managed. Repository checks do not prove that the
@@ -55,7 +59,7 @@ Acceptance criteria:
   into a provider-independent generation request.
 - [x] Run the approved request through the existing durable generation path.
 - [ ] Reuse existing Brand Passports and Product Truth records across campaigns.
-- [ ] Attach an exact product pack asset and default CPG campaigns to the
+- [x] Attach an exact product pack asset and default CPG campaigns to the
   deterministic composite path rather than text-only packaging generation.
 - [ ] Create channel recipes that fan one work order into exact format variants.
 - [ ] Route QC or claims failures into an exception inbox with repair/reject actions.
@@ -71,9 +75,12 @@ proposed until measured with target customers.
 ### P0 — Product truth and pack fidelity
 
 - Make Brand Passport and SKU records independently editable and reusable.
-- Require or explicitly waive a product pack asset before Go.
-- Preserve pack pixels through background generation and deterministic
-  compositing; never present text-only packaging generation as exact fidelity.
+- Require or explicitly waive a product pack asset before Go. Candidate
+  implemented; production release remains gated.
+- Measure and improve alpha edges, background cleanup, scale, contact shadow,
+  perspective, occlusion, and light/color match. The current composite uses the
+  validated pack source but can alter edge pixels during cleanup and scaling.
+- Never present concept-only packaging generation as exact fidelity.
 - Add audit history for claim/rule changes that affect a campaign.
 
 ### P0 — Evaluation and exception workflow

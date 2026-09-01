@@ -2,12 +2,15 @@
 
 from collections.abc import Callable
 
+import hashlib
+
 from flask import Blueprint, jsonify, render_template, request
 
 
 def create_blueprint(*, current_session: Callable, create_campaign: Callable, list_campaigns: Callable,
                      get_campaign: Callable, campaign_readiness: Callable, build_generation_plan: Callable,
-                     mark_campaign_started: Callable, rate_limited: Callable) -> Blueprint:
+                     mark_campaign_started: Callable, attach_pack_asset: Callable,
+                     save_upload: Callable, rate_limited: Callable) -> Blueprint:
     blueprint = Blueprint("campaigns", __name__)
 
     def signed_in():
@@ -49,6 +52,24 @@ def create_blueprint(*, current_session: Callable, create_campaign: Callable, li
         campaign = get_campaign(campaign_id, session["user_id"])
         if not campaign:
             return jsonify({"error": "Not found"}), 404
+        return jsonify({**campaign, "readiness": campaign_readiness(campaign)})
+
+    @blueprint.post("/api/campaigns/<campaign_id>/pack")
+    @rate_limited
+    def upload_pack(campaign_id):
+        session, error = signed_in()
+        if error:
+            return error
+        if not get_campaign(campaign_id, session["user_id"]):
+            return jsonify({"error": "Not found"}), 404
+        if "pack" not in request.files:
+            return jsonify({"error": "Exact pack image required"}), 400
+        try:
+            saved = save_upload(request.files["pack"], "campaign-pack")
+            digest = hashlib.sha256(saved.read_bytes()).hexdigest()
+            campaign = attach_pack_asset(campaign_id, session["user_id"], saved.name, digest)
+        except ValueError as upload_error:
+            return jsonify({"error": str(upload_error)}), 400
         return jsonify({**campaign, "readiness": campaign_readiness(campaign)})
 
     @blueprint.post("/api/campaigns/<campaign_id>/go")

@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#f4f1ea">
   <title>Campaign Factory · Creative Studio</title>
   <link rel="stylesheet" href="/static/campaigns.css">
+  <link rel="stylesheet" href="/static/campaigns-fidelity.css">
   <script src="/static/campaigns.js" defer></script>
 </head>
 <body>
@@ -37,6 +38,12 @@
           <label>Verified facts <small>one per line</small><textarea name="facts" required rows="3" placeholder="12 single-serve sachets&#10;Blue raspberry flavour"></textarea></label>
           <label>Approved claims <small>leave empty to prohibit claims</small><textarea name="claims" rows="2" placeholder="Contains 6 essential electrolytes"></textarea></label>
           <label>Required disclosures <small>one per line</small><textarea name="disclosures" rows="2" placeholder="Always read and follow the label"></textarea></label>
+          <label>Exact pack asset <small>PNG, JPEG, or WebP · the real pack is placed after environment generation</small><input name="packAsset" type="file" accept="image/png,image/jpeg,image/webp"></label>
+          <div class="concept-waiver">
+            <label><input name="packWaived" type="checkbox"> Proceed with a concept-only image without an exact pack asset</label>
+            <label id="waiverReasonLabel" hidden>Why is the exact pack asset unavailable?<textarea name="packWaiverReason" rows="2" maxlength="500" placeholder="Packaging photography is pending; use this only for early art-direction review."></textarea></label>
+          </div>
+          <p class="pack-note">Pack-backed campaigns preserve the validated upload and record its SHA-256. Concept-only outputs must not be treated as packaging-accurate.</p>
         </section>
 
         <section class="card">

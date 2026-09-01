@@ -1,0 +1,25 @@
+.concept-waiver {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #d9b96d;
+  border-radius: 10px;
+  background: #fff8e6;
+}
+
+.concept-waiver > label:first-child {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  margin: 0;
+}
+
+.concept-waiver input[type="checkbox"] {
+  width: auto;
+  margin: 3px 0 0;
+}
+
+.pack-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}

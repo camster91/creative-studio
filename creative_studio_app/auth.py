@@ -79,6 +79,10 @@ def init_schema(path: Path) -> None:
             facts_json TEXT NOT NULL DEFAULT '[]',
             approved_claims_json TEXT NOT NULL DEFAULT '[]',
             required_disclosures_json TEXT NOT NULL DEFAULT '[]',
+            pack_asset_name TEXT,
+            pack_asset_sha256 TEXT,
+            pack_asset_waived INTEGER NOT NULL DEFAULT 0,
+            pack_asset_waiver_reason TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -119,6 +123,15 @@ def init_schema(path: Path) -> None:
         ]:
             if column not in existing:
                 database.execute(f"ALTER TABLE users ADD COLUMN {column} {declaration}")
+        product_columns = {row[1] for row in database.execute("PRAGMA table_info(product_truth)")}
+        for column, declaration in [
+            ("pack_asset_name", "TEXT"),
+            ("pack_asset_sha256", "TEXT"),
+            ("pack_asset_waived", "INTEGER NOT NULL DEFAULT 0"),
+            ("pack_asset_waiver_reason", "TEXT NOT NULL DEFAULT ''"),
+        ]:
+            if column not in product_columns:
+                database.execute(f"ALTER TABLE product_truth ADD COLUMN {column} {declaration}")
         database.commit()
 
 

@@ -993,7 +993,10 @@ def _save_upload(upload, purpose: str) -> Path:
         max_bytes=int(os.environ.get("CREATIVE_MAX_UPLOAD_BYTES", str(16 * 1024 * 1024))),
         max_dimension=int(os.environ.get("CREATIVE_MAX_IMAGE_DIMENSION", "12000")),
         max_pixels=int(os.environ.get("CREATIVE_MAX_IMAGE_PIXELS", "40000000")),
-        retention_days=int(os.environ.get("CREATIVE_UPLOAD_RETENTION_DAYS", "30")),
+        retention_days=int(os.environ.get(
+            "CREATIVE_PACK_RETENTION_DAYS" if purpose == "campaign-pack" else "CREATIVE_UPLOAD_RETENTION_DAYS",
+            "3650" if purpose == "campaign-pack" else "30",
+        )),
     )
 
 
@@ -1146,6 +1149,33 @@ def _get_campaign(campaign_id: str, user_id: str) -> dict | None:
 
 def _mark_campaign_started(campaign_id: str, user_id: str, session_id: str | None = None) -> None:
     _campaign_service.mark_started(AUTH_DB, campaign_id, user_id, session_id)
+
+
+def _attach_campaign_pack(campaign_id: str, user_id: str, asset_name: str, sha256: str) -> dict | None:
+    return _campaign_service.attach_pack_asset(AUTH_DB, campaign_id, user_id, asset_name, sha256)
+
+
+def _resolve_campaign_pack(campaign_id: str, user_id: str) -> Path | None:
+    stored = _campaign_service.internal_pack_asset(AUTH_DB, campaign_id, user_id)
+    if not stored:
+        return None
+    asset_name, expected_sha256 = stored
+    if not asset_name or Path(asset_name).name != asset_name:
+        return None
+    upload_dir = (DATA_DIR / "uploads").resolve()
+    asset = (upload_dir / asset_name).resolve()
+    try:
+        asset.relative_to(upload_dir)
+        metadata = load_json(asset.with_suffix(".meta.json"))
+    except (ValueError, OSError):
+        return None
+    if (not asset.is_file() or asset.is_symlink()
+            or metadata.get("owner_id") != f"user:{user_id}"
+            or metadata.get("purpose") != "campaign-pack"
+            or metadata.get("stored_name") != asset_name
+            or hashlib.sha256(asset.read_bytes()).hexdigest() != expected_sha256):
+        return None
+    return asset
 
 
 
@@ -1601,6 +1631,7 @@ app.register_blueprint(
         current_version_node=_current_version_node,
         estimate_cost=cost_for_tier,
         record_provider_results=_record_provider_results,
+        resolve_campaign_pack=_resolve_campaign_pack,
     )
 )
 
@@ -1751,6 +1782,8 @@ app.register_blueprint(
         campaign_readiness=_campaign_service.readiness,
         build_generation_plan=_campaign_service.generation_plan,
         mark_campaign_started=_mark_campaign_started,
+        attach_pack_asset=_attach_campaign_pack,
+        save_upload=_save_upload,
         rate_limited=rate_limited,
     )
 )

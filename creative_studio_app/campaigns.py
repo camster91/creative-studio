@@ -42,6 +42,9 @@ def _serialize(row):
     for key in tuple(result):
         if key.endswith("_json"):
             result[key[:-5]] = _json(result.pop(key))
+    result["has_pack_asset"] = bool(result.get("pack_asset_name"))
+    result.pop("pack_asset_name", None)
+    result["pack_asset_waived"] = bool(result.get("pack_asset_waived"))
     return result
 
 
@@ -70,11 +73,14 @@ def create_bundle(path: Path, user_id: str, payload: dict) -> dict:
         )
         database.execute(
             """INSERT INTO product_truth
-               (id,user_id,brand_id,name,sku,facts_json,approved_claims_json,required_disclosures_json,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+               (id,user_id,brand_id,name,sku,facts_json,approved_claims_json,required_disclosures_json,
+                pack_asset_waived,pack_asset_waiver_reason,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (product_id, user_id, brand_id, _clean(product.get("name"), 200), _clean(product.get("sku"), 120),
              json.dumps(_strings(product.get("facts"))), json.dumps(_strings(product.get("approved_claims"))),
-             json.dumps(_strings(product.get("required_disclosures"))), now, now),
+             json.dumps(_strings(product.get("required_disclosures"))),
+             1 if product.get("pack_asset_waived") is True else 0,
+             _clean(product.get("pack_asset_waiver_reason"), 500), now, now),
         )
         database.execute(
             """INSERT INTO campaign_work_orders
@@ -95,7 +101,8 @@ def get(path: Path, campaign_id: str, user_id: str) -> dict | None:
     with connect(path) as database:
         row = database.execute(
             """SELECT c.*, b.name AS brand_name, b.voice, b.visual_rules_json, b.forbidden_content_json,
-                      p.name AS product_name, p.sku, p.facts_json, p.approved_claims_json, p.required_disclosures_json
+                      p.name AS product_name, p.sku, p.facts_json, p.approved_claims_json, p.required_disclosures_json,
+                      p.pack_asset_name, p.pack_asset_sha256, p.pack_asset_waived, p.pack_asset_waiver_reason
                FROM campaign_work_orders c
                JOIN brand_passports b ON b.id = c.brand_id AND b.user_id = c.user_id
                JOIN product_truth p ON p.id = c.product_id AND p.user_id = c.user_id
@@ -132,7 +139,13 @@ def readiness(campaign: dict) -> dict:
         ("work_order.creative_direction", campaign.get("creative_direction"), "Describe the creative direction"),
     ]
     missing = [{"field": field, "message": message} for field, value, message in checks if not value]
-    return {"ready": not missing, "missing": missing, "check_count": len(checks), "passed_count": len(checks) - len(missing)}
+    if not campaign.get("has_pack_asset"):
+        if not campaign.get("pack_asset_waived"):
+            missing.append({"field": "product.pack_asset", "message": "Upload the exact pack asset or explicitly choose concept-only generation"})
+        elif not campaign.get("pack_asset_waiver_reason"):
+            missing.append({"field": "product.pack_asset_waiver_reason", "message": "Explain why this campaign is proceeding without an exact pack asset"})
+    check_count = len(checks) + 1
+    return {"ready": not missing, "missing": missing, "check_count": check_count, "passed_count": check_count - len(missing)}
 
 
 def generation_plan(campaign: dict) -> dict:
@@ -141,6 +154,7 @@ def generation_plan(campaign: dict) -> dict:
         raise ValueError("Campaign is not ready")
     claims = campaign.get("approved_claims") or []
     disclosures = campaign.get("required_disclosures") or []
+    has_pack = campaign.get("has_pack_asset")
     prompt_parts = [
         f"Create a production-quality CPG campaign image for {campaign['brand_name']} {campaign['product_name']} (SKU {campaign['sku']}).",
         f"Campaign objective: {campaign['objective']}.",
@@ -148,7 +162,9 @@ def generation_plan(campaign: dict) -> dict:
         f"Creative direction: {campaign['creative_direction']}.",
         "Verified product facts: " + "; ".join(campaign["facts"]) + ".",
         "Brand visual rules: " + "; ".join(campaign["visual_rules"]) + ".",
-        "Do not invent packaging text, ingredients, certifications, claims, prices, or product variants.",
+        ("Generate an empty environment only. Do not generate, redraw, restyle, obscure, or replace the product; the approved pack asset will be composited after generation."
+         if has_pack else
+         "CONCEPT ONLY: no exact pack asset was supplied. Do not imply packaging fidelity. Do not invent packaging text, ingredients, certifications, claims, prices, or product variants."),
     ]
     if campaign.get("voice"):
         prompt_parts.append(f"Brand voice: {campaign['voice']}.")
@@ -161,13 +177,45 @@ def generation_plan(campaign: dict) -> dict:
         prompt_parts.append("Forbidden content: " + "; ".join(campaign["forbidden_content"]) + ".")
     return {
         "prompt": " ".join(prompt_parts),
-        "mode": "direct",
+        "mode": "composite" if has_pack else "direct",
+        "execution_mode": "deterministic-pack-composite" if has_pack else "concept-only-direct",
+        "fidelity_notice": ("The validated pack source is composited after environment generation and its stored SHA-256 is recorded. Background cleanup and scaling may alter edge pixels."
+                            if has_pack else
+                            "Concept only. Packaging fidelity is not guaranteed because no exact pack asset was supplied."),
+        "pack_asset_sha256": campaign.get("pack_asset_sha256") if has_pack else None,
         "tier": campaign["tier"],
         "aspect_ratio": campaign["aspect_ratio"],
         "variations": campaign["variations"],
         "channels": campaign["channels"],
         "campaign_id": campaign["id"],
     }
+
+
+def attach_pack_asset(path: Path, campaign_id: str, user_id: str, asset_name: str, sha256: str) -> dict | None:
+    """Attach a server-validated canonical upload to an owner-scoped product truth record."""
+    if Path(asset_name).name != asset_name or not asset_name.endswith(".png"):
+        raise ValueError("Invalid canonical pack asset")
+    with connect(path) as database:
+        updated = database.execute(
+            """UPDATE product_truth SET pack_asset_name=?, pack_asset_sha256=?, pack_asset_waived=0,
+                      pack_asset_waiver_reason='', updated_at=?
+               WHERE id=(SELECT product_id FROM campaign_work_orders WHERE id=? AND user_id=?) AND user_id=?""",
+            (asset_name, sha256, now_iso(), campaign_id, user_id, user_id),
+        )
+        database.commit()
+    return get(path, campaign_id, user_id) if updated.rowcount else None
+
+
+def internal_pack_asset(path: Path, campaign_id: str, user_id: str) -> tuple[str, str] | None:
+    with connect(path) as database:
+        row = database.execute(
+            """SELECT p.pack_asset_name, p.pack_asset_sha256 FROM campaign_work_orders c
+               JOIN product_truth p ON p.id=c.product_id AND p.user_id=c.user_id
+               WHERE c.id=? AND c.user_id=?""", (campaign_id, user_id),
+        ).fetchone()
+    if not row or not row["pack_asset_name"] or not row["pack_asset_sha256"]:
+        return None
+    return row["pack_asset_name"], row["pack_asset_sha256"]
 
 
 def mark_started(path: Path, campaign_id: str, user_id: str, session_id: str | None = None) -> None:
