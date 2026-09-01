@@ -132,7 +132,7 @@ jobs:
         run: |
           set -e
           HTML=$(curl -sf http://localhost:15173/)
-          echo "$HTML" | grep -q "Creative Studio" || (echo "FAIL: home page missing brand"; exit 1)
+          echo "$HTML" | grep -q "Photogen Campaign Factory" || (echo "FAIL: home page missing Campaign Factory positioning"; exit 1)
           # No literal \u003e in served HTML (regression guard for the
           # raw-string arrow bug we hit before)
           echo "$HTML" | grep -q "u003e" && (echo "FAIL: served HTML contains literal \\\\u003e (raw-string arrow bug regression)"; exit 1) || echo "No literal \u003e — OK"
