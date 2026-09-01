@@ -1,0 +1,2 @@
+# Ashbi recovery key. Fingerprint: SHA256:+pJjM5Sq5bK9Xe2yvhwLc/BIWZuld5RNYEl5n4YqN8A
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFIzxgHdDMcY9yQLPFpNl86NRzAWaElRJZ/pV5VIzmh9
