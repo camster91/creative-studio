@@ -69,6 +69,10 @@ def _copy_sqlite(source: Path, destination: Path) -> None:
     destination_connection = sqlite3.connect(destination)
     try:
         source_connection.backup(destination_connection)
+        # Online backups inherit WAL mode from a live source. Normalize the
+        # isolated copy so read-only integrity checks do not create untracked
+        # -wal/-shm files beside the manifest-backed database.
+        destination_connection.execute("PRAGMA journal_mode=DELETE")
     finally:
         destination_connection.close()
         source_connection.close()

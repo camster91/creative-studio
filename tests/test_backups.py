@@ -60,6 +60,32 @@ def test_snapshot_ignores_sqlite_sidecars(tmp_path: Path) -> None:
     assert verify_snapshot(snapshot)["sqlite_verified"] == 1
 
 
+def test_snapshot_normalizes_a_live_wal_database(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    outputs = tmp_path / "outputs"
+    data.mkdir()
+    outputs.mkdir()
+    source = data / "provider-ledger.db"
+    connection = sqlite3.connect(source)
+    assert connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+    connection.execute("CREATE TABLE calls (id INTEGER PRIMARY KEY, outcome TEXT NOT NULL)")
+    connection.execute("INSERT INTO calls (outcome) VALUES ('success')")
+    connection.commit()
+
+    snapshot = tmp_path / "snapshot"
+    create_snapshot(data, outputs, snapshot)
+    connection.close()
+
+    copied = snapshot / "data" / "provider-ledger.db"
+    copied_connection = sqlite3.connect(copied)
+    assert copied_connection.execute("PRAGMA journal_mode").fetchone() == ("delete",)
+    assert copied_connection.execute("SELECT outcome FROM calls").fetchone() == ("success",)
+    copied_connection.close()
+    assert not (snapshot / "data" / "provider-ledger.db-wal").exists()
+    assert not (snapshot / "data" / "provider-ledger.db-shm").exists()
+    assert verify_snapshot(snapshot)["sqlite_verified"] == 1
+
+
 def test_verify_rejects_modified_or_extra_files(tmp_path: Path) -> None:
     data = tmp_path / "data"
     outputs = tmp_path / "outputs"
