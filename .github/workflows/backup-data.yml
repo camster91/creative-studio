@@ -56,7 +56,9 @@ jobs:
           ARCHIVE_NAME="photogen-$(date -u +%Y%m%dT%H%M%SZ)-$RUN_KEY.tar.gz"
           REMOTE_ARCHIVE="$REMOTE_ROOT/$ARCHIVE_NAME"
           SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS")
-          SCP=(scp -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS")
+          # This host intentionally has no SFTP subsystem; -O selects the
+          # legacy SCP transport over the same pinned SSH connection.
+          SCP=(scp -O -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS")
           TARGET="$BACKUP_USER@$BACKUP_HOST"
 
           "${SSH[@]}" "$TARGET" "install -d -m 700 '$REMOTE_ROOT' '$REMOTE_TOOL/creative_studio_app' '$REMOTE_TOOL/scripts'"
@@ -114,7 +116,7 @@ jobs:
           compression-level: 0
 
       - name: Remove transient snapshot and prune local archives
-        if: always() && steps.snapshot.outputs.remote_root != ''
+        if: always() && steps.ssh.outputs.key != ''
         env:
           BACKUP_HOST: ${{ secrets.COOLIFY_HOST }}
           BACKUP_USER: ${{ secrets.COOLIFY_USER }}
@@ -122,9 +124,14 @@ jobs:
           SSH_KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
         run: |
           set -euo pipefail
+          RUN_KEY="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          case "$RUN_KEY" in (*[!0-9-]*) echo "Invalid run key"; exit 1;; esac
+          REMOTE_ROOT="/root/backups/creative-studio"
+          REMOTE_TOOL="$REMOTE_ROOT/tool-$RUN_KEY"
+          REMOTE_SNAPSHOT="$REMOTE_ROOT/snapshot-$RUN_KEY"
           SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS")
           TARGET="$BACKUP_USER@$BACKUP_HOST"
           "${SSH[@]}" "$TARGET" \
-            "rm -rf -- '${{ steps.snapshot.outputs.remote_tool }}' '${{ steps.snapshot.outputs.remote_snapshot }}'; \
-             find '${{ steps.snapshot.outputs.remote_root }}' -maxdepth 1 -type f \
+            "rm -rf -- '$REMOTE_TOOL' '$REMOTE_SNAPSHOT'; \
+             find '$REMOTE_ROOT' -maxdepth 1 -type f \
                -name 'photogen-*.tar.gz' -mtime +7 -delete"
