@@ -1,6 +1,6 @@
 # Creative Studio product roadmap
 
-Last reconciled: 2026-08-28
+Last reconciled: 2026-09-01
 
 Repository version: 4.6.0
 
@@ -34,6 +34,11 @@ The dated market and technical evidence behind this direction lives in
   current commit is released.
 - No target-customer interviews, representative AI evaluation corpus, or
   customer-validated outcome metrics are yet recorded.
+- A QC calibration harness is implemented as an unmerged candidate. It
+  separates exact rubric/model groups and measures independent-review coverage,
+  disagreement, provider coverage, known accuracy, unknowns, false passes, and
+  false fails without retaining creative payloads. It is infrastructure for a
+  reviewed corpus, not evidence that such a corpus already exists.
 
 ## Primary objective — Campaign Factory foundation
 
@@ -81,6 +86,9 @@ proposed until measured with target customers.
 - Build a consent-safe corpus of 30–50 representative CPG work orders.
 - Define rubrics for pack fidelity, claim correctness, brand adherence,
   composition, channel compliance, latency, and cost.
+- Use the documented QC calibration protocol to require license/origin evidence,
+  independent reviewer identities, pinned provider versions, predeclared sample
+  sizes, and per-criterion false-result/unknown/disagreement thresholds.
 - Run Gemini as the baseline; add OpenAI Responses API and GPT Image behind a
   provider interface only after the evaluation contract exists.
 - Convert advisory QC into rules-first pass/fail checks plus an exception inbox.
