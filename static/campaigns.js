@@ -4,6 +4,8 @@ const form = document.getElementById('campaignForm');
 const goBtn = document.getElementById('goBtn');
 const statusEl = document.getElementById('goStatus');
 let activeCampaignId = null;
+let savedBrands = [];
+let savedProducts = [];
 
 function requestOptions(options = {}) {
   const headers = new Headers(options.headers || {});
@@ -20,6 +22,8 @@ function values(name) { return [...document.querySelectorAll(`#${name} input:che
 function payload() {
   const data = new FormData(form);
   return {
+    brand_id: data.get('reuseBrand') || undefined,
+    product_id: data.get('reuseProduct') || undefined,
     brand: {name: data.get('brandName'), voice: data.get('brandVoice'), visual_rules: lines(data.get('visualRules')), forbidden_content: lines(data.get('forbiddenContent'))},
     product: {name: data.get('productName'), sku: data.get('sku'), facts: lines(data.get('facts')), approved_claims: lines(data.get('claims')), required_disclosures: lines(data.get('disclosures')), pack_asset_waived: data.get('packWaived') === 'on', pack_asset_waiver_reason: data.get('packWaiverReason')},
     work_order: {name: data.get('campaignName'), objective: data.get('objective'), audience: data.get('audience'), offer: data.get('offer'), channels: values('channels'), creative_direction: data.get('direction'), aspect_ratio: data.get('aspect'), tier: data.get('tier'), variations: Number(data.get('variations'))},
@@ -108,6 +112,72 @@ async function loadCampaigns() {
   }));
 }
 
+function setLines(name, items) { form.elements[name].value = (items || []).join('\n'); }
+
+function replaceOptions(select, firstLabel, items, labelFor) {
+  select.replaceChildren();
+  const first = document.createElement('option');
+  first.value = '';
+  first.textContent = firstLabel;
+  select.append(first);
+  items.forEach(item => {
+    const option = document.createElement('option');
+    option.value = item.id;
+    option.textContent = labelFor(item);
+    select.append(option);
+  });
+}
+
+function renderProductOptions(brandId = '') {
+  const select = form.elements.reuseProduct;
+  const matching = savedProducts.filter(product => !brandId || product.brand_id === brandId);
+  replaceOptions(select, 'Create new Product Truth', matching, product => `${product.name} · ${product.sku}`);
+}
+
+async function loadTruthLibrary() {
+  const [brandsResponse, productsResponse] = await Promise.all([
+    fetch('/api/brand-passports', requestOptions()),
+    fetch('/api/product-truth', requestOptions()),
+  ]);
+  if (!brandsResponse.ok || !productsResponse.ok) return;
+  savedBrands = (await brandsResponse.json()).brand_passports;
+  savedProducts = (await productsResponse.json()).products;
+  replaceOptions(form.elements.reuseBrand, 'Create a new Brand Passport', savedBrands, brand => brand.name);
+  renderProductOptions();
+}
+
+form.elements.reuseBrand.addEventListener('change', event => {
+  const brand = savedBrands.find(item => item.id === event.target.value);
+  renderProductOptions(event.target.value);
+  if (!brand) return;
+  form.elements.brandName.value = brand.name;
+  form.elements.brandVoice.value = brand.voice;
+  setLines('visualRules', brand.visual_rules);
+  setLines('forbiddenContent', brand.forbidden_content);
+  document.getElementById('reuseTruthStatus').textContent = `Reusing Brand Passport “${brand.name}”. Changes in this form do not silently rewrite the saved record.`;
+});
+
+form.elements.reuseProduct.addEventListener('change', event => {
+  const product = savedProducts.find(item => item.id === event.target.value);
+  if (!product) return;
+  if (form.elements.reuseBrand.value !== product.brand_id) {
+    form.elements.reuseBrand.value = product.brand_id;
+    form.elements.reuseBrand.dispatchEvent(new Event('change'));
+    form.elements.reuseProduct.value = product.id;
+  }
+  form.elements.productName.value = product.name;
+  form.elements.sku.value = product.sku;
+  setLines('facts', product.facts);
+  setLines('claims', product.approved_claims);
+  setLines('disclosures', product.required_disclosures);
+  form.elements.packWaived.checked = product.pack_asset_waived;
+  form.elements.packWaiverReason.value = product.pack_asset_waiver_reason || '';
+  form.elements.packWaived.dispatchEvent(new Event('change'));
+  document.getElementById('reuseTruthStatus').textContent = product.has_pack_asset
+    ? `Reusing ${product.name} (${product.sku}) with its validated pack asset and SHA-256 provenance.`
+    : `Reusing ${product.name} (${product.sku}) under its saved concept-only waiver.`;
+});
+
 document.getElementById('apiKey').value = localStorage.getItem('creative_studio_api_key') || '';
 form.elements.packWaived.addEventListener('change', event => {
   document.getElementById('waiverReasonLabel').hidden = !event.target.checked;
@@ -120,3 +190,4 @@ form.elements.packAsset.addEventListener('change', event => {
   }
 });
 loadCampaigns();
+loadTruthLibrary();

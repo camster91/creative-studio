@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, render_template, request
 
 
 def create_blueprint(*, current_session: Callable, create_campaign: Callable, list_campaigns: Callable,
+                     list_brand_passports: Callable, list_product_truth: Callable,
                      get_campaign: Callable, campaign_readiness: Callable, build_generation_plan: Callable,
                      mark_campaign_started: Callable, attach_pack_asset: Callable,
                      save_upload: Callable, rate_limited: Callable) -> Blueprint:
@@ -32,8 +33,28 @@ def create_blueprint(*, current_session: Callable, create_campaign: Callable, li
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             return jsonify({"error": "JSON object required"}), 400
-        campaign = create_campaign(session["user_id"], payload)
+        try:
+            campaign = create_campaign(session["user_id"], payload)
+        except LookupError:
+            return jsonify({"error": "Reusable product truth not found"}), 404
         return jsonify({**campaign, "readiness": campaign_readiness(campaign)}), 201
+
+    @blueprint.get("/api/brand-passports")
+    @rate_limited
+    def brands():
+        session, error = signed_in()
+        if error:
+            return error
+        return jsonify({"brand_passports": list_brand_passports(session["user_id"])})
+
+    @blueprint.get("/api/product-truth")
+    @rate_limited
+    def products():
+        session, error = signed_in()
+        if error:
+            return error
+        brand_id = request.args.get("brand_id", "").strip()[:64] or None
+        return jsonify({"products": list_product_truth(session["user_id"], brand_id)})
 
     @blueprint.get("/api/campaigns")
     @rate_limited

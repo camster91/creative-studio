@@ -32,6 +32,9 @@ The dated market and technical evidence behind this direction lives in
   provenance, an explicit concept-only waiver, and bounded deterministic
   composite execution. It is not production until its exact SHA is approved,
   merged, deployed, and verified.
+- A stacked candidate adds owner-scoped Brand Passport and Product Truth
+  libraries so a new work order can reuse approved inputs without duplicating
+  or silently rewriting them. It is not merged or deployed.
 - Gemini remains the only production generation provider. OpenAI support is
   researched but not implemented or evaluated.
 - Deployment is operator-managed. Repository checks do not prove that the
@@ -58,7 +61,7 @@ Acceptance criteria:
 - [x] Compile only verified facts, approved claims, disclosures, and brand rules
   into a provider-independent generation request.
 - [x] Run the approved request through the existing durable generation path.
-- [ ] Reuse existing Brand Passports and Product Truth records across campaigns.
+- [x] Reuse existing Brand Passports and Product Truth records across campaigns.
 - [x] Attach an exact product pack asset and default CPG campaigns to the
   deterministic composite path rather than text-only packaging generation.
 - [ ] Create channel recipes that fan one work order into exact format variants.
@@ -74,7 +77,8 @@ proposed until measured with target customers.
 
 ### P0 — Product truth and pack fidelity
 
-- Make Brand Passport and SKU records independently editable and reusable.
+- Reuse Brand Passport and SKU records without silent rewrites. Candidate
+  implemented; independent editing and audited change history remain pending.
 - Require or explicitly waive a product pack asset before Go. Candidate
   implemented; production release remains gated.
 - Measure and improve alpha edges, background cleanup, scale, contact shadow,
