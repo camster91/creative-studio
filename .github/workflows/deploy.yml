@@ -197,10 +197,14 @@ jobs:
             docker stop photogen-stage 2>/dev/null || true
             docker rm photogen-stage 2>/dev/null || true
 
+            # The image runs as appuser (uid/gid 1000). Migrate legacy
+            # root-owned bind mounts before attaching them.
+            install -d -o 1000 -g 1000 /root/photogen-stage-data /root/photogen-stage-outputs
+            chown -R 1000:1000 /root/photogen-stage-data /root/photogen-stage-outputs
+
             # Start new staging container
             docker run -d \
               --name photogen-stage \
-              --network coolify \
               --restart unless-stopped \
               -p 5174:5173 \
               -v /root/photogen-stage-data:/app/data \
@@ -254,6 +258,11 @@ jobs:
             # Stop and remove current prod container
             docker stop photogen 2>/dev/null || true
             docker rm photogen 2>/dev/null || true
+
+            # The image runs as appuser (uid/gid 1000). Migrate legacy
+            # root-owned bind mounts after stopping the old writer.
+            install -d -o 1000 -g 1000 /root/photogen-data /root/photogen-outputs
+            chown -R 1000:1000 /root/photogen-data /root/photogen-outputs
 
             # Start new prod container
             docker run -d \
