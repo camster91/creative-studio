@@ -38,6 +38,9 @@ def create_blueprint(
     current_version_node: Callable = lambda *_args: None,
     estimate_cost: Callable = lambda _tier: 0,
     record_provider_results: Callable = lambda *_args, **_kwargs: None,
+    resolve_campaign_pack: Callable = lambda *_args: None,
+    record_campaign_qc: Callable = lambda *_args: None,
+    get_campaign: Callable = lambda *_args: None,
 ) -> Blueprint:
     blueprint = Blueprint("delivery_routes", __name__)
 
@@ -91,8 +94,17 @@ def create_blueprint(
     @blueprint.post("/api/composite")
     @rate_limited
     def composite():
-        if "product" not in request.files:
-            return jsonify({"error": "Product image required"}), 400
+        account = current_session()
+        campaign_id = request.form.get("campaign_id", "").strip()
+        product = None
+        if campaign_id:
+            if not account:
+                return jsonify({"error": "Sign in required"}), 401
+            product = resolve_campaign_pack(campaign_id, account["user_id"])
+            if not product:
+                return jsonify({"error": "Campaign pack asset not found"}), 404
+        elif "product" not in request.files:
+            return jsonify({"error": "Product image or campaign pack required"}), 400
         prompt = request.form.get("prompt", "").strip()
         if not prompt:
             return jsonify({"error": "Prompt required"}), 400
@@ -103,13 +115,18 @@ def create_blueprint(
         if error is not None:
             return error
         tier = request.form.get("tier", "balanced")
-        limit_error = enforce_daily_limit(1, tier)
+        try:
+            variations = min(8, max(1, int(request.form.get("variations", "1"))))
+        except ValueError:
+            return jsonify({"error": "Variations must be an integer from 1 to 8"}), 400
+        limit_error = enforce_daily_limit(variations, tier)
         if limit_error is not None:
             return limit_error
-        try:
-            product = save_upload(request.files["product"], "product")
-        except ValueError as error:
-            return jsonify({"error": str(error)}), 400
+        if product is None:
+            try:
+                product = save_upload(request.files["product"], "product")
+            except ValueError as error:
+                return jsonify({"error": str(error)}), 400
         aspect = request.form.get("aspect_ratio", "16:9")
         session_id = request.form.get("session_id", new_session_id())
         owner_id = current_actor_id()
@@ -118,7 +135,9 @@ def create_blueprint(
         if not validate_version_parent(session_id, owner_id, parent_node_id):
             return jsonify({"error": "Parent version not found"}), 404
         call_started = time.monotonic()
-        images = run_composite(prompt, str(product), api_key, aspect)
+        images = []
+        for index in range(variations):
+            images.extend(run_composite(prompt, str(product), api_key, aspect, tier=tier, name_suffix=f"{index + 1}-{new_session_id()[:6]}"))
         record_provider_results(
             owner_id, session_id, images, estimated_cost_each=estimate_cost(tier),
             latency_ms=(time.monotonic() - call_started) * 1000,
@@ -136,6 +155,7 @@ def create_blueprint(
                     "model": image.get("model", ""),
                     "ratio": image.get("ratio", aspect),
                     "note": image.get("name", ""),
+                    "composite_manifest": image.get("composite_manifest"),
                     "parent_node_id": parent_node_id,
                 },
                 owner_id,
@@ -223,12 +243,20 @@ def create_blueprint(
     @blueprint.post("/api/qc")
     @rate_limited
     def qc():
+        data = request.get_json(silent=True) or request.form
+        campaign_id = str(data.get("campaign_id") or "").strip()
+        account = current_session() if campaign_id else None
+        if campaign_id and not account:
+            return jsonify({"error": "Sign in required"}), 401
+        if campaign_id and not get_campaign(campaign_id, account["user_id"]):
+            return jsonify({"error": "Campaign not found"}), 404
         api_key, error, _used_trial_credit = require_api_key()
         if error is not None:
             return error
-        data = request.json or request.form
         image_url = data.get("image_url")
         if image_url and image_url.startswith("/image/"):
+            if campaign_id and image_url[len("/image/"):] not in owned_asset_paths(account["user_id"]):
+                return jsonify({"error": "Image not found"}), 404
             image = safe_output_path(image_url[len("/image/") :])
             if not image:
                 return jsonify(
@@ -252,8 +280,14 @@ def create_blueprint(
             estimated_cost_each=result.get("estimated_cost_usd") or 0,
             latency_ms=(time.monotonic() - call_started) * 1000,
         )
+        exceptions = []
+        if campaign_id:
+            exceptions = record_campaign_qc(campaign_id, account["user_id"], result, image_url)
+            if exceptions is None:
+                return jsonify({"error": "Campaign not found"}), 404
         return jsonify(
-            {"message": f"QC Score: {result['quality_score']}/10", "qc": result}
+            {"message": f"QC Score: {result['quality_score']}/10", "qc": result,
+             "exceptions": exceptions}
         )
 
     @blueprint.post("/api/figma")

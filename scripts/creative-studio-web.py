@@ -40,12 +40,14 @@ from creative_studio_app.costs import (
 from creative_studio_app import auth as _auth_service
 from creative_studio_app import projects as _project_service
 from creative_studio_app import campaigns as _campaign_service
+from creative_studio_app import campaign_delivery as _campaign_delivery
 from creative_studio_app import generation as _generation_service
 from creative_studio_app import delivery as _delivery_service
 from creative_studio_app import iterations as _iteration_service
 from creative_studio_app import chat as _chat_service
 from creative_studio_app import billing as _billing_service
 from creative_studio_app.uploads import save_image_upload as _persist_image_upload
+from creative_studio_app.compositing import validate_foreground_file as _validate_foreground_file
 from creative_studio_app.observability import install_request_metrics
 from creative_studio_app.seo_routes import create_blueprint as _create_seo_blueprint
 from creative_studio_app.informational_routes import (
@@ -561,7 +563,11 @@ def add_entry(session_id: str, entry: dict, owner_id: str | None = None):
                 model=entry.get("model") or "",
                 cost=entry.get("cost") or 0,
                 status="completed" if entry.get("image_url") else "partial",
-                metadata={"note": str(entry.get("note") or "")[:200]},
+                metadata={
+                    "note": str(entry.get("note") or "")[:200],
+                    **({"composite_manifest": entry["composite_manifest"]}
+                       if isinstance(entry.get("composite_manifest"), dict) else {}),
+                },
             )
             result["node_id"] = node["id"]
     _with_json_lock(_do)
@@ -985,7 +991,7 @@ def _save_upload(upload, purpose: str) -> Path:
     owner_id = _current_actor_id()
     if not owner_id:
         raise ValueError("Sign in or provide an API key before uploading")
-    return _persist_image_upload(
+    destination = _persist_image_upload(
         upload,
         DATA_DIR / "uploads",
         purpose=purpose,
@@ -993,8 +999,19 @@ def _save_upload(upload, purpose: str) -> Path:
         max_bytes=int(os.environ.get("CREATIVE_MAX_UPLOAD_BYTES", str(16 * 1024 * 1024))),
         max_dimension=int(os.environ.get("CREATIVE_MAX_IMAGE_DIMENSION", "12000")),
         max_pixels=int(os.environ.get("CREATIVE_MAX_IMAGE_PIXELS", "40000000")),
-        retention_days=int(os.environ.get("CREATIVE_UPLOAD_RETENTION_DAYS", "30")),
+        retention_days=int(os.environ.get(
+            "CREATIVE_PACK_RETENTION_DAYS" if purpose == "campaign-pack" else "CREATIVE_UPLOAD_RETENTION_DAYS",
+            "3650" if purpose == "campaign-pack" else "30",
+        )),
     )
+    if purpose == "campaign-pack":
+        try:
+            _validate_foreground_file(destination)
+        except ValueError:
+            destination.unlink(missing_ok=True)
+            destination.with_suffix(".meta.json").unlink(missing_ok=True)
+            raise
+    return destination
 
 
 def _deliver_magic_link(email: str, token: str) -> bool:
@@ -1140,12 +1157,136 @@ def _list_campaigns(user_id: str) -> list:
     return _campaign_service.list_for_user(AUTH_DB, user_id)
 
 
+def _list_brand_passports(user_id: str) -> list:
+    return _campaign_service.list_brand_passports(AUTH_DB, user_id)
+
+
+def _list_product_truth(user_id: str, brand_id: str | None = None) -> list:
+    return _campaign_service.list_product_truth(AUTH_DB, user_id, brand_id)
+
+
+def _get_product_truth(product_id: str, user_id: str) -> dict | None:
+    return _campaign_service.get_product_truth(AUTH_DB, product_id, user_id)
+
+
+def _create_product_claim(product_id: str, user_id: str, payload: dict) -> dict | None:
+    return _campaign_service.create_claim(AUTH_DB, product_id, user_id, payload)
+
+
+def _list_product_claims(product_id: str, user_id: str) -> list:
+    return _campaign_service.list_claims(AUTH_DB, product_id, user_id)
+
+
+def _retire_product_claim(claim_id: str, product_id: str, user_id: str,
+                          reason: str) -> dict | None:
+    return _campaign_service.retire_claim(AUTH_DB, claim_id, product_id, user_id, reason)
+
+
 def _get_campaign(campaign_id: str, user_id: str) -> dict | None:
     return _campaign_service.get(AUTH_DB, campaign_id, user_id)
 
 
 def _mark_campaign_started(campaign_id: str, user_id: str, session_id: str | None = None) -> None:
     _campaign_service.mark_started(AUTH_DB, campaign_id, user_id, session_id)
+
+
+def _build_campaign_bundle(campaign: dict, sources: list) -> tuple[Path, dict]:
+    return _campaign_delivery.build_bundle(
+        campaign, sources, DATA_DIR / "campaign-bundles",
+        max_bundle_bytes=int(os.environ.get("CREATIVE_MAX_CAMPAIGN_BUNDLE_BYTES", str(256 * 1024 * 1024))),
+    )
+
+
+def _record_campaign_bundle(campaign_id: str, user_id: str, manifest: dict,
+                            bundle_path: Path, session_id: str | None = None) -> dict | None:
+    root = (DATA_DIR / "campaign-bundles").resolve()
+    relative = str(bundle_path.resolve().relative_to(root))
+    return _campaign_service.record_bundle(
+        AUTH_DB, campaign_id, user_id, manifest, relative, session_id,
+    )
+
+
+def _list_campaign_bundles(campaign_id: str, user_id: str) -> list:
+    return _campaign_service.list_bundles(AUTH_DB, campaign_id, user_id)
+
+
+def _create_campaign_exception(campaign_id: str, user_id: str, **fields) -> dict | None:
+    return _campaign_service.create_exception(AUTH_DB, campaign_id, user_id, **fields)
+
+
+def _list_campaign_exceptions(campaign_id: str, user_id: str) -> list:
+    return _campaign_service.list_exceptions(AUTH_DB, campaign_id, user_id)
+
+
+def _resolve_campaign_exception(exception_id: str, campaign_id: str, user_id: str,
+                                **resolution) -> dict | None:
+    return _campaign_service.resolve_exception(
+        AUTH_DB, exception_id, campaign_id, user_id, **resolution,
+    )
+
+
+def _campaign_exception_gate(campaign_id: str, user_id: str, image_urls: list[str]) -> dict | None:
+    return _campaign_service.bundle_exception_gate(AUTH_DB, campaign_id, user_id, image_urls)
+
+
+def _record_campaign_qc(campaign_id: str, user_id: str, assessment: dict,
+                        asset_url: str | None = None) -> list | None:
+    return _campaign_service.record_qc_exceptions(
+        AUTH_DB, campaign_id, user_id, assessment, asset_url,
+    )
+
+
+def _record_campaign_preflight(campaign_id: str, user_id: str, campaign: dict,
+                               sources: list) -> list:
+    recorded = []
+    for finding in _campaign_delivery.preflight_findings(campaign, sources):
+        item = _campaign_service.create_exception(
+            AUTH_DB, campaign_id, user_id, source="channel", **finding,
+        )
+        if item:
+            recorded.append(item)
+    return recorded
+
+
+def _get_campaign_bundle(bundle_id: str, campaign_id: str, user_id: str) -> dict | None:
+    return _campaign_service.get_bundle(AUTH_DB, bundle_id, campaign_id, user_id)
+
+
+def _campaign_bundle_path(bundle: dict) -> Path | None:
+    root = (DATA_DIR / "campaign-bundles").resolve()
+    try:
+        path = (root / bundle["zip_relpath"]).resolve()
+        path.relative_to(root)
+    except (KeyError, ValueError, OSError):
+        return None
+    return path if path.is_file() and not path.is_symlink() else None
+
+
+def _attach_campaign_pack(campaign_id: str, user_id: str, asset_name: str, sha256: str) -> dict | None:
+    return _campaign_service.attach_pack_asset(AUTH_DB, campaign_id, user_id, asset_name, sha256)
+
+
+def _resolve_campaign_pack(campaign_id: str, user_id: str) -> Path | None:
+    stored = _campaign_service.internal_pack_asset(AUTH_DB, campaign_id, user_id)
+    if not stored:
+        return None
+    asset_name, expected_sha256 = stored
+    if not asset_name or Path(asset_name).name != asset_name:
+        return None
+    upload_dir = (DATA_DIR / "uploads").resolve()
+    asset = (upload_dir / asset_name).resolve()
+    try:
+        asset.relative_to(upload_dir)
+        metadata = load_json(asset.with_suffix(".meta.json"))
+    except (ValueError, OSError):
+        return None
+    if (not asset.is_file() or asset.is_symlink()
+            or metadata.get("owner_id") != f"user:{user_id}"
+            or metadata.get("purpose") != "campaign-pack"
+            or metadata.get("stored_name") != asset_name
+            or hashlib.sha256(asset.read_bytes()).hexdigest() != expected_sha256):
+        return None
+    return asset
 
 
 
@@ -1601,6 +1742,9 @@ app.register_blueprint(
         current_version_node=_current_version_node,
         estimate_cost=cost_for_tier,
         record_provider_results=_record_provider_results,
+        resolve_campaign_pack=_resolve_campaign_pack,
+        record_campaign_qc=_record_campaign_qc,
+        get_campaign=_get_campaign,
     )
 )
 
@@ -1747,10 +1891,30 @@ app.register_blueprint(
         current_session=_current_session,
         create_campaign=_create_campaign,
         list_campaigns=_list_campaigns,
+        list_brand_passports=_list_brand_passports,
+        list_product_truth=_list_product_truth,
+        get_product_truth=_get_product_truth,
+        create_product_claim=_create_product_claim,
+        list_product_claims=_list_product_claims,
+        retire_product_claim=_retire_product_claim,
         get_campaign=_get_campaign,
         campaign_readiness=_campaign_service.readiness,
         build_generation_plan=_campaign_service.generation_plan,
         mark_campaign_started=_mark_campaign_started,
+        attach_pack_asset=_attach_campaign_pack,
+        save_upload=_save_upload,
+        owned_asset_paths=_owned_asset_paths,
+        safe_output_path=_safe_output_relpath,
+        build_campaign_bundle=_build_campaign_bundle,
+        record_campaign_bundle=_record_campaign_bundle,
+        list_campaign_bundles=_list_campaign_bundles,
+        get_campaign_bundle=_get_campaign_bundle,
+        campaign_bundle_path=_campaign_bundle_path,
+        create_campaign_exception=_create_campaign_exception,
+        list_campaign_exceptions=_list_campaign_exceptions,
+        resolve_campaign_exception=_resolve_campaign_exception,
+        campaign_exception_gate=_campaign_exception_gate,
+        record_campaign_preflight=_record_campaign_preflight,
         rate_limited=rate_limited,
     )
 )

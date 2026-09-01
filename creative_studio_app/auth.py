@@ -79,11 +79,37 @@ def init_schema(path: Path) -> None:
             facts_json TEXT NOT NULL DEFAULT '[]',
             approved_claims_json TEXT NOT NULL DEFAULT '[]',
             required_disclosures_json TEXT NOT NULL DEFAULT '[]',
+            pack_asset_name TEXT,
+            pack_asset_sha256 TEXT,
+            pack_asset_waived INTEGER NOT NULL DEFAULT 0,
+            pack_asset_waiver_reason TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_product_truth_user
             ON product_truth(user_id);
+        CREATE TABLE IF NOT EXISTS approved_claims (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            product_id TEXT NOT NULL REFERENCES product_truth(id) ON DELETE CASCADE,
+            fingerprint TEXT NOT NULL,
+            exact_text TEXT NOT NULL,
+            claim_type TEXT NOT NULL,
+            markets_json TEXT NOT NULL DEFAULT '[]',
+            channels_json TEXT NOT NULL DEFAULT '[]',
+            substantiation_url TEXT NOT NULL,
+            required_disclosure TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'approved',
+            approved_by TEXT NOT NULL,
+            approval_reason TEXT NOT NULL,
+            expires_at TEXT,
+            created_at TEXT NOT NULL,
+            retired_at TEXT,
+            retirement_reason TEXT,
+            UNIQUE(user_id,product_id,fingerprint)
+        );
+        CREATE INDEX IF NOT EXISTS idx_approved_claims_owner
+            ON approved_claims(user_id,product_id,status,created_at);
         CREATE TABLE IF NOT EXISTS campaign_work_orders (
             id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -92,6 +118,7 @@ def init_schema(path: Path) -> None:
             name TEXT NOT NULL,
             objective TEXT NOT NULL DEFAULT '',
             audience TEXT NOT NULL DEFAULT '',
+            market TEXT NOT NULL DEFAULT 'US',
             offer TEXT NOT NULL DEFAULT '',
             channels_json TEXT NOT NULL DEFAULT '[]',
             creative_direction TEXT NOT NULL DEFAULT '',
@@ -105,6 +132,40 @@ def init_schema(path: Path) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_campaign_work_orders_user
             ON campaign_work_orders(user_id);
+        CREATE TABLE IF NOT EXISTS campaign_bundles (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            campaign_id TEXT NOT NULL REFERENCES campaign_work_orders(id) ON DELETE CASCADE,
+            zip_relpath TEXT NOT NULL,
+            manifest_json TEXT NOT NULL,
+            source_session_id TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(user_id,campaign_id,id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_campaign_bundles_owner
+            ON campaign_bundles(user_id,campaign_id,created_at);
+        CREATE TABLE IF NOT EXISTS campaign_exceptions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            campaign_id TEXT NOT NULL REFERENCES campaign_work_orders(id) ON DELETE CASCADE,
+            fingerprint TEXT NOT NULL,
+            source TEXT NOT NULL,
+            criterion TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            evidence TEXT NOT NULL,
+            asset_url TEXT,
+            model TEXT,
+            rubric_version TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            resolution_reason TEXT,
+            resolution_asset_url TEXT,
+            resolved_by TEXT,
+            created_at TEXT NOT NULL,
+            resolved_at TEXT,
+            UNIQUE(user_id,campaign_id,fingerprint)
+        );
+        CREATE INDEX IF NOT EXISTS idx_campaign_exceptions_owner
+            ON campaign_exceptions(user_id,campaign_id,status,created_at);
         """)
         existing = {row[1] for row in database.execute("PRAGMA table_info(users)")}
         for column, declaration in [
@@ -119,6 +180,18 @@ def init_schema(path: Path) -> None:
         ]:
             if column not in existing:
                 database.execute(f"ALTER TABLE users ADD COLUMN {column} {declaration}")
+        product_columns = {row[1] for row in database.execute("PRAGMA table_info(product_truth)")}
+        for column, declaration in [
+            ("pack_asset_name", "TEXT"),
+            ("pack_asset_sha256", "TEXT"),
+            ("pack_asset_waived", "INTEGER NOT NULL DEFAULT 0"),
+            ("pack_asset_waiver_reason", "TEXT NOT NULL DEFAULT ''"),
+        ]:
+            if column not in product_columns:
+                database.execute(f"ALTER TABLE product_truth ADD COLUMN {column} {declaration}")
+        campaign_columns = {row[1] for row in database.execute("PRAGMA table_info(campaign_work_orders)")}
+        if "market" not in campaign_columns:
+            database.execute("ALTER TABLE campaign_work_orders ADD COLUMN market TEXT NOT NULL DEFAULT 'US'")
         database.commit()
 
 

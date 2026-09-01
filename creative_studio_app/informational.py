@@ -67,6 +67,8 @@ def render_docs() -> str:
         ("POST", "/api/composite", "Place an uploaded product in a generated scene."),
         ("POST", "/api/export", "Export an output using platform presets."),
         ("POST", "/api/qc", "Evaluate an output against the visual QC rubric."),
+        ("POST", "/api/campaigns/<id>/bundles", "Create private exact channel deliverables."),
+        ("GET", "/api/campaigns/<id>/bundles/<bundle_id>/download", "Download an owner-scoped campaign ZIP."),
         ("GET", "/image/<path>", "Serve an immutable generated image."),
     ]
     rows = "".join(

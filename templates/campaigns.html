@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#f4f1ea">
   <title>Campaign Factory · Creative Studio</title>
   <link rel="stylesheet" href="/static/campaigns.css">
+  <link rel="stylesheet" href="/static/campaigns-fidelity.css">
   <script src="/static/campaigns.js" defer></script>
 </head>
 <body>
@@ -25,6 +26,7 @@
         <p class="signin-notice" id="signinNotice"><strong>Sign in to save and run campaigns.</strong> You can review the work order first, then <a href="/signup">use a password-free email link</a>.</p>
         <section class="card">
           <div class="step"><span>1</span><div><h2>Brand Passport</h2><p>The rules every output must follow.</p></div></div>
+          <label>Reuse saved Brand Passport<select name="reuseBrand" id="reuseBrand"><option value="">Create a new Brand Passport</option></select></label>
           <label>Brand name<input name="brandName" required maxlength="200" placeholder="Northstar Nutrition"></label>
           <label>Brand voice<textarea name="brandVoice" rows="2" placeholder="Clear, energetic, science-aware — never clinical"></textarea></label>
           <label>Visual rules <small>one per line</small><textarea name="visualRules" required rows="3" placeholder="Use cobalt blue as the anchor color&#10;Keep packaging label unobstructed"></textarea></label>
@@ -33,15 +35,30 @@
 
         <section class="card">
           <div class="step"><span>2</span><div><h2>Product Truth</h2><p>Only verified facts and approved claims enter the plan.</p></div></div>
+          <label>Reuse saved Product Truth<select name="reuseProduct" id="reuseProduct"><option value="">Create new Product Truth</option></select></label>
+          <p class="pack-note" id="reuseTruthStatus">Saved records remain owner-scoped and preserve their approved pack provenance.</p>
           <div class="grid2"><label>Product name<input name="productName" required maxlength="200" placeholder="Daily Hydration Mix"></label><label>SKU<input name="sku" required maxlength="120" placeholder="HYD-BLU-12"></label></div>
           <label>Verified facts <small>one per line</small><textarea name="facts" required rows="3" placeholder="12 single-serve sachets&#10;Blue raspberry flavour"></textarea></label>
           <label>Approved claims <small>leave empty to prohibit claims</small><textarea name="claims" rows="2" placeholder="Contains 6 essential electrolytes"></textarea></label>
+          <div class="claim-evidence">
+            <div class="grid2"><label>Claim class<select name="claimType"><option value="marketing">Marketing</option><option value="nutrient">Nutrient content</option><option value="structure_function">Structure/function</option><option value="health">Health</option><option value="environmental">Environmental</option><option value="comparative">Comparative</option></select></label><label>Evidence expiry <small>optional</small><input name="claimExpiry" type="date"></label></div>
+            <label>Claim substantiation <small>required when claims are present</small><input name="claimSource" type="url" placeholder="https://approved-evidence.example/report"></label>
+            <label>Accountable approval reason <small>required when claims are present</small><textarea name="claimApprovalReason" rows="2" maxlength="1000" placeholder="Reviewed against the approved substantiation package for this SKU and market."></textarea></label>
+            <label>Claim-specific disclosure <small>optional</small><input name="claimDisclosure" maxlength="500" placeholder="Required qualifying language shown with the claim"></label>
+          </div>
           <label>Required disclosures <small>one per line</small><textarea name="disclosures" rows="2" placeholder="Always read and follow the label"></textarea></label>
+          <label>Exact pack asset <small>PNG, JPEG, or WebP · the real pack is placed after environment generation</small><input name="packAsset" type="file" accept="image/png,image/jpeg,image/webp"></label>
+          <div class="concept-waiver">
+            <label><input name="packWaived" type="checkbox"> Proceed with a concept-only image without an exact pack asset</label>
+            <label id="waiverReasonLabel" hidden>Why is the exact pack asset unavailable?<textarea name="packWaiverReason" rows="2" maxlength="500" placeholder="Packaging photography is pending; use this only for early art-direction review."></textarea></label>
+          </div>
+          <p class="pack-note">Pack-backed campaigns preserve the validated upload and record its SHA-256. Concept-only outputs must not be treated as packaging-accurate.</p>
         </section>
 
         <section class="card">
           <div class="step"><span>3</span><div><h2>Campaign Work Order</h2><p>A bounded job, not an open-ended chat.</p></div></div>
           <label>Campaign name<input name="campaignName" required maxlength="200" placeholder="Summer retail launch"></label>
+          <label>Market<select name="market"><option value="US">United States</option><option value="CA">Canada</option></select></label>
           <div class="grid2"><label>Objective<input name="objective" required placeholder="Drive trial at retail"></label><label>Audience<input name="audience" required placeholder="Active adults, 25–44"></label></div>
           <label>Offer <small>optional</small><input name="offer" placeholder="Introductory 15% off"></label>
           <fieldset><legend>Channels</legend><div class="choices" id="channels">
@@ -62,6 +79,7 @@
           <button id="goBtn" class="go" type="button" disabled>Go — generate campaign</button>
           <p id="goStatus" class="status" role="status" aria-live="polite"></p>
         </section>
+        <section class="card saved"><p class="eyebrow">EXCEPTION INBOX</p><div id="exceptionList"><p>Select a campaign to review QC, claims, and channel findings.</p></div></section>
         <section class="card saved"><p class="eyebrow">RECENT WORK ORDERS</p><div id="campaignList"><p>No campaigns yet.</p></div></section>
       </aside>
     </div>
