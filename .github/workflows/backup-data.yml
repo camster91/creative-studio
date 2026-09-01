@@ -1,42 +1,143 @@
 name: Backup photogen data
+
 on:
   schedule:
-    # 03:00 UTC daily (off-peak for most users)
     - cron: '0 3 * * *'
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-photogen-production-v2
+  cancel-in-progress: false
 
 jobs:
   backup:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - name: Snapshot data + outputs, retain 7 days
-        uses: appleboy/ssh-action@v1
+      - uses: actions/checkout@v7
+
+      - name: Install age encryption
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes age
+
+      - name: Configure pinned SSH access
+        id: ssh
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.COOLIFY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          KEY="$RUNNER_TEMP/ashbi-backup-key"
+          KNOWN_HOSTS="$RUNNER_TEMP/ashbi-known-hosts"
+          install -m 600 /dev/null "$KEY"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$KEY"
+          install -m 600 .github/ashbi-known-hosts "$KNOWN_HOSTS"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+          echo "known_hosts=$KNOWN_HOSTS" >> "$GITHUB_OUTPUT"
+
+      - name: Create consistent production snapshot
+        id: snapshot
+        env:
+          BACKUP_HOST: ${{ secrets.COOLIFY_HOST }}
+          BACKUP_USER: ${{ secrets.COOLIFY_USER }}
+          SSH_KEY: ${{ steps.ssh.outputs.key }}
+          SSH_KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
+        run: |
+          set -euo pipefail
+          RUN_KEY="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          case "$RUN_KEY" in (*[!0-9-]*) echo "Invalid run key"; exit 1;; esac
+          REMOTE_ROOT="/root/backups/creative-studio"
+          REMOTE_TOOL="$REMOTE_ROOT/tool-$RUN_KEY"
+          SNAPSHOT_NAME="snapshot-$RUN_KEY"
+          REMOTE_SNAPSHOT="$REMOTE_ROOT/$SNAPSHOT_NAME"
+          ARCHIVE_NAME="photogen-$(date -u +%Y%m%dT%H%M%SZ)-$RUN_KEY.tar.gz"
+          REMOTE_ARCHIVE="$REMOTE_ROOT/$ARCHIVE_NAME"
+          SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS" -o ConnectTimeout=15 \
+            -o ConnectionAttempts=3 -o ServerAliveInterval=10 -o ServerAliveCountMax=3)
+          TARGET="$BACKUP_USER@$BACKUP_HOST"
+
+          # One SSH stream sends the reviewed snapshot code, creates the
+          # consistent snapshot, and returns its archive. This avoids relying
+          # on SFTP and minimizes handshakes on an intermittently reachable VPS.
+          tar -cf - creative_studio_app/backups.py scripts/backup-photogen.py |
+            "${SSH[@]}" "$TARGET" \
+              "set -e; \
+               install -d -m 700 '$REMOTE_ROOT' '$REMOTE_TOOL'; \
+               tar -C '$REMOTE_TOOL' -xf -; \
+               PYTHONPATH='$REMOTE_TOOL' python3 '$REMOTE_TOOL/scripts/backup-photogen.py' create \
+                 --data-dir /root/photogen-data --outputs-dir /root/photogen-outputs \
+                 --destination '$REMOTE_SNAPSHOT' >&2; \
+               tar -C '$REMOTE_ROOT' -czf '$REMOTE_ARCHIVE' '$SNAPSHOT_NAME'; \
+               chmod 600 '$REMOTE_ARCHIVE'; \
+               cat '$REMOTE_ARCHIVE'" \
+              > "$RUNNER_TEMP/photogen-backup.tar.gz"
+
+          echo "remote_root=$REMOTE_ROOT" >> "$GITHUB_OUTPUT"
+          echo "remote_tool=$REMOTE_TOOL" >> "$GITHUB_OUTPUT"
+          echo "remote_snapshot=$REMOTE_SNAPSHOT" >> "$GITHUB_OUTPUT"
+          echo "snapshot_name=$SNAPSHOT_NAME" >> "$GITHUB_OUTPUT"
+          echo "remote_archive=$REMOTE_ARCHIVE" >> "$GITHUB_OUTPUT"
+          echo "archive_name=$ARCHIVE_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Encrypt backup before off-host storage
+        run: |
+          set -euo pipefail
+          age --recipients-file .github/backup-recipients.txt \
+            --output "$RUNNER_TEMP/${{ steps.snapshot.outputs.archive_name }}.age" \
+            "$RUNNER_TEMP/photogen-backup.tar.gz"
+          rm -f "$RUNNER_TEMP/photogen-backup.tar.gz"
+
+      - name: Isolated decrypt and restore verification
+        run: |
+          set -euo pipefail
+          RESTORE_ROOT="$RUNNER_TEMP/photogen-restore"
+          mkdir -p "$RESTORE_ROOT"
+          RESTORE_STARTED=$SECONDS
+          age --decrypt --identity "${{ steps.ssh.outputs.key }}" \
+            "$RUNNER_TEMP/${{ steps.snapshot.outputs.archive_name }}.age" |
+            tar -xz -C "$RESTORE_ROOT"
+          PYTHONPATH=. python scripts/backup-photogen.py verify \
+            --snapshot-dir "$RESTORE_ROOT/${{ steps.snapshot.outputs.snapshot_name }}" \
+            > "$RUNNER_TEMP/restore-verification-base.json"
+          jq --argjson seconds "$((SECONDS - RESTORE_STARTED))" \
+            '. + {restore_seconds: $seconds}' \
+            "$RUNNER_TEMP/restore-verification-base.json" |
+            tee "$RUNNER_TEMP/restore-verification.json"
+
+      - name: Store encrypted off-host backup
+        uses: actions/upload-artifact@v4
         with:
-          host: ${{ secrets.COOLIFY_HOST }}
-          username: ${{ secrets.COOLIFY_USER }}
-          key: ${{ secrets.COOLIFY_SSH_KEY }}
-          script: |
-            set -e
-            cd /root
-            # Skip if no data has accumulated yet (fresh install)
-            if [ ! -d photogen-data ] && [ ! -d photogen-outputs ]; then
-              echo "No data dirs yet — skipping backup"
-              exit 0
-            fi
-            mkdir -p backups
-            DATE=$(date +%Y%m%d)
-            OUT=backups/photogen-${DATE}.tar.gz
-            # Use pigz if available, fall back to gzip
-            if command -v pigz >/dev/null; then
-              tar --use-compress-program=pigz -cf "$OUT" \
-                photogen-data photogen-outputs
-            else
-              tar czf "$OUT" photogen-data photogen-outputs
-            fi
-            ls -lh "$OUT"
-            # Retain 7 days
-            DELETED=$(find backups/ -name 'photogen-*.tar.gz' -mtime +7 -delete -print | wc -l)
-            echo "Pruned $DELETED old backup(s)"
-            echo "--- remaining backups ---"
-            ls -lh backups/ | tail -10
+          name: photogen-backup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/${{ steps.snapshot.outputs.archive_name }}.age
+            ${{ runner.temp }}/restore-verification.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Remove transient snapshot and prune local archives
+        if: always() && steps.ssh.outputs.key != ''
+        env:
+          BACKUP_HOST: ${{ secrets.COOLIFY_HOST }}
+          BACKUP_USER: ${{ secrets.COOLIFY_USER }}
+          SSH_KEY: ${{ steps.ssh.outputs.key }}
+          SSH_KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
+        run: |
+          set -euo pipefail
+          RUN_KEY="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          case "$RUN_KEY" in (*[!0-9-]*) echo "Invalid run key"; exit 1;; esac
+          REMOTE_ROOT="/root/backups/creative-studio"
+          REMOTE_TOOL="$REMOTE_ROOT/tool-$RUN_KEY"
+          REMOTE_SNAPSHOT="$REMOTE_ROOT/snapshot-$RUN_KEY"
+          SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS" -o ConnectTimeout=15 \
+            -o ConnectionAttempts=3 -o ServerAliveInterval=10 -o ServerAliveCountMax=3)
+          TARGET="$BACKUP_USER@$BACKUP_HOST"
+          "${SSH[@]}" "$TARGET" \
+            "rm -rf -- '$REMOTE_TOOL' '$REMOTE_SNAPSHOT'; \
+             find '$REMOTE_ROOT' -maxdepth 1 -type f \
+               -name 'photogen-*.tar.gz' -mtime +7 -delete"

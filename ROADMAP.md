@@ -1,11 +1,13 @@
 # Creative Studio product roadmap
 
-Last reconciled: 2026-08-28
+Last reconciled: 2026-09-01
 
 Repository version: 4.6.0
 
-Production status: operator-managed and not inferred from repository state; verify
-`/api/whoami` and the production runbook before making a release claim.
+Production status: Campaign Factory foundation released from immutable image
+`0aa3bcaac3c469347f8c16068245a54c156aaebb` and independently verified on
+2026-09-01. Reverify `/api/whoami`, the running image, and the production
+runbook before each later release claim.
 
 ## Product charter
 
@@ -25,19 +27,23 @@ The dated market and technical evidence behind this direction lives in
 - The Flask web app supports prompt-based Gemini generation, product
   compositing, variations, refinement, version history, projects, library,
   export, advisory QC, billing, and owner-scoped persistence.
-- The first Campaign Factory slice is implemented: Brand Passport, Product
+- The first Campaign Factory slice is released: Brand Passport, Product
   Truth, Campaign Work Order, deterministic readiness, and a Go action that
   compiles approved inputs into the existing generation request.
 - Gemini remains the only production generation provider. OpenAI support is
   researched but not implemented or evaluated.
-- Deployment is operator-managed. Repository checks do not prove that the
-  current commit is released.
+- The staged deployment path builds and smoke-tests an immutable GHCR image,
+  runs it as a non-root user on staging, then promotes the same SHA to
+  production with health checks and rollback.
+- A consistent encrypted backup and isolated restore drill passed from branch
+  run `33462661827`; merging its reviewed workflow is still required before the
+  daily schedule becomes authoritative.
 - No target-customer interviews, representative AI evaluation corpus, or
   customer-validated outcome metrics are yet recorded.
 
 ## Primary objective — Campaign Factory foundation
 
-Status: **in progress**
+Status: **foundation released; product expansion in progress**
 
 Problem: the mature generator is still exposed primarily as a blank prompt and
 manual tool collection. CPG teams need reusable truth, bounded work orders,
@@ -60,13 +66,26 @@ Acceptance criteria:
 - [ ] Create channel recipes that fan one work order into exact format variants.
 - [ ] Route QC or claims failures into an exception inbox with repair/reject actions.
 - [ ] Save successful outputs back to the campaign and export a campaign bundle.
-- [ ] Verify the end-to-end journey in desktop and mobile browser tests.
+- [x] Verify the foundation journey in phone, tablet, and desktop browser tests.
 
 Measurement hypothesis: a representative user can reach a generation-ready
 work order in under five minutes with zero invented product claims. This is
 proposed until measured with target customers.
 
 ## Next priorities
+
+### P0 — Production recovery and lifecycle
+
+- [x] Validate upload type, dimensions, decoded pixels, metadata stripping, and
+  owner/expiry sidecars.
+- [x] Create SQLite-consistent snapshots with manifest hashes and path safety.
+- [x] Encrypt backups before off-host artifact storage and verify an isolated
+  restore including all copied SQLite databases.
+- [ ] Merge the verified backup workflow so its daily schedule is authoritative.
+- [ ] Schedule production upload-retention cleanup and record its first dry-run
+  and execute evidence.
+- [ ] Separate the backup recovery identity from the deploy identity and record
+  an annual recovery-key drill.
 
 ### P0 — Product truth and pack fidelity
 
@@ -123,5 +142,5 @@ proportional security/privacy review, container smoke tests, backup/rollback
 checks, and obtain explicit owner approval as defined in
 [`docs/PRODUCTION.md`](docs/PRODUCTION.md).
 
-Current release evidence and blockers are recorded in
+Current release evidence and operational follow-up are recorded in
 [`docs/releases/2026-08-28-campaign-factory-release.md`](docs/releases/2026-08-28-campaign-factory-release.md).
