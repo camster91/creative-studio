@@ -79,6 +79,8 @@ def test_page_exists(cs):
 
 def test_anonymous_api_is_rejected(cs):
     assert cs.app.test_client().post("/api/campaigns", json={}).status_code == 401
+    assert cs.app.test_client().get("/api/brand-passports").status_code == 401
+    assert cs.app.test_client().get("/api/product-truth").status_code == 401
 
 
 def test_complete_work_order_is_ready_and_builds_bounded_plan(cs):
@@ -237,6 +239,63 @@ def test_campaigns_are_owner_scoped(cs):
     campaign_id = client.post("/api/campaigns", json=complete_payload(), headers=headers(owner)).get_json()["id"]
     assert client.get(f"/api/campaigns/{campaign_id}", headers=headers(stranger)).status_code == 404
     assert client.post(f"/api/campaigns/{campaign_id}/go", headers=headers(stranger)).status_code == 404
+
+
+def test_saved_brand_and_product_truth_are_reused_without_silent_rewrites(cs):
+    client = cs.app.test_client()
+    token = login(client, "reuse@example.com")
+    first = client.post("/api/campaigns", json=complete_payload(), headers=headers(token)).get_json()
+    reused_payload = complete_payload()
+    reused_payload.update(brand_id=first["brand_id"], product_id=first["product_id"])
+    reused_payload["brand"]["name"] = "Silently rewritten brand"
+    reused_payload["product"]["sku"] = "SILENT-REWRITE"
+    reused_payload["work_order"]["name"] = "Second work order"
+    second = client.post("/api/campaigns", json=reused_payload, headers=headers(token))
+    assert second.status_code == 201
+    body = second.get_json()
+    assert body["brand_id"] == first["brand_id"]
+    assert body["product_id"] == first["product_id"]
+    assert body["brand_name"] == "Northstar Nutrition"
+    assert body["sku"] == "HYD-BLU-12"
+    assert body["name"] == "Second work order"
+
+    brands = client.get("/api/brand-passports", headers=headers(token)).get_json()["brand_passports"]
+    products = client.get("/api/product-truth", headers=headers(token)).get_json()["products"]
+    assert len(brands) == 1 and brands[0]["id"] == first["brand_id"]
+    assert len(products) == 1 and products[0]["id"] == first["product_id"]
+    assert products[0]["has_pack_asset"] is False
+
+
+def test_reuse_is_owner_scoped_and_brand_filter_does_not_leak(cs):
+    client = cs.app.test_client()
+    owner = login(client, "truth-owner@example.com")
+    stranger = login(client, "truth-stranger@example.com")
+    created = client.post("/api/campaigns", json=complete_payload(), headers=headers(owner)).get_json()
+    payload = complete_payload()
+    payload.update(brand_id=created["brand_id"], product_id=created["product_id"])
+    assert client.post("/api/campaigns", json=payload, headers=headers(stranger)).status_code == 404
+    assert client.get("/api/brand-passports", headers=headers(stranger)).get_json()["brand_passports"] == []
+    assert client.get(
+        f"/api/product-truth?brand_id={created['brand_id']}", headers=headers(stranger)
+    ).get_json()["products"] == []
+
+
+def test_brand_can_be_reused_for_a_new_sku(cs):
+    client = cs.app.test_client()
+    token = login(client, "brand-reuse@example.com")
+    first = client.post("/api/campaigns", json=complete_payload(), headers=headers(token)).get_json()
+    payload = complete_payload()
+    payload["brand_id"] = first["brand_id"]
+    payload["product"]["name"] = "Recovery Mix"
+    payload["product"]["sku"] = "REC-02"
+    second = client.post("/api/campaigns", json=payload, headers=headers(token)).get_json()
+    assert second["brand_id"] == first["brand_id"]
+    assert second["product_id"] != first["product_id"]
+    assert second["product_name"] == "Recovery Mix"
+    assert len(client.get("/api/brand-passports", headers=headers(token)).get_json()["brand_passports"]) == 1
+    assert len(client.get(
+        f"/api/product-truth?brand_id={first['brand_id']}", headers=headers(token)
+    ).get_json()["products"]) == 2
 
 
 def test_unapproved_claims_are_explicitly_prohibited(cs):

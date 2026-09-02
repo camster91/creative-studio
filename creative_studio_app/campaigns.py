@@ -42,9 +42,10 @@ def _serialize(row):
     for key in tuple(result):
         if key.endswith("_json"):
             result[key[:-5]] = _json(result.pop(key))
-    result["has_pack_asset"] = bool(result.get("pack_asset_name"))
-    result.pop("pack_asset_name", None)
-    result["pack_asset_waived"] = bool(result.get("pack_asset_waived"))
+    if "pack_asset_name" in result:
+        result["has_pack_asset"] = bool(result.pop("pack_asset_name"))
+    if "pack_asset_waived" in result:
+        result["pack_asset_waived"] = bool(result["pack_asset_waived"])
     return result
 
 
@@ -53,6 +54,8 @@ def create_bundle(path: Path, user_id: str, payload: dict) -> dict:
     brand = payload.get("brand") if isinstance(payload.get("brand"), dict) else {}
     product = payload.get("product") if isinstance(payload.get("product"), dict) else {}
     work = payload.get("work_order") if isinstance(payload.get("work_order"), dict) else {}
+    requested_brand_id = _clean(payload.get("brand_id"), 64)
+    requested_product_id = _clean(payload.get("product_id"), 64)
     brand_id, product_id, campaign_id = (secrets.token_hex(16) for _ in range(3))
     now = now_iso()
     aspect = _clean(work.get("aspect_ratio"), 16)
@@ -64,24 +67,50 @@ def create_bundle(path: Path, user_id: str, payload: dict) -> dict:
     channels = [item for item in _strings(work.get("channels"), limit=8, item_limit=32) if item in ALLOWED_CHANNELS]
     with connect(path) as database:
         database.execute("BEGIN IMMEDIATE")
-        database.execute(
-            """INSERT INTO brand_passports
-               (id,user_id,name,voice,visual_rules_json,forbidden_content_json,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (brand_id, user_id, _clean(brand.get("name"), 200), _clean(brand.get("voice"), 1000),
-             json.dumps(_strings(brand.get("visual_rules"))), json.dumps(_strings(brand.get("forbidden_content"))), now, now),
-        )
-        database.execute(
-            """INSERT INTO product_truth
-               (id,user_id,brand_id,name,sku,facts_json,approved_claims_json,required_disclosures_json,
-                pack_asset_waived,pack_asset_waiver_reason,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (product_id, user_id, brand_id, _clean(product.get("name"), 200), _clean(product.get("sku"), 120),
-             json.dumps(_strings(product.get("facts"))), json.dumps(_strings(product.get("approved_claims"))),
-             json.dumps(_strings(product.get("required_disclosures"))),
-             1 if product.get("pack_asset_waived") is True else 0,
-             _clean(product.get("pack_asset_waiver_reason"), 500), now, now),
-        )
+        if requested_product_id:
+            existing_product = database.execute(
+                """SELECT p.id,p.brand_id FROM product_truth p
+                   JOIN brand_passports b ON b.id=p.brand_id AND b.user_id=p.user_id
+                   WHERE p.id=? AND p.user_id=?""",
+                (requested_product_id, user_id),
+            ).fetchone()
+            if not existing_product:
+                database.rollback()
+                raise LookupError("Reusable Product Truth not found")
+            product_id = existing_product["id"]
+            if requested_brand_id and existing_product["brand_id"] != requested_brand_id:
+                database.rollback()
+                raise LookupError("Reusable Product Truth not found")
+            brand_id = existing_product["brand_id"]
+        elif requested_brand_id:
+            existing_brand = database.execute(
+                "SELECT id FROM brand_passports WHERE id=? AND user_id=?",
+                (requested_brand_id, user_id),
+            ).fetchone()
+            if not existing_brand:
+                database.rollback()
+                raise LookupError("Reusable Brand Passport not found")
+            brand_id = existing_brand["id"]
+        else:
+            database.execute(
+                """INSERT INTO brand_passports
+                   (id,user_id,name,voice,visual_rules_json,forbidden_content_json,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (brand_id, user_id, _clean(brand.get("name"), 200), _clean(brand.get("voice"), 1000),
+                 json.dumps(_strings(brand.get("visual_rules"))), json.dumps(_strings(brand.get("forbidden_content"))), now, now),
+            )
+        if not requested_product_id:
+            database.execute(
+                """INSERT INTO product_truth
+                   (id,user_id,brand_id,name,sku,facts_json,approved_claims_json,required_disclosures_json,
+                    pack_asset_waived,pack_asset_waiver_reason,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (product_id, user_id, brand_id, _clean(product.get("name"), 200), _clean(product.get("sku"), 120),
+                 json.dumps(_strings(product.get("facts"))), json.dumps(_strings(product.get("approved_claims"))),
+                 json.dumps(_strings(product.get("required_disclosures"))),
+                 1 if product.get("pack_asset_waived") is True else 0,
+                 _clean(product.get("pack_asset_waiver_reason"), 500), now, now),
+            )
         database.execute(
             """INSERT INTO campaign_work_orders
                (id,user_id,brand_id,product_id,name,objective,audience,offer,channels_json,creative_direction,
@@ -95,6 +124,35 @@ def create_bundle(path: Path, user_id: str, payload: dict) -> dict:
         )
         database.commit()
     return get(path, campaign_id, user_id)
+
+
+def list_brand_passports(path: Path, user_id: str) -> list[dict]:
+    with connect(path) as database:
+        rows = database.execute(
+            """SELECT id,name,voice,visual_rules_json,forbidden_content_json,created_at,updated_at
+               FROM brand_passports WHERE user_id=? ORDER BY updated_at DESC,id DESC LIMIT 100""",
+            (user_id,),
+        ).fetchall()
+    return [_serialize(row) for row in rows]
+
+
+def list_product_truth(path: Path, user_id: str, brand_id: str | None = None) -> list[dict]:
+    parameters = [user_id]
+    clause = ""
+    if brand_id:
+        clause = " AND p.brand_id=?"
+        parameters.append(brand_id)
+    with connect(path) as database:
+        rows = database.execute(
+            """SELECT p.id,p.brand_id,p.name,p.sku,p.facts_json,p.approved_claims_json,
+                      p.required_disclosures_json,p.pack_asset_name,p.pack_asset_sha256,
+                      p.pack_asset_waived,p.pack_asset_waiver_reason,p.created_at,p.updated_at,
+                      b.name AS brand_name
+               FROM product_truth p JOIN brand_passports b ON b.id=p.brand_id AND b.user_id=p.user_id
+               WHERE p.user_id=?""" + clause + " ORDER BY p.updated_at DESC,p.id DESC LIMIT 100",
+            parameters,
+        ).fetchall()
+    return [_serialize(row) for row in rows]
 
 
 def get(path: Path, campaign_id: str, user_id: str) -> dict | None:

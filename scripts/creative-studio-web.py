@@ -1156,6 +1156,14 @@ def _list_campaigns(user_id: str) -> list:
     return _campaign_service.list_for_user(AUTH_DB, user_id)
 
 
+def _list_brand_passports(user_id: str) -> list:
+    return _campaign_service.list_brand_passports(AUTH_DB, user_id)
+
+
+def _list_product_truth(user_id: str, brand_id: str | None = None) -> list:
+    return _campaign_service.list_product_truth(AUTH_DB, user_id, brand_id)
+
+
 def _get_campaign(campaign_id: str, user_id: str) -> dict | None:
     return _campaign_service.get(AUTH_DB, campaign_id, user_id)
 
@@ -1791,6 +1799,8 @@ app.register_blueprint(
         current_session=_current_session,
         create_campaign=_create_campaign,
         list_campaigns=_list_campaigns,
+        list_brand_passports=_list_brand_passports,
+        list_product_truth=_list_product_truth,
         get_campaign=_get_campaign,
         campaign_readiness=_campaign_service.readiness,
         build_generation_plan=_campaign_service.generation_plan,
