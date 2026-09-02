@@ -1,15 +1,20 @@
 """Owner-scoped CPG campaign inputs, deterministic readiness, and generation plans."""
 
 import json
+import hashlib
 import secrets
 from pathlib import Path
 
 from .auth import connect, now_iso
+from .campaign_delivery import channel_plan
 
 
 ALLOWED_ASPECTS = frozenset({"1:1", "4:5", "9:16", "16:9", "2:3", "4:3"})
 ALLOWED_TIERS = frozenset({"fast", "balanced", "quality", "ultra"})
 ALLOWED_CHANNELS = frozenset({"amazon", "shopify", "meta-feed", "meta-story", "pinterest", "email", "web"})
+EXCEPTION_SOURCES = frozenset({"qc", "claims", "channel", "human"})
+EXCEPTION_SEVERITIES = frozenset({"warning", "blocking"})
+EXCEPTION_ACTIONS = {"approve": "approved", "reject": "rejected", "repair": "repaired"}
 
 
 def _clean(value, limit=2000):
@@ -245,6 +250,7 @@ def generation_plan(campaign: dict) -> dict:
         "aspect_ratio": campaign["aspect_ratio"],
         "variations": campaign["variations"],
         "channels": campaign["channels"],
+        "channel_deliverables": channel_plan(campaign["channels"]),
         "campaign_id": campaign["id"],
     }
 
@@ -283,3 +289,194 @@ def mark_started(path: Path, campaign_id: str, user_id: str, session_id: str | N
             (_clean(session_id, 80) or None, now_iso(), campaign_id, user_id),
         )
         database.commit()
+
+
+def record_bundle(path: Path, campaign_id: str, user_id: str, manifest: dict,
+                  zip_relpath: str, session_id: str | None = None) -> dict | None:
+    bundle_id = _clean(manifest.get("bundle_id"), 80)
+    if not bundle_id or Path(zip_relpath).is_absolute() or ".." in Path(zip_relpath).parts:
+        raise ValueError("Invalid campaign bundle record")
+    with connect(path) as database:
+        database.execute("BEGIN IMMEDIATE")
+        campaign = database.execute(
+            "SELECT id FROM campaign_work_orders WHERE id=? AND user_id=?",
+            (campaign_id, user_id),
+        ).fetchone()
+        if not campaign:
+            database.rollback()
+            return None
+        database.execute(
+            """INSERT OR IGNORE INTO campaign_bundles
+               (id,user_id,campaign_id,zip_relpath,manifest_json,source_session_id,created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (bundle_id, user_id, campaign_id, zip_relpath,
+             json.dumps(manifest, separators=(",", ":"), sort_keys=True),
+             _clean(session_id, 80) or None, now_iso()),
+        )
+        database.execute(
+            """UPDATE campaign_work_orders SET status='completed',last_session_id=?,updated_at=?
+               WHERE id=? AND user_id=?""",
+            (_clean(session_id, 80) or None, now_iso(), campaign_id, user_id),
+        )
+        database.commit()
+    return get_bundle(path, bundle_id, campaign_id, user_id)
+
+
+def get_bundle(path: Path, bundle_id: str, campaign_id: str, user_id: str) -> dict | None:
+    with connect(path) as database:
+        row = database.execute(
+            """SELECT id,campaign_id,zip_relpath,manifest_json,source_session_id,created_at
+               FROM campaign_bundles WHERE id=? AND campaign_id=? AND user_id=?""",
+            (bundle_id, campaign_id, user_id),
+        ).fetchone()
+    if not row:
+        return None
+    result = dict(row)
+    result["manifest"] = json.loads(result.pop("manifest_json"))
+    return result
+
+
+def list_bundles(path: Path, campaign_id: str, user_id: str) -> list[dict]:
+    with connect(path) as database:
+        rows = database.execute(
+            """SELECT id,campaign_id,manifest_json,source_session_id,created_at
+               FROM campaign_bundles WHERE campaign_id=? AND user_id=?
+               ORDER BY created_at DESC,id DESC LIMIT 50""",
+            (campaign_id, user_id),
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["manifest"] = json.loads(item.pop("manifest_json"))
+        result.append(item)
+    return result
+
+
+def create_exception(path: Path, campaign_id: str, user_id: str, *, source: str,
+                     criterion: str, severity: str, evidence: str,
+                     asset_url: str | None = None, model: str | None = None,
+                     rubric_version: str | None = None) -> dict | None:
+    source = _clean(source, 32)
+    criterion = _clean(criterion, 120)
+    severity = _clean(severity, 20)
+    evidence = _clean(evidence, 1000)
+    asset_url = _clean(asset_url, 2000) or None
+    model = _clean(model, 200) or None
+    rubric_version = _clean(rubric_version, 100) or None
+    if source not in EXCEPTION_SOURCES or severity not in EXCEPTION_SEVERITIES:
+        raise ValueError("Invalid exception source or severity")
+    if not criterion or not evidence:
+        raise ValueError("Exception criterion and visible evidence are required")
+    fingerprint = hashlib.sha256(json.dumps({
+        "source": source, "criterion": criterion, "severity": severity,
+        "evidence": evidence, "asset_url": asset_url, "model": model,
+        "rubric_version": rubric_version,
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    identifier = "exc_" + hashlib.sha256(
+        f"{user_id}:{campaign_id}:{fingerprint}".encode()
+    ).hexdigest()[:20]
+    with connect(path) as database:
+        database.execute("BEGIN IMMEDIATE")
+        campaign = database.execute(
+            "SELECT id FROM campaign_work_orders WHERE id=? AND user_id=?",
+            (campaign_id, user_id),
+        ).fetchone()
+        if not campaign:
+            database.rollback()
+            return None
+        database.execute(
+            """INSERT OR IGNORE INTO campaign_exceptions
+               (id,user_id,campaign_id,fingerprint,source,criterion,severity,evidence,
+                asset_url,model,rubric_version,status,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,'open',?)""",
+            (identifier, user_id, campaign_id, fingerprint, source, criterion,
+             severity, evidence, asset_url, model, rubric_version, now_iso()),
+        )
+        database.commit()
+    return get_exception(path, identifier, campaign_id, user_id)
+
+
+def get_exception(path: Path, exception_id: str, campaign_id: str, user_id: str) -> dict | None:
+    with connect(path) as database:
+        row = database.execute(
+            """SELECT id,campaign_id,source,criterion,severity,evidence,asset_url,model,
+                      rubric_version,status,resolution_reason,resolution_asset_url,
+                      resolved_by,created_at,resolved_at
+               FROM campaign_exceptions WHERE id=? AND campaign_id=? AND user_id=?""",
+            (exception_id, campaign_id, user_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_exceptions(path: Path, campaign_id: str, user_id: str) -> list[dict]:
+    with connect(path) as database:
+        rows = database.execute(
+            """SELECT id,campaign_id,source,criterion,severity,evidence,asset_url,model,
+                      rubric_version,status,resolution_reason,resolution_asset_url,
+                      resolved_by,created_at,resolved_at
+               FROM campaign_exceptions WHERE campaign_id=? AND user_id=?
+               ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END,created_at DESC,id DESC LIMIT 200""",
+            (campaign_id, user_id),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def resolve_exception(path: Path, exception_id: str, campaign_id: str, user_id: str,
+                      *, action: str, reason: str, replacement_url: str | None = None) -> dict | None:
+    status = EXCEPTION_ACTIONS.get(_clean(action, 20))
+    reason = _clean(reason, 1000)
+    replacement_url = _clean(replacement_url, 2000) or None
+    if not status or not reason:
+        raise ValueError("A valid action and review reason are required")
+    if status == "repaired" and not replacement_url:
+        raise ValueError("A repaired exception requires a replacement asset")
+    with connect(path) as database:
+        updated = database.execute(
+            """UPDATE campaign_exceptions
+               SET status=?,resolution_reason=?,resolution_asset_url=?,resolved_by=?,resolved_at=?
+               WHERE id=? AND campaign_id=? AND user_id=? AND status='open'""",
+            (status, reason, replacement_url, user_id, now_iso(),
+             exception_id, campaign_id, user_id),
+        )
+        database.commit()
+    if not updated.rowcount:
+        return None
+    return get_exception(path, exception_id, campaign_id, user_id)
+
+
+def record_qc_exceptions(path: Path, campaign_id: str, user_id: str, assessment: dict,
+                         asset_url: str | None = None) -> list[dict] | None:
+    if not get(path, campaign_id, user_id):
+        return None
+    created = []
+    blocking = {"text_integrity", "product_authenticity", "label_readability"}
+    for criterion, result in (assessment.get("criteria") or {}).items():
+        if not isinstance(result, dict) or result.get("status") != "fail":
+            continue
+        item = create_exception(
+            path, campaign_id, user_id, source="qc", criterion=criterion,
+            severity="blocking" if criterion in blocking else "warning",
+            evidence=result.get("evidence") or "QC criterion failed without visible evidence.",
+            asset_url=asset_url, model=assessment.get("model"),
+            rubric_version=assessment.get("rubric_version"),
+        )
+        if item:
+            created.append(item)
+    return created
+
+
+def bundle_exception_gate(path: Path, campaign_id: str, user_id: str,
+                          image_urls: list[str]) -> dict | None:
+    if not get(path, campaign_id, user_id):
+        return None
+    records = list_exceptions(path, campaign_id, user_id)
+    applicable = [item for item in records if not item.get("asset_url") or item["asset_url"] in image_urls]
+    blocking = [item for item in applicable if item["status"] == "open" and item["severity"] == "blocking"]
+    unusable = [item for item in applicable if item["status"] in {"rejected", "repaired"} and item.get("asset_url") in image_urls]
+    return {
+        "allowed": not blocking and not unusable,
+        "blocking": blocking,
+        "unusable": unusable,
+        "exceptions": applicable,
+        "open_warning_count": sum(item["status"] == "open" and item["severity"] == "warning" for item in applicable),
+    }

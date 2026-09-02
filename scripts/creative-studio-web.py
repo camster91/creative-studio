@@ -40,6 +40,7 @@ from creative_studio_app.costs import (
 from creative_studio_app import auth as _auth_service
 from creative_studio_app import projects as _project_service
 from creative_studio_app import campaigns as _campaign_service
+from creative_studio_app import campaign_delivery as _campaign_delivery
 from creative_studio_app import generation as _generation_service
 from creative_studio_app import delivery as _delivery_service
 from creative_studio_app import iterations as _iteration_service
@@ -1172,6 +1173,66 @@ def _mark_campaign_started(campaign_id: str, user_id: str, session_id: str | Non
     _campaign_service.mark_started(AUTH_DB, campaign_id, user_id, session_id)
 
 
+def _build_campaign_bundle(campaign: dict, sources: list) -> tuple[Path, dict]:
+    return _campaign_delivery.build_bundle(
+        campaign, sources, DATA_DIR / "campaign-bundles",
+        max_bundle_bytes=int(os.environ.get("CREATIVE_MAX_CAMPAIGN_BUNDLE_BYTES", str(256 * 1024 * 1024))),
+    )
+
+
+def _record_campaign_bundle(campaign_id: str, user_id: str, manifest: dict,
+                            bundle_path: Path, session_id: str | None = None) -> dict | None:
+    root = (DATA_DIR / "campaign-bundles").resolve()
+    relative = str(bundle_path.resolve().relative_to(root))
+    return _campaign_service.record_bundle(
+        AUTH_DB, campaign_id, user_id, manifest, relative, session_id,
+    )
+
+
+def _list_campaign_bundles(campaign_id: str, user_id: str) -> list:
+    return _campaign_service.list_bundles(AUTH_DB, campaign_id, user_id)
+
+
+def _create_campaign_exception(campaign_id: str, user_id: str, **fields) -> dict | None:
+    return _campaign_service.create_exception(AUTH_DB, campaign_id, user_id, **fields)
+
+
+def _list_campaign_exceptions(campaign_id: str, user_id: str) -> list:
+    return _campaign_service.list_exceptions(AUTH_DB, campaign_id, user_id)
+
+
+def _resolve_campaign_exception(exception_id: str, campaign_id: str, user_id: str,
+                                **resolution) -> dict | None:
+    return _campaign_service.resolve_exception(
+        AUTH_DB, exception_id, campaign_id, user_id, **resolution,
+    )
+
+
+def _campaign_exception_gate(campaign_id: str, user_id: str, image_urls: list[str]) -> dict | None:
+    return _campaign_service.bundle_exception_gate(AUTH_DB, campaign_id, user_id, image_urls)
+
+
+def _record_campaign_qc(campaign_id: str, user_id: str, assessment: dict,
+                        asset_url: str | None = None) -> list | None:
+    return _campaign_service.record_qc_exceptions(
+        AUTH_DB, campaign_id, user_id, assessment, asset_url,
+    )
+
+
+def _get_campaign_bundle(bundle_id: str, campaign_id: str, user_id: str) -> dict | None:
+    return _campaign_service.get_bundle(AUTH_DB, bundle_id, campaign_id, user_id)
+
+
+def _campaign_bundle_path(bundle: dict) -> Path | None:
+    root = (DATA_DIR / "campaign-bundles").resolve()
+    try:
+        path = (root / bundle["zip_relpath"]).resolve()
+        path.relative_to(root)
+    except (KeyError, ValueError, OSError):
+        return None
+    return path if path.is_file() and not path.is_symlink() else None
+
+
 def _attach_campaign_pack(campaign_id: str, user_id: str, asset_name: str, sha256: str) -> dict | None:
     return _campaign_service.attach_pack_asset(AUTH_DB, campaign_id, user_id, asset_name, sha256)
 
@@ -1653,6 +1714,8 @@ app.register_blueprint(
         estimate_cost=cost_for_tier,
         record_provider_results=_record_provider_results,
         resolve_campaign_pack=_resolve_campaign_pack,
+        record_campaign_qc=_record_campaign_qc,
+        get_campaign=_get_campaign,
     )
 )
 
@@ -1807,6 +1870,17 @@ app.register_blueprint(
         mark_campaign_started=_mark_campaign_started,
         attach_pack_asset=_attach_campaign_pack,
         save_upload=_save_upload,
+        owned_asset_paths=_owned_asset_paths,
+        safe_output_path=_safe_output_relpath,
+        build_campaign_bundle=_build_campaign_bundle,
+        record_campaign_bundle=_record_campaign_bundle,
+        list_campaign_bundles=_list_campaign_bundles,
+        get_campaign_bundle=_get_campaign_bundle,
+        campaign_bundle_path=_campaign_bundle_path,
+        create_campaign_exception=_create_campaign_exception,
+        list_campaign_exceptions=_list_campaign_exceptions,
+        resolve_campaign_exception=_resolve_campaign_exception,
+        campaign_exception_gate=_campaign_exception_gate,
         rate_limited=rate_limited,
     )
 )
