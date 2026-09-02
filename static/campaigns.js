@@ -21,12 +21,24 @@ function values(name) { return [...document.querySelectorAll(`#${name} input:che
 
 function payload() {
   const data = new FormData(form);
+  const campaignChannels = values('channels');
+  const market = data.get('market') || 'US';
+  const claims = lines(data.get('claims')).map(text => ({
+    text,
+    claim_type: data.get('claimType'),
+    markets: [market],
+    channels: campaignChannels,
+    substantiation_url: data.get('claimSource'),
+    approval_reason: data.get('claimApprovalReason'),
+    required_disclosure: data.get('claimDisclosure'),
+    expires_at: data.get('claimExpiry') || undefined,
+  }));
   return {
     brand_id: data.get('reuseBrand') || undefined,
     product_id: data.get('reuseProduct') || undefined,
     brand: {name: data.get('brandName'), voice: data.get('brandVoice'), visual_rules: lines(data.get('visualRules')), forbidden_content: lines(data.get('forbiddenContent'))},
-    product: {name: data.get('productName'), sku: data.get('sku'), facts: lines(data.get('facts')), approved_claims: lines(data.get('claims')), required_disclosures: lines(data.get('disclosures')), pack_asset_waived: data.get('packWaived') === 'on', pack_asset_waiver_reason: data.get('packWaiverReason')},
-    work_order: {name: data.get('campaignName'), objective: data.get('objective'), audience: data.get('audience'), offer: data.get('offer'), channels: values('channels'), creative_direction: data.get('direction'), aspect_ratio: data.get('aspect'), tier: data.get('tier'), variations: Number(data.get('variations'))},
+    product: {name: data.get('productName'), sku: data.get('sku'), facts: lines(data.get('facts')), approved_claims: claims, required_disclosures: lines(data.get('disclosures')), pack_asset_waived: data.get('packWaived') === 'on', pack_asset_waiver_reason: data.get('packWaiverReason')},
+    work_order: {name: data.get('campaignName'), market, objective: data.get('objective'), audience: data.get('audience'), offer: data.get('offer'), channels: campaignChannels, creative_direction: data.get('direction'), aspect_ratio: data.get('aspect'), tier: data.get('tier'), variations: Number(data.get('variations'))},
   };
 }
 
@@ -281,6 +293,12 @@ form.elements.reuseProduct.addEventListener('change', event => {
   form.elements.sku.value = product.sku;
   setLines('facts', product.facts);
   setLines('claims', product.approved_claims);
+  const claim = (product.claim_records || []).find(item => item.status === 'approved');
+  form.elements.claimType.value = claim ? claim.claim_type : 'marketing';
+  form.elements.claimSource.value = claim ? claim.substantiation_url : '';
+  form.elements.claimApprovalReason.value = claim ? claim.approval_reason : '';
+  form.elements.claimDisclosure.value = claim ? claim.required_disclosure : '';
+  form.elements.claimExpiry.value = claim ? (claim.expires_at || '') : '';
   setLines('disclosures', product.required_disclosures);
   form.elements.packWaived.checked = product.pack_asset_waived;
   form.elements.packWaiverReason.value = product.pack_asset_waiver_reason || '';

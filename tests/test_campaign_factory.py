@@ -67,13 +67,22 @@ def complete_payload():
             "name": "Daily Hydration Mix",
             "sku": "HYD-BLU-12",
             "facts": ["12 single-serve sachets", "Blue raspberry flavour"],
-            "approved_claims": ["Contains 6 essential electrolytes"],
+            "approved_claims": [{
+                "text": "Contains 6 essential electrolytes",
+                "claim_type": "nutrient",
+                "markets": ["US"],
+                "channels": ["amazon", "meta-feed"],
+                "substantiation_url": "https://evidence.example/hydration-mix",
+                "approval_reason": "Reviewed against the approved SKU substantiation package.",
+                "required_disclosure": "Use only as directed.",
+            }],
             "required_disclosures": ["Always read and follow the label"],
             "pack_asset_waived": True,
             "pack_asset_waiver_reason": "Packaging photography is pending; early art-direction concept only.",
         },
         "work_order": {
             "name": "Summer retail launch",
+            "market": "US",
             "objective": "Drive retail trial",
             "audience": "Active adults, 25–44",
             "offer": "15% introductory offer",
@@ -117,6 +126,9 @@ def test_complete_work_order_is_ready_and_builds_bounded_plan(cs):
     assert plan["execution_mode"] == "concept-only-direct"
     assert "Packaging fidelity is not guaranteed" in plan["fidelity_notice"]
     assert "Contains 6 essential electrolytes" in plan["prompt"]
+    assert "Use only as directed" in plan["prompt"]
+    assert plan["market"] == "US"
+    assert len(plan["approved_claim_ids"]) == 1
     assert "Do not invent packaging text" in plan["prompt"]
     assert "not-a-channel" not in plan["channels"]
     assert [(item["channel"], item["size"]) for item in plan["channel_deliverables"]] == [
@@ -259,6 +271,8 @@ def test_campaign_bundle_is_private_owner_scoped_and_marks_campaign_complete(cs)
     assert bundle["manifest"]["deliverable_count"] == 2
     assert bundle["manifest"]["channels"] == ["amazon", "meta-feed"]
     assert bundle["manifest"]["publishing_status"] == "not_published"
+    assert bundle["manifest"]["claim_evidence"][0]["exact_text"] == "Contains 6 essential electrolytes"
+    assert bundle["manifest"]["claim_evidence"][0]["substantiation_url"].startswith("https://")
     assert client.get(bundle["download_url"], headers=headers(stranger)).status_code == 404
     download = client.get(bundle["download_url"], headers=headers(token))
     assert download.status_code == 200
@@ -541,6 +555,90 @@ def test_brand_can_be_reused_for_a_new_sku(cs):
     assert len(client.get(
         f"/api/product-truth?brand_id={first['brand_id']}", headers=headers(token)
     ).get_json()["products"]) == 2
+
+
+def test_legacy_claim_strings_fail_readiness_until_evidence_is_registered(cs):
+    client = cs.app.test_client()
+    token = login(client, "legacy-claim@example.com")
+    payload = complete_payload()
+    payload["product"]["approved_claims"] = ["Supports all-day immunity"]
+    created = client.post("/api/campaigns", json=payload, headers=headers(token))
+    assert created.status_code == 201
+    campaign = created.get_json()
+    assert campaign["readiness"]["ready"] is False
+    assert {item["field"] for item in campaign["readiness"]["missing"]} == {
+        "product.approved_claim_evidence",
+    }
+    assert client.post(
+        f"/api/campaigns/{campaign['id']}/go", headers=headers(token),
+    ).status_code == 409
+
+
+def test_claim_registry_is_owner_scoped_idempotent_and_retirable(cs):
+    client = cs.app.test_client()
+    owner = login(client, "claim-owner@example.com")
+    stranger = login(client, "claim-stranger@example.com")
+    campaign = client.post("/api/campaigns", json=complete_payload(), headers=headers(owner)).get_json()
+    product_id = campaign["product_id"]
+    claims = client.get(
+        f"/api/product-truth/{product_id}/claims", headers=headers(owner),
+    )
+    assert claims.status_code == 200
+    original = claims.get_json()["claims"][0]
+    assert original["substantiation_url"].startswith("https://")
+    assert client.get(
+        f"/api/product-truth/{product_id}/claims", headers=headers(stranger),
+    ).status_code == 404
+
+    new_claim = {
+        "text": "Made with recyclable packaging", "claim_type": "environmental",
+        "markets": ["US"], "channels": ["amazon", "meta-feed"],
+        "substantiation_url": "https://evidence.example/recyclability",
+        "approval_reason": "Packaging specification and local acceptance were reviewed.",
+    }
+    first = client.post(
+        f"/api/product-truth/{product_id}/claims", headers=headers(owner), json=new_claim,
+    )
+    duplicate = client.post(
+        f"/api/product-truth/{product_id}/claims", headers=headers(owner), json=new_claim,
+    )
+    assert first.status_code == duplicate.status_code == 201
+    assert first.get_json()["id"] == duplicate.get_json()["id"]
+    assert client.post(
+        f"/api/product-truth/{product_id}/claims/{first.get_json()['id']}/retire",
+        headers=headers(owner), json={"reason": ""},
+    ).status_code == 400
+    retired = client.post(
+        f"/api/product-truth/{product_id}/claims/{first.get_json()['id']}/retire",
+        headers=headers(owner), json={"reason": "Supplier specification changed."},
+    )
+    assert retired.status_code == 200
+    assert retired.get_json()["status"] == "retired"
+    assert client.post(
+        f"/api/product-truth/{product_id}/claims", headers=headers(owner), json=new_claim,
+    ).status_code == 409
+    assert client.post(
+        f"/api/product-truth/{product_id}/claims/{original['id']}/retire",
+        headers=headers(stranger), json={"reason": "Not mine"},
+    ).status_code == 404
+
+
+def test_claim_market_channel_and_expiry_scope_fail_closed(cs):
+    client = cs.app.test_client()
+    token = login(client, "claim-scope@example.com")
+    payload = complete_payload()
+    payload["work_order"]["market"] = "CA"
+    created = client.post("/api/campaigns", json=payload, headers=headers(token)).get_json()
+    assert created["readiness"]["ready"] is False
+    assert created["ineligible_claims"][0]["exact_text"] == "Contains 6 essential electrolytes"
+
+    expired_payload = complete_payload()
+    expired_payload["product"]["approved_claims"][0]["expires_at"] = "2020-01-01"
+    expired = client.post("/api/campaigns", json=expired_payload, headers=headers(token)).get_json()
+    assert expired["readiness"]["ready"] is False
+    assert {item["field"] for item in expired["readiness"]["missing"]} == {
+        "product.approved_claim_evidence",
+    }
 
 
 def test_unapproved_claims_are_explicitly_prohibited(cs):
