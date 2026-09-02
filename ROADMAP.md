@@ -65,6 +65,8 @@ Acceptance criteria:
   into a provider-independent generation request.
 - [x] Run the approved request through the existing durable generation path.
 - [x] Reuse existing Brand Passports and Product Truth records across campaigns.
+- [x] Store approved claims as market/channel-scoped evidence records with exact
+  text, class, HTTPS substantiation, approval reason, disclosure, and expiry.
 - [x] Attach an exact product pack asset and default CPG campaigns to the
   deterministic composite path rather than text-only packaging generation.
 - [x] Create channel recipes that fan one work order into exact format variants.
@@ -95,6 +97,8 @@ proposed until measured with target customers.
   visual review and live pinned-provider evidence remain outstanding.
 - Never present concept-only packaging generation as exact fidelity.
 - Add audit history for claim/rule changes that affect a campaign.
+- Approved claims now fail readiness when evidence is missing, expired, or not
+  scoped to every selected channel and market; multi-role approval remains pending.
 
 ### P0 — Evaluation and exception workflow
 
@@ -110,8 +114,9 @@ proposed until measured with target customers.
 
 - Versioned Amazon, Shopify, Meta, Pinterest, email, and web recipes plus private
   bundle export are implemented in a stacked candidate.
-- Add safe-zone and subject-aware crop checks; deterministic center cropping
-  guarantees dimensions but not composition quality for every source.
+- Alpha-bounded source and center-crop checks now block visible subject loss and
+  warn at a 5% crop margin. Fully opaque sources remain explicitly unverified;
+  semantic subject detection and platform-specific safe zones remain pending.
 - Bundle manifests now preserve applicable exception, approval, QC model, and
   rubric evidence. Provider generation lineage and cost evidence remain pending.
 

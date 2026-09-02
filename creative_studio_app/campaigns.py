@@ -3,6 +3,8 @@
 import json
 import hashlib
 import secrets
+from datetime import date
+from urllib.parse import urlparse
 from pathlib import Path
 
 from .auth import connect, now_iso
@@ -15,6 +17,8 @@ ALLOWED_CHANNELS = frozenset({"amazon", "shopify", "meta-feed", "meta-story", "p
 EXCEPTION_SOURCES = frozenset({"qc", "claims", "channel", "human"})
 EXCEPTION_SEVERITIES = frozenset({"warning", "blocking"})
 EXCEPTION_ACTIONS = {"approve": "approved", "reject": "rejected", "repair": "repaired"}
+CLAIM_TYPES = frozenset({"marketing", "nutrient", "structure_function", "health", "environmental", "comparative"})
+CLAIM_MARKETS = frozenset({"US", "CA"})
 
 
 def _clean(value, limit=2000):
@@ -40,6 +44,52 @@ def _json(raw):
         return []
 
 
+def _claim_payload(value: dict) -> dict:
+    exact_text = _clean(value.get("text") or value.get("exact_text"), 500)
+    claim_type = _clean(value.get("claim_type"), 40)
+    markets = [item.upper() for item in _strings(value.get("markets"), limit=10, item_limit=8)]
+    channels = [item for item in _strings(value.get("channels"), limit=8, item_limit=32)
+                if item in ALLOWED_CHANNELS]
+    source = _clean(value.get("substantiation_url"), 2000)
+    reason = _clean(value.get("approval_reason"), 1000)
+    disclosure = _clean(value.get("required_disclosure"), 500)
+    expires_at = _clean(value.get("expires_at"), 10) or None
+    parsed = urlparse(source)
+    if not exact_text or claim_type not in CLAIM_TYPES:
+        raise ValueError("Each approved claim requires exact text and a valid claim type")
+    if not markets or any(item not in CLAIM_MARKETS for item in markets):
+        raise ValueError("Each approved claim requires a supported market")
+    if parsed.scheme != "https" or not parsed.netloc or not reason:
+        raise ValueError("Each approved claim requires an HTTPS substantiation source and approval reason")
+    if expires_at:
+        try:
+            date.fromisoformat(expires_at)
+        except ValueError as error:
+            raise ValueError("Claim expiry must use YYYY-MM-DD") from error
+    return {"exact_text": exact_text, "claim_type": claim_type, "markets": markets,
+            "channels": channels, "substantiation_url": source,
+            "required_disclosure": disclosure, "approval_reason": reason,
+            "expires_at": expires_at}
+
+
+def _insert_claim(database, user_id: str, product_id: str, value: dict) -> str:
+    claim = _claim_payload(value)
+    fingerprint = hashlib.sha256(json.dumps(claim, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    identifier = "claim_" + hashlib.sha256(
+        f"{user_id}:{product_id}:{fingerprint}".encode()
+    ).hexdigest()[:20]
+    database.execute(
+        """INSERT OR IGNORE INTO approved_claims
+           (id,user_id,product_id,fingerprint,exact_text,claim_type,markets_json,channels_json,
+            substantiation_url,required_disclosure,status,approved_by,approval_reason,expires_at,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,'approved',?,?,?,?)""",
+        (identifier, user_id, product_id, fingerprint, claim["exact_text"], claim["claim_type"],
+         json.dumps(claim["markets"]), json.dumps(claim["channels"]), claim["substantiation_url"],
+         claim["required_disclosure"], user_id, claim["approval_reason"], claim["expires_at"], now_iso()),
+    )
+    return identifier
+
+
 def _serialize(row):
     if not row:
         return None
@@ -54,6 +104,75 @@ def _serialize(row):
     return result
 
 
+def _serialize_claim(row) -> dict:
+    item = dict(row)
+    item["markets"] = _json(item.pop("markets_json"))
+    item["channels"] = _json(item.pop("channels_json"))
+    return item
+
+
+def list_claims(path: Path, product_id: str, user_id: str, *, include_retired: bool = True) -> list[dict]:
+    status_clause = "" if include_retired else " AND status='approved'"
+    with connect(path) as database:
+        rows = database.execute(
+            """SELECT id,product_id,exact_text,claim_type,markets_json,channels_json,
+                      substantiation_url,required_disclosure,status,approved_by,approval_reason,
+                      expires_at,created_at,retired_at,retirement_reason
+               FROM approved_claims WHERE product_id=? AND user_id=?""" + status_clause +
+            " ORDER BY created_at DESC,id DESC LIMIT 200",
+            (product_id, user_id),
+        ).fetchall()
+    return [_serialize_claim(row) for row in rows]
+
+
+def create_claim(path: Path, product_id: str, user_id: str, value: dict) -> dict | None:
+    with connect(path) as database:
+        database.execute("BEGIN IMMEDIATE")
+        product = database.execute(
+            "SELECT id FROM product_truth WHERE id=? AND user_id=?", (product_id, user_id),
+        ).fetchone()
+        if not product:
+            database.rollback()
+            return None
+        identifier = _insert_claim(database, user_id, product_id, value)
+        database.commit()
+        row = database.execute(
+            """SELECT id,product_id,exact_text,claim_type,markets_json,channels_json,
+                      substantiation_url,required_disclosure,status,approved_by,approval_reason,
+                      expires_at,created_at,retired_at,retirement_reason
+               FROM approved_claims WHERE id=? AND product_id=? AND user_id=?""",
+            (identifier, product_id, user_id),
+        ).fetchone()
+    return _serialize_claim(row) if row else None
+
+
+def retire_claim(path: Path, claim_id: str, product_id: str, user_id: str, reason: str) -> dict | None:
+    reason = _clean(reason, 1000)
+    if not reason:
+        raise ValueError("A retirement reason is required")
+    with connect(path) as database:
+        updated = database.execute(
+            """UPDATE approved_claims SET status='retired',retired_at=?,retirement_reason=?
+               WHERE id=? AND product_id=? AND user_id=? AND status='approved'""",
+            (now_iso(), reason, claim_id, product_id, user_id),
+        )
+        database.commit()
+    if not updated.rowcount:
+        return None
+    return next((item for item in list_claims(path, product_id, user_id) if item["id"] == claim_id), None)
+
+
+def _applicable_claims(records: list[dict], market: str, channels: list[str]) -> tuple[list[dict], list[dict]]:
+    applicable, ineligible = [], []
+    today = date.today().isoformat()
+    for item in records:
+        active = item["status"] == "approved" and (not item.get("expires_at") or item["expires_at"] >= today)
+        market_ok = market in item["markets"]
+        channel_ok = not item["channels"] or set(channels).issubset(item["channels"])
+        (applicable if active and market_ok and channel_ok else ineligible).append(item)
+    return applicable, ineligible
+
+
 def create_bundle(path: Path, user_id: str, payload: dict) -> dict:
     """Create a reusable brand, SKU truth record, and campaign work order atomically."""
     brand = payload.get("brand") if isinstance(payload.get("brand"), dict) else {}
@@ -65,11 +184,16 @@ def create_bundle(path: Path, user_id: str, payload: dict) -> dict:
     now = now_iso()
     aspect = _clean(work.get("aspect_ratio"), 16)
     tier = _clean(work.get("tier"), 20)
+    market = _clean(work.get("market"), 8).upper()
     try:
         variations = int(work.get("variations", 4))
     except (TypeError, ValueError):
         variations = 4
     channels = [item for item in _strings(work.get("channels"), limit=8, item_limit=32) if item in ALLOWED_CHANNELS]
+    raw_claims = product.get("approved_claims") if isinstance(product.get("approved_claims"), list) else []
+    structured_claims = [_claim_payload(item) for item in raw_claims[:20] if isinstance(item, dict)]
+    legacy_claims = [_clean(item, 500) for item in raw_claims[:20] if not isinstance(item, dict) and _clean(item, 500)]
+    claim_texts = [item["exact_text"] for item in structured_claims] + legacy_claims
     with connect(path) as database:
         database.execute("BEGIN IMMEDIATE")
         if requested_product_id:
@@ -111,18 +235,21 @@ def create_bundle(path: Path, user_id: str, payload: dict) -> dict:
                     pack_asset_waived,pack_asset_waiver_reason,created_at,updated_at)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (product_id, user_id, brand_id, _clean(product.get("name"), 200), _clean(product.get("sku"), 120),
-                 json.dumps(_strings(product.get("facts"))), json.dumps(_strings(product.get("approved_claims"))),
+                 json.dumps(_strings(product.get("facts"))), json.dumps(claim_texts),
                  json.dumps(_strings(product.get("required_disclosures"))),
                  1 if product.get("pack_asset_waived") is True else 0,
                  _clean(product.get("pack_asset_waiver_reason"), 500), now, now),
             )
+            for claim in structured_claims:
+                _insert_claim(database, user_id, product_id, claim)
         database.execute(
             """INSERT INTO campaign_work_orders
-               (id,user_id,brand_id,product_id,name,objective,audience,offer,channels_json,creative_direction,
+               (id,user_id,brand_id,product_id,name,objective,audience,market,offer,channels_json,creative_direction,
                 aspect_ratio,tier,variations,status,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?)""",
             (campaign_id, user_id, brand_id, product_id, _clean(work.get("name"), 200),
-             _clean(work.get("objective"), 1000), _clean(work.get("audience"), 1000), _clean(work.get("offer"), 500),
+             _clean(work.get("objective"), 1000), _clean(work.get("audience"), 1000),
+             market if market in CLAIM_MARKETS else "US", _clean(work.get("offer"), 500),
              json.dumps(channels), _clean(work.get("creative_direction"), 2000),
              aspect if aspect in ALLOWED_ASPECTS else "1:1", tier if tier in ALLOWED_TIERS else "balanced",
              min(8, max(1, variations)), now, now),
@@ -157,7 +284,19 @@ def list_product_truth(path: Path, user_id: str, brand_id: str | None = None) ->
                WHERE p.user_id=?""" + clause + " ORDER BY p.updated_at DESC,p.id DESC LIMIT 100",
             parameters,
         ).fetchall()
-    return [_serialize(row) for row in rows]
+    products = [_serialize(row) for row in rows]
+    for product in products:
+        product["claim_records"] = list_claims(path, product["id"], user_id)
+        product["claim_governance_ready"] = (
+            not product["approved_claims"] or
+            {item["exact_text"] for item in product["claim_records"] if item["status"] == "approved"}
+            >= set(product["approved_claims"])
+        )
+    return products
+
+
+def get_product_truth(path: Path, product_id: str, user_id: str) -> dict | None:
+    return next((item for item in list_product_truth(path, user_id) if item["id"] == product_id), None)
 
 
 def get(path: Path, campaign_id: str, user_id: str) -> dict | None:
@@ -172,7 +311,17 @@ def get(path: Path, campaign_id: str, user_id: str) -> dict | None:
                WHERE c.id = ? AND c.user_id = ?""",
             (campaign_id, user_id),
         ).fetchone()
-    return _serialize(row)
+    campaign = _serialize(row)
+    if not campaign:
+        return None
+    records = list_claims(path, campaign["product_id"], user_id)
+    applicable, ineligible = _applicable_claims(records, campaign.get("market", "US"), campaign.get("channels") or [])
+    legacy = campaign.get("approved_claims") or []
+    campaign["claim_records"] = records
+    campaign["applicable_claims"] = applicable
+    campaign["ineligible_claims"] = ineligible
+    campaign["claim_governance_ready"] = not legacy or {item["exact_text"] for item in applicable} >= set(legacy)
+    return campaign
 
 
 def list_for_user(path: Path, user_id: str) -> list[dict]:
@@ -207,7 +356,12 @@ def readiness(campaign: dict) -> dict:
             missing.append({"field": "product.pack_asset", "message": "Upload the exact pack asset or explicitly choose concept-only generation"})
         elif not campaign.get("pack_asset_waiver_reason"):
             missing.append({"field": "product.pack_asset_waiver_reason", "message": "Explain why this campaign is proceeding without an exact pack asset"})
-    check_count = len(checks) + 1
+    if campaign.get("approved_claims") and not campaign.get("claim_governance_ready"):
+        missing.append({
+            "field": "product.approved_claim_evidence",
+            "message": "Approve every campaign claim for this market and all selected channels with substantiation evidence",
+        })
+    check_count = len(checks) + 1 + (1 if campaign.get("approved_claims") else 0)
     return {"ready": not missing, "missing": missing, "check_count": check_count, "passed_count": check_count - len(missing)}
 
 
@@ -215,8 +369,13 @@ def generation_plan(campaign: dict) -> dict:
     gate = readiness(campaign)
     if not gate["ready"]:
         raise ValueError("Campaign is not ready")
-    claims = campaign.get("approved_claims") or []
-    disclosures = campaign.get("required_disclosures") or []
+    claim_records = campaign.get("applicable_claims") or []
+    claims = [item["exact_text"] for item in claim_records]
+    disclosures = list(campaign.get("required_disclosures") or [])
+    for item in claim_records:
+        disclosure = item.get("required_disclosure")
+        if disclosure and disclosure not in disclosures:
+            disclosures.append(disclosure)
     has_pack = campaign.get("has_pack_asset")
     prompt_parts = [
         f"Create a production-quality CPG campaign image for {campaign['brand_name']} {campaign['product_name']} (SKU {campaign['sku']}).",
@@ -252,6 +411,8 @@ def generation_plan(campaign: dict) -> dict:
         "channels": campaign["channels"],
         "channel_deliverables": channel_plan(campaign["channels"]),
         "campaign_id": campaign["id"],
+        "market": campaign.get("market", "US"),
+        "approved_claim_ids": [item["id"] for item in claim_records],
     }
 
 

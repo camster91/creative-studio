@@ -9,6 +9,7 @@ from creative_studio_app.campaign_delivery import (
     RECIPE_VERSION,
     build_bundle,
     channel_plan,
+    preflight_findings,
 )
 
 
@@ -87,3 +88,25 @@ def test_bundle_storage_limit_fails_closed_and_removes_partial_files(tmp_path):
     else:
         raise AssertionError("Oversized bundle was accepted")
     assert not list((tmp_path / "private").rglob("*.png"))
+
+
+def test_preflight_blocks_alpha_subject_crop_loss_and_warns_on_opaque_sources(tmp_path):
+    transparent = tmp_path / "edge-subject.png"
+    image = Image.new("RGBA", (1200, 800), (0, 0, 0, 0))
+    subject = Image.new("RGBA", (300, 600), (20, 80, 190, 255))
+    image.alpha_composite(subject, (0, 100))
+    image.save(transparent)
+    findings = preflight_findings(
+        campaign(["meta-story"]), [("/image/edge-subject.png", transparent)],
+    )
+    assert findings == [{
+        "criterion": "meta-story_subject_crop", "severity": "blocking",
+        "evidence": "Visible alpha bounds (0, 100, 300, 700) extend outside the meta-story center-crop box (375, 0, 825, 800).",
+        "asset_url": "/image/edge-subject.png",
+    }]
+
+    opaque = tmp_path / "opaque.png"
+    Image.new("RGB", (800, 1200), (20, 80, 190)).save(opaque)
+    warning = preflight_findings(campaign(["amazon"]), [("/image/opaque.png", opaque)])
+    assert warning[0]["criterion"] == "subject_safe_area_unverified"
+    assert warning[0]["severity"] == "warning"
