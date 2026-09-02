@@ -15,6 +15,8 @@ def create_blueprint(*, current_session: Callable, create_campaign: Callable, li
                      safe_output_path: Callable, build_campaign_bundle: Callable,
                      record_campaign_bundle: Callable, list_campaign_bundles: Callable,
                      get_campaign_bundle: Callable, campaign_bundle_path: Callable,
+                     create_campaign_exception: Callable, list_campaign_exceptions: Callable,
+                     resolve_campaign_exception: Callable, campaign_exception_gate: Callable,
                      rate_limited: Callable) -> Blueprint:
     blueprint = Blueprint("campaigns", __name__)
 
@@ -133,6 +135,14 @@ def create_blueprint(*, current_session: Callable, create_campaign: Callable, li
         relative = [url[len("/image/"):] for url in image_urls]
         if any(item not in owned for item in relative):
             return jsonify({"error": "Campaign image not found"}), 404
+        exception_gate = campaign_exception_gate(campaign_id, session["user_id"], image_urls)
+        if exception_gate is None:
+            return jsonify({"error": "Not found"}), 404
+        if not exception_gate["allowed"]:
+            return jsonify({
+                "error": "Resolve blocking campaign exceptions before building this bundle",
+                "exception_gate": exception_gate,
+            }), 409
         sources = []
         for url, item in zip(image_urls, relative):
             source = safe_output_path(item)
@@ -140,7 +150,8 @@ def create_blueprint(*, current_session: Callable, create_campaign: Callable, li
                 return jsonify({"error": "Campaign image not found"}), 404
             sources.append((url, source))
         try:
-            bundle_path, manifest = build_campaign_bundle(campaign, sources)
+            bundle_campaign = {**campaign, "exception_summary": exception_gate}
+            bundle_path, manifest = build_campaign_bundle(bundle_campaign, sources)
             bundle = record_campaign_bundle(
                 campaign_id, session["user_id"], manifest, bundle_path,
                 data.get("session_id") if isinstance(data, dict) else None,
@@ -162,6 +173,73 @@ def create_blueprint(*, current_session: Callable, create_campaign: Callable, li
         if not get_campaign(campaign_id, session["user_id"]):
             return jsonify({"error": "Not found"}), 404
         return jsonify({"bundles": list_campaign_bundles(campaign_id, session["user_id"])})
+
+    @blueprint.get("/api/campaigns/<campaign_id>/exceptions")
+    @rate_limited
+    def exceptions(campaign_id):
+        session, error = signed_in()
+        if error:
+            return error
+        if not get_campaign(campaign_id, session["user_id"]):
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"exceptions": list_campaign_exceptions(campaign_id, session["user_id"])})
+
+    @blueprint.post("/api/campaigns/<campaign_id>/exceptions")
+    @rate_limited
+    def create_exception(campaign_id):
+        session, error = signed_in()
+        if error:
+            return error
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "JSON object required"}), 400
+        if data.get("source", "human") not in {"claims", "channel", "human"}:
+            return jsonify({"error": "Manual exception source must be claims, channel, or human"}), 400
+        asset_url = str(data.get("asset_url") or "").strip() or None
+        if asset_url:
+            if not asset_url.startswith("/image/"):
+                return jsonify({"error": "Exception asset must use an owned image URL"}), 400
+            if asset_url[len("/image/"):] not in owned_asset_paths(session["user_id"]):
+                return jsonify({"error": "Campaign image not found"}), 404
+        try:
+            item = create_campaign_exception(
+                campaign_id, session["user_id"], source=data.get("source", "human"),
+                criterion=data.get("criterion", ""), severity=data.get("severity", ""),
+                evidence=data.get("evidence", ""), asset_url=asset_url,
+            )
+        except ValueError as exception_error:
+            return jsonify({"error": str(exception_error)}), 400
+        if not item:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify(item), 201
+
+    @blueprint.post("/api/campaigns/<campaign_id>/exceptions/<exception_id>/resolve")
+    @rate_limited
+    def resolve_exception(campaign_id, exception_id):
+        session, error = signed_in()
+        if error:
+            return error
+        if not get_campaign(campaign_id, session["user_id"]):
+            return jsonify({"error": "Not found"}), 404
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "JSON object required"}), 400
+        replacement_url = str(data.get("replacement_url") or "").strip() or None
+        if replacement_url:
+            if not replacement_url.startswith("/image/"):
+                return jsonify({"error": "Replacement must use an owned image URL"}), 400
+            if replacement_url[len("/image/"):] not in owned_asset_paths(session["user_id"]):
+                return jsonify({"error": "Replacement image not found"}), 404
+        try:
+            item = resolve_campaign_exception(
+                exception_id, campaign_id, session["user_id"], action=data.get("action", ""),
+                reason=data.get("reason", ""), replacement_url=replacement_url,
+            )
+        except ValueError as exception_error:
+            return jsonify({"error": str(exception_error)}), 400
+        if not item:
+            return jsonify({"error": "Exception not found or already resolved"}), 409
+        return jsonify(item)
 
     @blueprint.get("/api/campaigns/<campaign_id>/bundles/<bundle_id>/download")
     @rate_limited

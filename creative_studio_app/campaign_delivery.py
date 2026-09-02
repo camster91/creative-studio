@@ -50,6 +50,7 @@ def build_bundle(campaign: dict, sources: list[tuple[str, Path]], private_root: 
         "recipe_version": RECIPE_VERSION,
         "channels": [recipe["channel"] for recipe in recipes],
         "sources": source_hashes,
+        "exception_review": campaign.get("exception_summary") or {},
     }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     bundle_id = f"bundle_{fingerprint[:20]}"
     bundle_dir = private_root / campaign["id"] / bundle_id
@@ -106,6 +107,10 @@ def build_bundle(campaign: dict, sources: list[tuple[str, Path]], private_root: 
         "deliverable_count": len(deliverables),
         "rendered_bytes": total_bytes,
         "deliverables": deliverables,
+        "exception_review": campaign.get("exception_summary") or {
+            "allowed": True, "blocking": [], "unusable": [], "exceptions": [],
+            "open_warning_count": 0,
+        },
         "publishing_status": "not_published",
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
