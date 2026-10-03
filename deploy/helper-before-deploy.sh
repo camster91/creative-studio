@@ -11,15 +11,19 @@ set -euo pipefail
 umask 077
 exec 9>/lock/maintenance.lock
 flock -x 9
-mapfile -t ids < <(docker ps -q --filter "label=com.docker.compose.project=$1" --filter label=com.docker.compose.service=photogen)
+mapfile -t ids < <(docker ps -aq --filter "label=com.docker.compose.project=$1" --filter label=com.docker.compose.service=photogen)
 [[ ${#ids[@]} -le 1 ]] || exit 1
 container=${ids[0]:-photogen}
-[[ $(docker inspect -f '{{.State.Running}}' "$container") == true ]] || exit 1
+was_running=$(docker inspect -f '{{.State.Running}}' "$container")
 data=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/data"}}{{.Source}}{{end}}{{end}}' "$container")
 outputs=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/outputs"}}{{.Source}}{{end}}{{end}}' "$container")
 [[ $data == /root/photogen-data || $data == /opt/photogen-coolify/data ]] || exit 1
 [[ $outputs == /root/photogen-outputs || $outputs == /opt/photogen-coolify/outputs ]] || exit 1
-size=$(docker exec "$container" du -sk /app/data /app/outputs | awk '{total+=$1} END {print total}')
+image=$(docker inspect -f '{{.Image}}' "$container")
+size=$(docker run --rm --pull=never --network none --entrypoint du \
+  --mount "type=bind,source=$data,target=/app/data,readonly" \
+  --mount "type=bind,source=$outputs,target=/app/outputs,readonly" \
+  "$image" -sk /app/data /app/outputs | awk '{total+=$1} END {print total}')
 [[ $size =~ ^[0-9]+$ ]] || exit 1
 [[ $(df -Pk /recovery | awk 'NR==2 {print $4}') -gt $((1048576 + 2 * size)) ]] || exit 1
 docker volume ls -q | LC_ALL=C sort > /recovery/.photogen-volumes-$1-before
@@ -43,7 +47,7 @@ docker run --rm -i --pull=never --network none --read-only --user 0:0 \
   --mount "type=bind,source=$data,target=/app/data,readonly" \
   --mount "type=bind,source=$outputs,target=/app/outputs,readonly" \
   --mount "type=bind,source=/opt/retired-deployments/$name,target=/private" \
-  "$image" - "$image" "$retained" "$tag" "$name" <<'PY'
+  "$image" - "$image" "$retained" "$tag" "$name" "$was_running" <<'PY'
 import hashlib,json,os,pathlib,shutil,sqlite3,sys
 os.umask(0o077)
 base=pathlib.Path('/private'); snapshot=base/'snapshot'; snapshot.mkdir(mode=0o700)
@@ -86,10 +90,10 @@ for db in databases:
 assert all(sha(pathlib.Path(p))==v for p,v in regular.items())
 (base/'storage-manifest.private.json').write_text(json.dumps(files))
 (base/'database-tables.private.json').write_text(json.dumps(databases))
-proof={'backupDirectory':'/opt/retired-deployments/'+sys.argv[4],'fileCount':len(files),'sqliteDatabases':len(databases),'restoredTableHashesMatch':True,'independentRestoreFilesMatch':True,'sourceImage':sys.argv[1],'protectedImage':sys.argv[2],'protectedTag':sys.argv[3],'rootFSLayersMatch':True,'liveContainerStopped':False}
+proof={'backupDirectory':'/opt/retired-deployments/'+sys.argv[4],'fileCount':len(files),'sqliteDatabases':len(databases),'restoredTableHashesMatch':True,'independentRestoreFilesMatch':True,'sourceImage':sys.argv[1],'protectedImage':sys.argv[2],'protectedTag':sys.argv[3],'rootFSLayersMatch':True,'liveContainerStopped':False,'sourceContainerWasRunning':sys.argv[5]=='true'}
 (base/'recovery-proof.json').write_text(json.dumps(proof,indent=2));print(json.dumps(proof))
 PY
-[[ $(docker inspect -f '{{.State.Running}}' "$container") == true ]] || exit 1
+[[ $(docker inspect -f '{{.State.Running}}' "$container") == "$was_running" ]] || exit 1
 docker volume ls -q | LC_ALL=C sort > /recovery/.photogen-volumes-$1-after
 cmp /recovery/.photogen-volumes-$1-before /recovery/.photogen-volumes-$1-after
 HOST
