@@ -1,6 +1,7 @@
 services:
   photogen:
     image: ${PHOTOGEN_IMAGE:?Set a verified immutable image digest}
+    pull_policy: never
     restart: unless-stopped
     read_only: true
     ports:
