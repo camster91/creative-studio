@@ -40,7 +40,7 @@ services:
     tmpfs:
       - /tmp:rw,nosuid,size=128m
     networks:
-      - private
+      - candidate
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5173/api/whoami"]
       interval: 30s
@@ -49,5 +49,5 @@ services:
       retries: 3
 
 networks:
-  private:
-    internal: true
+  candidate:
+    driver: bridge

@@ -33,8 +33,13 @@ not establish account, browser, paid-generation or current-main compatibility.
    locally available recovery image or verified registry digest as `PHOTOGEN_IMAGE`.
    Store separate synthetic candidate session/admin secrets only in Coolify's
    secret configuration. Never commit, export or print their values.
-4. The service uses private loopback port 15173, an internal network, a read-only
+4. The service uses private loopback port 15173, a dedicated bridge network, a read-only
    application filesystem, writable copied storage and a temporary `/tmp`.
+   A standard bridge enables localhost port forwarding. This network permits
+   outbound connections; isolation comes from loopback-only ingress, absent
+   provider credentials and zero spend. An internal-only Docker network was
+   tested but prevented host access to the published port. No host firewall or
+   shared proxy changes are required.
    Missing bind directories fail rather than creating root-owned empty stores.
 5. No provider, mail, Stripe or Figma credentials are included. Daily spend is
    zero. Verify health, private-state authorization, account/data compatibility,
