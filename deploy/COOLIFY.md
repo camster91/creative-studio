@@ -53,6 +53,19 @@ The latter performs SSH staging/production deployment; do not enable it merely
 to obtain an image. Replace its deployment operations with the reviewed Coolify
 flow before activation, preserving build/smoke requirements and production approval.
 
+The draft `Build PhotoGen Coolify Image` workflow is a separate replacement for
+image publication. It runs only after `CI Build` succeeds for a push to this
+repository's main branch, checks out that exact tested SHA, builds on GitHub's
+runner and labels the image with its full revision. A network-none, read-only
+smoke container uses temporary storage, synthetic secrets and zero spend. It
+must pass page/health/private-state checks before the full-SHA image is pushed
+to GHCR and its immutable digest is recorded. It does not move `latest`, use
+SSH credentials, deploy either existing site or change Coolify/proxy settings.
+The legacy `Deploy Creative Studio` workflow stays disabled. Approval is needed
+before merging/activating the new workflow or enabling existing CI. Actual
+hosted CI/build/smoke/publication results and VPS registry read access remain
+unverified; local workflow validation is not evidence of a built release.
+
 The helper-compatible `deploy/helper-before-deploy.sh <resource UUID>` now
 verifies consistent SQLite snapshots, all stored files, an independent restore
 and the preceding image. Its host-lock rehearsal passed against the original
