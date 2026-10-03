@@ -2,6 +2,19 @@ services:
   photogen:
     image: ${PHOTOGEN_IMAGE:?Set a verified immutable image digest}
     pull_policy: never
+    command:
+      - /app/.venv/bin/gunicorn
+      - -w
+      - "1"
+      - -b
+      - 0.0.0.0:5173
+      - --timeout
+      - "300"
+      - --access-logfile
+      - "-"
+      - --error-logfile
+      - "-"
+      - scripts.creative-studio-web:app
     restart: unless-stopped
     read_only: true
     ports:
