@@ -21,7 +21,7 @@ outputs=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/outputs
 [[ $outputs == /root/photogen-outputs || $outputs == /opt/photogen-coolify/outputs ]] || exit 1
 image=$(docker inspect -f '{{.Image}}' "$container")
 size=$(docker run --rm --pull=never --network none --entrypoint du \
-  --mount "type=bind,source=$data,target=/app/data,readonly" \
+  --mount "type=bind,source=$data,target=/app/data" \
   --mount "type=bind,source=$outputs,target=/app/outputs,readonly" \
   "$image" -sk /app/data /app/outputs | awk '{total+=$1} END {print total}')
 [[ $size =~ ^[0-9]+$ ]] || exit 1
@@ -44,7 +44,7 @@ after_layers=$(docker image inspect -f '{{json .RootFS.Layers}}' "$tag")
 retained=$(docker image inspect -f '{{.Id}}' "$tag")
 docker run --rm -i --pull=never --network none --read-only --user 0:0 \
   --entrypoint /usr/local/bin/python \
-  --mount "type=bind,source=$data,target=/app/data,readonly" \
+  --mount "type=bind,source=$data,target=/app/data" \
   --mount "type=bind,source=$outputs,target=/app/outputs,readonly" \
   --mount "type=bind,source=/opt/retired-deployments/$name,target=/private" \
   "$image" - "$image" "$retained" "$tag" "$name" "$was_running" <<'PY'
@@ -75,7 +75,11 @@ for label in ['data','outputs']:
         if p.name.endswith(('-wal','-shm','-journal')):continue
         rel=p.relative_to(root); dest=snapshot/label/rel; dest.parent.mkdir(parents=True,exist_ok=True)
         if p.suffix.lower() in ['.db','.sqlite','.sqlite3']:
+            # Read-only SQLite connections can need writable WAL coordination files.
+            # Open them as the database owner, never as root or with SQL write access.
+            os.seteuid(p.stat().st_uid)
             c=sqlite3.connect('file:'+str(p)+'?mode=ro',uri=True);c.execute('BEGIN');c.execute('SELECT count(*) FROM sqlite_master').fetchone(); expected=tables(c)
+            os.seteuid(0)
             target=sqlite3.connect(dest);c.backup(target);target.execute('PRAGMA journal_mode=DELETE')
             assert target.execute('PRAGMA integrity_check').fetchone()==('ok',) and tables(target)==expected
             target.close();c.close();databases.append({'path':label+'/'+str(rel),'tables':expected})
