@@ -48,8 +48,13 @@ The latter performs SSH staging/production deployment; do not enable it merely
 to obtain an image. Replace its deployment operations with the reviewed Coolify
 flow before activation, preserving build/smoke requirements and production approval.
 
-Before each real deployment, attach and exercise a helper-compatible backup guard
-that verifies SQLite snapshots, stored files and the preceding image. Preserve
+The helper-compatible `deploy/helper-before-deploy.sh <resource UUID>` now
+verifies consistent SQLite snapshots, all stored files, an independent restore
+and the preceding image. Its host-lock rehearsal passed against the original
+app without stopping it or changing Docker volumes. Attach it as the private
+candidate custom build command followed by `&& true`; the start command must
+use `up --detach --no-build --pull never`. Exercise a real deployment job and
+verify its recovery receipt before treating the guard as attached. Preserve
 the current session/signing secrets privately for an eventual accepted cutover.
 Current-main migration and preceding-version rollback must both be qualified on
 copies before changing the live database or domain.
