@@ -205,7 +205,7 @@ def _get_api_key() -> str:
     return ""
 
 
-def _require_api_key() -> tuple:
+def _require_api_key(credits: int = 1) -> tuple:
     """Return (key, None) if a key is available, else (None, error_response).
 
     Returns a tuple of (Optional[str], Optional[Response]) so callers can do
@@ -222,32 +222,53 @@ def _require_api_key() -> tuple:
        If credits are exhausted, returns 402 with the trial-expired
        message.
 
+    `credits` is how many credits the call costs a signed-in user on
+    the credit path (generation callers pass images x tier weight).
+    The deduction is all-or-nothing: a short balance spends nothing.
+    Only call this from endpoints that actually generate; read-only
+    endpoints use _require_access(), which never spends.
+
     Returns: (key, err, used_trial_credit) where used_trial_credit
-    is True if we burned a credit on this call. The third value
+    is True if we burned credits on this call. The third value
     is None if err is not None.
     """
     key: Optional[str] = _get_api_key()
     if key:
         return key, None, False
 
-    # Try the trial-credit fallback
+    # Try the credit fallback
     sess = _current_session()
-    if sess and sess.get("credits_remaining", 0) > 0:
-        ok, remaining = _use_trial_credit(sess["user_id"])
-        if ok:
-            # Use the server fallback key for the actual generation
-            if SERVER_API_KEY:
-                return SERVER_API_KEY, None, True
-            # Server has no fallback key but user is signed in
-            # with credits — weird state, but we should still
-            # surface a helpful error rather than silently 402.
+    balance = sess.get("credits_remaining", 0) if sess else 0
+    if sess and balance >= credits:
+        # Check the server key BEFORE spending so a misconfigured host
+        # never burns credits on a request that can't run.
+        if not SERVER_API_KEY:
             return None, (
                 jsonify({
-                    "error": "Trial credit burned but no server-side API key configured",
-                    "message": "Set CREATIVE_ALLOW_SERVER_FALLBACK=true and GEMINI_API_KEY on the host.",
+                    "error": "No server-side API key configured for credit-based generation",
+                    "message": "Set GEMINI_API_KEY on the host. No credits were charged.",
                 }),
                 500,
             ), None
+        ok, _remaining = _spend_credits(sess["user_id"], credits)
+        if ok:
+            return SERVER_API_KEY, None, True
+        # Lost a race with a concurrent request; report the fresh balance.
+        sess = _current_session()
+        balance = sess.get("credits_remaining", 0) if sess else 0
+    if sess and 0 < balance < credits:
+        return None, (
+            jsonify({
+                "error": "Not enough credits",
+                "message": (
+                    f"This request needs {credits} credits and you have {balance}. "
+                    "Use fewer variations or a lower quality tier, or add your own Gemini API key."
+                ),
+                "credits_required": credits,
+                "credits_remaining": balance,
+            }),
+            402,
+        ), None
 
     # No key, no credits — return 402
     message = (
@@ -255,19 +276,55 @@ def _require_api_key() -> tuple:
         "or sign up for a free Photogen account and use one of your 5 trial credits. "
         "We don't store or train on your key — cost is billed directly to your Google account."
     )
+    error = "BYOK or sign-in required"
     if sess and sess.get("credits_remaining", 0) == 0:
-        message = (
-            "Your 5 free trial credits are used up. "
-            "Add your own Gemini API key in the editor sidebar to keep going. "
-            "We don't store or train on your key — cost is billed directly to your Google account."
-        )
+        error = "Out of credits"
+        if _has_subscription(sess["user_id"]):
+            message = (
+                "You've used all of this billing period's plan credits. "
+                "They reset when your plan renews. "
+                "Add your own Gemini API key in the editor sidebar to keep going."
+            )
+        else:
+            message = (
+                "Your 5 free trial credits are used up. "
+                "Choose a plan in Settings → Billing, or add your own Gemini API key in the editor sidebar to keep going. "
+                "We don't store or train on your key — cost is billed directly to your Google account."
+            )
     return None, (
         jsonify({
-            "error": "BYOK or sign-in required",
+            "error": error,
             "message": message,
         }),
         402,
     ), None
+
+
+def _has_subscription(user_id: str) -> bool:
+    with _auth_db() as database:
+        row = database.execute(
+            "SELECT subscription_tier FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    return bool(row and row["subscription_tier"])
+
+
+def _require_access():
+    """Non-spending auth gate for read-only / status / cancel endpoints.
+
+    Accepts the same callers as _require_api_key() (own key, server
+    fallback, or a signed-in session) but never touches credits, so
+    polling a job or listing chat history is free. Returns an error
+    response, or None when the caller may proceed.
+    """
+    if _get_api_key() or _current_session():
+        return None
+    return (
+        jsonify({
+            "error": "BYOK or sign-in required",
+            "message": "Add your Gemini API key in the editor sidebar, or sign in.",
+        }),
+        402,
+    )
 
 
 def _trial_credit_response_meta(user_email: str, remaining: int) -> dict:
@@ -1091,6 +1148,14 @@ def _use_trial_credit(user_id: str) -> tuple[bool, int]:
     return _auth_service.use_trial_credit(AUTH_DB, user_id)
 
 
+def _spend_credits(user_id: str, amount: int) -> tuple[bool, int]:
+    return _auth_service.spend_credits(AUTH_DB, user_id, amount)
+
+
+def _refund_credits(user_id: str, amount: int) -> None:
+    _auth_service.refund_credits(AUTH_DB, user_id, amount)
+
+
 def _parse_generations_json(raw: str) -> list:
     return _project_service.parse_generations(raw)
 
@@ -1572,6 +1637,8 @@ def _admin_authed() -> bool:
 # The whole billing surface is "fail-closed when unconfigured": if
 # STRIPE_SECRET_KEY isn't set, the checkout / portal / webhook
 # endpoints return 503 with a clear "billing not configured" error.
+# Live keys (sk_live_/rk_live_) are also refused with 503 unless
+# PHOTOGEN_ALLOW_LIVE_STRIPE=1 is set.
 # This way, the rest of the app keeps working in BYOK mode without
 # Stripe ever being set up.
 import stripe as _stripe_lib  # noqa: E402  (after the import block above)
@@ -1704,7 +1771,7 @@ app.register_blueprint(
     _create_core_blueprint(
         landing_template=LANDING_TEMPLATE,
         app_template=APP_TEMPLATE,
-        require_api_key=_require_api_key,
+        require_access=_require_access,
         current_actor_id=_current_actor_id,
         job_store=_job_store,
         jobs=_jobs,
@@ -1721,6 +1788,7 @@ app.register_blueprint(
         owned_asset_paths=_owned_asset_paths,
         shared_figma_enabled=lambda: os.environ.get("CREATIVE_ENABLE_SHARED_FIGMA_TOKEN") == "1" and _admin_authed(),
         require_api_key=_require_api_key,
+        require_access=_require_access,
         get_api_key=_get_api_key,
         enforce_prompt_length=_enforce_prompt_length,
         enforce_daily_limit=enforce_daily_limit,
@@ -1729,9 +1797,9 @@ app.register_blueprint(
         safe_output_path=_safe_output_relpath,
         get_data_dir=lambda: DATA_DIR,
         new_session_id=new_session_id,
-        run_composite=run_cli_composite,
+        run_composite=lambda *args, **kwargs: run_cli_composite(*args, **kwargs),
         run_export=run_cli_export,
-        run_qc=run_cli_qc,
+        run_qc=lambda *args, **kwargs: run_cli_qc(*args, **kwargs),
         add_entry=add_entry,
         load_session=load_session,
         save_session=save_session,
@@ -1745,6 +1813,7 @@ app.register_blueprint(
         resolve_campaign_pack=_resolve_campaign_pack,
         record_campaign_qc=_record_campaign_qc,
         get_campaign=_get_campaign,
+        refund_credits=_refund_credits,
     )
 )
 
@@ -1792,7 +1861,7 @@ app.register_blueprint(
         run_job_background=_run_job_background,
         jobs=_jobs,
         jobs_lock=_jobs_lock,
-        run_generate=run_cli_generate,
+        run_generate=lambda *args, **kwargs: run_cli_generate(*args, **kwargs),
         add_entry=add_entry,
         load_costs=load_costs,
         save_costs=save_costs,
@@ -1810,6 +1879,8 @@ app.register_blueprint(
         current_version_node=_current_version_node,
         record_provider_results=_record_provider_results,
         fetch_owner_figma_context=_fetch_owner_figma,
+        require_access=_require_access,
+        refund_credits=_refund_credits,
     )
 )
 app.register_blueprint(
@@ -1840,6 +1911,9 @@ app.register_blueprint(
         current_version_node=_current_version_node,
         estimate_cost=cost_for_tier,
         record_provider_results=_record_provider_results,
+        require_access=_require_access,
+        current_session=_current_session,
+        refund_credits=_refund_credits,
     )
 )
 app.register_blueprint(
@@ -1863,10 +1937,11 @@ app.register_blueprint(
         auth_db=_auth_db,
         current_session=_current_session,
         stripe_configured=_stripe_configured,
+        stripe_live_blocked=_billing_service.live_mode_blocked,
         stripe_api=_stripe_api,
         get_or_create_customer=_get_or_create_stripe_customer,
         resolve_price_id=_resolve_price_id,
-        handle_event=_billing_service.handle_event,
+        process_event=_billing_service.process_event,
         rate_limited=rate_limited,
     )
 )
@@ -1928,7 +2003,7 @@ app.register_blueprint(
 )
 app.register_blueprint(
     _create_state_blueprint(
-        require_api_key=_require_api_key,
+        require_access=_require_access,
         current_actor_id=_current_actor_id,
         safe_pin_path=_safe_pin_path,
         safe_pin_id=_safe_pin_id,
@@ -1980,13 +2055,14 @@ app.register_blueprint(
 app.register_blueprint(
     _create_chat_blueprint(
         require_api_key=_require_api_key,
+        require_access=_require_access,
         current_actor_id=_current_actor_id,
         enforce_prompt_length=_enforce_prompt_length,
         safe_filename=_safe_filename,
         save_upload=_save_upload,
         get_data_dir=lambda: DATA_DIR,
         get_chat_sessions=lambda: _chat_sessions,
-        run_chat_turn=run_cli_chat_turn,
+        run_chat_turn=lambda *args, **kwargs: run_cli_chat_turn(*args, **kwargs),
         chat_history=chat_session_history,
         reset_chat=chat_reset,
         new_session_id=new_session_id,
@@ -1997,6 +2073,8 @@ app.register_blueprint(
         current_version_node=_current_version_node,
         estimate_cost=cost_for_tier,
         record_provider_results=_record_provider_results,
+        current_session=_current_session,
+        refund_credits=_refund_credits,
     )
 )
 app.register_blueprint(

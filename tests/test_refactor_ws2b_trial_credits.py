@@ -37,6 +37,16 @@ def cs(tmp_path):
     return _load_module(tmp_path)
 
 
+def _stub_generation(mod):
+    """Credit mode (server key set, fallback off) with the provider stubbed
+    so a successful generation keeps its charge. No network."""
+    mod.run_cli_generate = lambda *_args, **kwargs: [
+        {"url": "/image/stub.png", "cost": 0.02, "model": "stub"}
+        for _ in range(kwargs.get("variations", 1))
+    ]
+    return mod
+
+
 def _signup_and_login(client, email):
     r = client.post("/signup", json={"email": email})
     token = r.get_json()["token"]
@@ -60,7 +70,7 @@ class TestRequireApiKey:
 
     def test_signed_in_no_server_fallback_burns_credit(self, tmp_path):
         """No X-API-Key + signed in + server fallback disabled -> credit burned."""
-        cs = _load_module(tmp_path, server_api_key="", allow_fallback=False)
+        cs = _stub_generation(_load_module(tmp_path, allow_fallback=False))
         client = cs.app.test_client()
         sess = _signup_and_login(client, "burns-credit@x.co")
         client.post("/api/generate",
@@ -107,11 +117,12 @@ class TestRequireApiKey:
             json={"prompt": "x", "tier": "fast", "aspect_ratio": "1:1"},
             headers={"X-Session-Token": sess})
         assert r.status_code == 402
+        assert r.get_json()["error"] == "Out of credits"
         assert "used up" in r.get_json()["message"].lower()
 
     def test_5_then_6_returns_402(self, tmp_path):
         """5 trial credits -> 5 pass the gate, 6th 402. No server fallback."""
-        cs = _load_module(tmp_path, server_api_key="", allow_fallback=False)
+        cs = _stub_generation(_load_module(tmp_path, allow_fallback=False))
         client = cs.app.test_client()
         sess = _signup_and_login(client, "five-then-six@x.co")
         for i in range(5):
@@ -130,8 +141,8 @@ class TestRequireApiKey:
 
 class TestNoServerFallback:
     def test_signed_in_with_credit_but_no_server_key_returns_500(self, tmp_path):
-        """If credits are burned but SERVER_API_KEY is empty (degenerate
-        config), return 500 with a clear error."""
+        """If SERVER_API_KEY is empty (degenerate config), return 500 with
+        a clear error and do not burn the credit."""
         cs = _load_module(tmp_path, server_api_key="", allow_fallback=False)
         client = cs.app.test_client()
         sess = _signup_and_login(client, "no-server-key@x.co")
@@ -141,13 +152,16 @@ class TestNoServerFallback:
         assert r.status_code == 500
         body = r.get_json()
         assert "Trial credit burned" in body["error"] or "server-side" in body["error"]
+        with cs._auth_db() as db:
+            user = db.execute("SELECT * FROM users WHERE email = ?", ("no-server-key@x.co",)).fetchone()
+            assert user["credits_remaining"] == 5
 
 
 # ─── Rate limiter still applies ─────────────────────────────────────────
 
 class TestRateLimiterStillApplies:
     def test_burns_all_5_then_blocks_at_402(self, tmp_path, monkeypatch):
-        cs = _load_module(tmp_path, server_api_key="", allow_fallback=False)
+        cs = _stub_generation(_load_module(tmp_path, allow_fallback=False))
         monkeypatch.setattr(cs, "_RATE_LIMIT", 1000)
         client = cs.app.test_client()
         sess = _signup_and_login(client, "brute@x.co")

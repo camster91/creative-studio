@@ -8,7 +8,7 @@ from flask import Blueprint, jsonify, request
 
 def create_blueprint(
     *,
-    require_api_key: Callable,
+    require_access: Callable,
     current_actor_id: Callable[[], str | None],
     safe_pin_path: Callable[[str], str],
     safe_pin_id: Callable[[str], str],
@@ -30,8 +30,8 @@ def create_blueprint(
             return None, (jsonify({"error": "Sign in or provide an API key"}), 401)
         if actor_id.startswith("user:"):
             return actor_id, None
-        _key, error, _used_trial_credit = require_api_key()
-        return actor_id, error
+        # Read/annotate endpoints never spend credits.
+        return actor_id, require_access()
 
     @blueprint.post("/api/pins")
     @rate_limited
