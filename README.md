@@ -1,193 +1,127 @@
-# CPG/DTC AI Photography Studio
+# Creative Studio (Photogen)
 
-> AI-powered product photography for Consumer Packaged Goods (CPG) and Direct-to-Consumer (DTC) brands.
-> Your exact prompts go straight to the model. No creative director rewriting.
+AI product photography for CPG and DTC brands. Your exact prompt goes straight to the image model, with no hidden "creative director" rewriting.
 
-## Two Products in One Repo
+![Creative Studio editor](tests/browser/__snapshots__/studio-desktop.png)
 
-| Product | Description | Audience |
-|---------|-------------|----------|
-| **CLI Skill** | Command-line tool for power users | Developers, AI researchers |
-| **Web App** | Visual platform for marketing teams to generate product photography at scale | CPG brands, DTC marketers |
+## What it is
 
-**Web app:** production deployment is operator-managed; verify `/api/whoami`
-before relying on a previously published version.
+Creative Studio is two tools that share one generation core:
 
----
+- **Web app (Photogen):** a Flask app where marketing teams upload a product photo, pick a scene, and generate on-brand product shots. A guided Campaign Factory turns brand and SKU details into repeatable, checked production runs.
+- **CLI:** a command-line tool for power users that runs the same Google Gemini image pipeline from the terminal, including a variations then refine workflow and Figma-aware generation.
 
-## CLI Skill (v4.5)
+The goal is predictable product imagery: the real packaging is composited into AI-generated scenes, so the product itself is never hallucinated.
 
-```bash
-cd cli/
-env GEMINI_API_KEY="..." FIGMA_ACCESS_TOKEN="..." bash launch.sh variations \
-  --prompt "G FUEL shelf display" \
-  --input-image product.png \
-  --tier quality --smart \
-  --aspect-ratio 16:10 \
-  -v 4
-```
+## Key features
 
-**Features:**
-- ✅ `--smart` prompt enhancement with reasoning model
-- ✅ `--tier` quality presets (fast → ultra)
-- ✅ `variations` → `refine` pick-and-refine workflow
-- ✅ Figma-aware design context extraction
-- ✅ Vision pre-analysis of reference images
-- ✅ Cost tracking + config persistence
-- ✅ Aspect ratio control (1:1, 16:9, 16:10, 4:3, 3:2, 9:16)
+### Web app
 
-**Files:**
-- `cli/scripts/creative_studio.py` — Main CLI
-- `cli/scripts/figma_utils.py` — Figma API integration
-- `cli/scripts/analyze.py` — Vision analysis helpers
-- `cli/scripts/plan.py` — Prompt planning
-- `cli/launch.sh` — Entry point
-- `cli/recipes/*.json` — Prompt templates
+- Text-to-image and image-to-image generation with Google Gemini, using your own API key (BYOK) or an optional shared key
+- Product compositing: upload transparent packaging and the AI builds only the scene around it
+- Scene presets (In-hand, Studio, Action, Lifestyle, With props) and six aspect ratios
+- Four quality tiers (fast, balanced, quality, ultra) with per-image cost tracking
+- Batch generation with background jobs and streaming partial results
+- Version history with branching, favorites, undo, and cost recovery
+- Pin annotations, refine, variations, and a multi-turn chat mode
+- Advisory quality checks (QC) and multi-format export bundles (ZIP)
+- Campaign Factory: Brand Passport, SKU Product Truth, deterministic readiness checks, and channel export bundles
+- Accounts with magic-link login, Stripe billing, Figma OAuth for design context
+- Server-side daily spend limit, rate limiting, upload validation, and owner-scoped data
+- Privacy-safe provider ledger (no prompts, images, or keys stored) for cost, latency, and outcome metrics
 
----
+### CLI
 
-## Web App (Deployed at https://photogen.ashbi.ca)
+| Command | What it does |
+|---|---|
+| `direct` | One-shot generation from your exact prompt |
+| `chat` | Multi-turn session where each output feeds the next turn |
+| `variations` | Generate 1 to 8 variations to pick from |
+| `refine` | Pick a variation and refine it |
+| `composite` | Generate a background, then place the real product on top |
+| `figma` | Generate an asset that matches a Figma design's layout and colors |
+| `brainstorm` | Ask clarifying questions and surface directions before generating |
+| `analyze`, `qc`, `quality` | Vision analysis and automatic quality checks |
+| `export` | Crop one image into Amazon, Shopify, Meta, Pinterest, web hero, and print formats |
+| `review` | Browse output folders |
 
-### Current (v4.6.0)
+Most generation commands accept `--tier`, `--aspect-ratio`, and `--smart` (prompt enhancement with a reasoning model). Prompt recipes live in `recipes/`.
 
-- Direct generation (text-to-image, BYOK via Gemini API)
-- Product compositing (upload your packaging, AI builds the scene around it)
-- 4 quality tiers (Fast $0.02 / Balanced $0.05 / Quality $0.09 / Ultra $0.24)
-- 6 aspect ratios (1:1, 4:3, 16:9, 9:16, 2:3, 4:5)
-- 4 platform presets (Amazon / Instagram / Email / Pinterest) — auto-set prompt + aspect
-- Batch 4-up (parallel generation with streaming partial results)
-- Server-side daily cost guardrail (`CREATIVE_DAILY_LIMIT`, default $5/day)
-- Live session gallery with multi-select + ZIP export
-- Durable version history with branching, favorite, back/undo, and cost recovery
-- Pin annotations, refine, variations, chat mode, and an advisory QC API
-- Cost tracking (per-image, per-day, per-session)
-- Privacy-safe provider ledger with cost variance, latency, outcomes, and alerts
-- Lightbox, skeleton loaders, prompt history, copy-prompt, Ctrl+Enter
-- `/api/whoami` endpoint to surface BYOK vs shared-key status
-- Guided Campaign Factory with Brand Passport, SKU Product Truth, deterministic
-  readiness checks, and a one-click handoff to the durable generator
+## Tech stack
 
-### Architecture
+- **Backend:** Python 3.10+, Flask, gunicorn
+- **AI:** Google Gemini via `google-genai`
+- **Images:** Pillow
+- **Data:** SQLite plus JSON on persistent volumes
+- **Payments:** Stripe
+- **Frontend:** server-rendered HTML templates with vanilla JavaScript and CSS
+- **Tooling:** uv, pytest, Playwright (browser release gate with axe-core), Docker
+- **CI:** GitHub Actions (pytest, JS syntax check, Playwright, CodeQL)
 
-The Flask entry script composes independently tested service modules and route
-blueprints from `creative_studio_app/`; it contains no route implementations.
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the authoritative module,
-state, CLI/web, and verification boundaries.
+## Getting started
 
-### UX Flow
+Requirements: Python 3.10+ (3.12 recommended), [uv](https://docs.astral.sh/uv/), and a Google Gemini API key. Node 20 is only needed for browser tests.
 
-For repeatable CPG production, start at `/campaigns`: define the brand and SKU
-truth, complete a bounded work order, pass readiness, and press Go. The `/app`
-editor remains available for direct prompt work and detailed iteration.
-
-1. **Login** → See projects: "G FUEL Summer 2026", "Prymal Rebrand"
-2. **New Project** → Select brand profile → Pick scene template
-3. **Upload** → Drag product PNGs (transparent background)
-4. **Brief** → Type description or pick recipe
-5. **Generate** → Background task spins 4 variations per SKU
-6. **Compare** → v1-v4 grid, click favorite, type refinement
-7. **Refine** → Iterate until satisfied
-8. **Export** → Select format preset → ZIP download
-
-### Scene Templates (Built-in)
-
-| Template | Description |
-|----------|-------------|
-| Retail Shelf | Clean wooden shelf, warm lighting, brand products only |
-| Studio White | Pure white background, centered product |
-| Lifestyle Kitchen | Products on a marble counter, morning light |
-| Lifestyle Gym | Shaker bottle being held, gym background |
-| Social Media Hero | 16:9 landscape with copy space for text |
-| Amazon A+ | 2000×2000 with mandatory white space |
-
-### Format Presets
-
-| Platform | Size | Background | Notes |
-|----------|------|-----------|-------|
-| Amazon PDP | 2000×2000 | White | Min 500px, max 10000px |
-| Shopify | 2048×2048 | White | Square for grid, landscape for hero |
-| Meta Feed | 1080×1080 | Any | 4:5 for feed, 9:16 for stories |
-| Pinterest | 1000×1500 | Any | 2:3 vertical |
-| Print Catalog | 300 DPI | Any | CMYK color space |
-
-### Tech Stack
-
-| Layer | Choice |
-|-------|--------|
-| Backend | Flask + gunicorn |
-| Database | SQLite |
-| Queue | Durable SQLite lifecycle with bounded in-process workers |
-| Frontend | Vanilla JavaScript |
-| Storage | Owner-scoped metadata plus mounted local volumes |
-| AI | Google Gemini (same as CLI) |
-| Deploy | Docker + Coolify VPS |
-
----
-
-## Development Roadmap
-
-### Phase 1: CLI Skill (v4.x) — Shipped
-- [x] Prompt enhancement engine
-- [x] Quality tiers (fast / balanced / quality / ultra)
-- [x] Pick-and-refine workflow
-- [x] Figma integration
-- [x] Vision pre-analysis
-- [x] Aspect ratio control
-- [x] Image-to-image and text-to-image modes
-
-### Phase 2: Web App MVP — Shipped (v4.5.1)
-- [x] Flask backend with all CLI features surfaced in the UI
-- [x] Upload → generate → compare flow
-- [x] Session persistence
-- [x] Export ZIP (multi-image)
-- [x] Server-side cost guardrail
-- [x] Platform presets
-- [x] Batch 4-up
-- [x] Product compositing
-- [x] Quality tiers with real per-image pricing
-- [x] BYOK + shared-key modes
-
-### Phase 3: Production hardening — In progress
-- [x] Split route implementations into Flask blueprints
-- [x] Owner-scope sessions, pins, chats, and library assets
-- [x] Fail closed for email identity and shared Figma credentials
-- [x] Prevent pull-request deployment and require container smoke checks
-- [x] Persist owner-scoped, idempotent batch job state and partial results
-- [ ] Multi-brand workspaces (project → assets → export bundle)
-- [ ] Asset library (reuse product PNGs across sessions)
-- [ ] Review/comment system (collaborative)
-- [ ] Shopify/Amazon CMS direct export
-- [ ] Team accounts + spend attribution per workspace
-- [ ] Inpainting / mask-based edits
-- [ ] Onboarding wizard for new users
-
----
-
-## Installation
-
-### CLI Skill
 ```bash
 git clone https://github.com/camster91/creative-studio.git
-cd creative-studio/cli
-pip install -r requirements.txt  # or: uv sync
----
-
-## Web App (Live)
-
-**Live URL:** https://photogen.ashbi.ca
-
-```bash
-# To run locally:
-export GEMINI_API_KEY="..."
-bash launch.sh  # or: python -m scripts.creative-studio-web
+cd creative-studio
+make install            # creates .venv and installs the app with test deps
 ```
 
-Production configuration, backups, rollback, and incident controls are defined
-in [docs/PRODUCTION.md](docs/PRODUCTION.md). Security reports follow
-[SECURITY.md](SECURITY.md).
+Configuration is read from environment variables. Copy `.env.example` as a reference for the available settings (never commit real keys).
 
----
+### Run the web app
+
+```bash
+export GEMINI_API_KEY="your-key"
+.venv/bin/python scripts/creative-studio-web.py --port 5173
+```
+
+Then open http://localhost:5173. The editor is at `/app` and the Campaign Factory at `/campaigns`.
+
+Or run it in Docker:
+
+```bash
+make build
+docker run -p 5173:5173 -e GEMINI_API_KEY="your-key" creative-studio:latest
+```
+
+### Run the CLI
+
+```bash
+export GEMINI_API_KEY="your-key"
+bash launch.sh variations --prompt "Protein tub on a clean oak shelf, warm light" \
+  --input-image product.png --tier quality --aspect-ratio 16:10 -v 4
+bash launch.sh refine --session <vars-folder> --pick v2 --changes "softer shadows"
+```
+
+`FIGMA_ACCESS_TOKEN` is optional and only needed for the `figma` command.
+
+## Testing
+
+```bash
+make test               # pytest suite in tests/
+make test-js            # syntax check for static/app.js
+npm ci
+npx playwright install chromium
+npm test                # Playwright browser release gate (starts the app itself)
+```
+
+## Project structure
+
+```
+creative_studio_app/   Service modules and Flask route blueprints
+scripts/               Web entry point, CLI, Figma and vision helpers, backups
+templates/             HTML pages (landing, editor, campaigns, billing, auth)
+static/                Frontend JavaScript and CSS
+recipes/               Prompt recipe templates
+content/blog/          Blog posts served by the app
+tests/                 pytest suite and Playwright browser tests
+docs/                  Architecture, QC, and release notes
+```
+
+More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/QC.md](docs/QC.md), and [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT — Free for commercial use.
+MIT. See [LICENSE](LICENSE).
