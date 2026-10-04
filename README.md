@@ -2,8 +2,6 @@
 
 AI product photography for CPG and DTC brands. Your exact prompt goes straight to the image model, with no hidden "creative director" rewriting.
 
-![Creative Studio editor](tests/browser/__snapshots__/studio-desktop.png)
-
 ## What it is
 
 Creative Studio is two tools that share one generation core:
