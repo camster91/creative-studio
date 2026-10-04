@@ -8,6 +8,8 @@ from collections.abc import Callable
 
 from flask import Blueprint, jsonify, request, send_file
 
+from .billing import charge_for_images, unknown_tier_error
+
 
 def create_blueprint(
     *,
@@ -42,6 +44,7 @@ def create_blueprint(
     resolve_campaign_pack: Callable = lambda *_args: None,
     record_campaign_qc: Callable = lambda *_args: None,
     get_campaign: Callable = lambda *_args: None,
+    refund_credits: Callable[[str, int], None] = lambda *_args: None,
 ) -> Blueprint:
     blueprint = Blueprint("delivery_routes", __name__)
 
@@ -112,10 +115,13 @@ def create_blueprint(
         length_error = enforce_prompt_length(prompt)
         if length_error is not None:
             return length_error
-        api_key, error, _used_trial_credit = require_api_key()
+        error = require_access()
         if error is not None:
             return error
         tier = request.form.get("tier", "balanced")
+        tier_error = unknown_tier_error(tier)
+        if tier_error is not None:
+            return jsonify(tier_error), 400
         try:
             variations = min(8, max(1, int(request.form.get("variations", "1"))))
         except ValueError:
@@ -135,10 +141,17 @@ def create_blueprint(
         parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
         if not validate_version_parent(session_id, owner_id, parent_node_id):
             return jsonify({"error": "Parent version not found"}), 404
+        # Each variation is one composited image, charged at the request tier.
+        api_key, error, refund = charge_for_images(
+            require_api_key, current_session, refund_credits, tier, variations
+        )
+        if error is not None:
+            return error
         call_started = time.monotonic()
         images = []
         for index in range(variations):
             images.extend(run_composite(prompt, str(product), api_key, aspect, tier=tier, name_suffix=f"{index + 1}-{new_session_id()[:6]}"))
+        refund(variations - sum(1 for image in images if "error" not in image))
         record_provider_results(
             owner_id, session_id, images, estimated_cost_each=estimate_cost(tier),
             latency_ms=(time.monotonic() - call_started) * 1000,

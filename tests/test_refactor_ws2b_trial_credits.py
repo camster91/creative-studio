@@ -117,6 +117,7 @@ class TestRequireApiKey:
             json={"prompt": "x", "tier": "fast", "aspect_ratio": "1:1"},
             headers={"X-Session-Token": sess})
         assert r.status_code == 402
+        assert r.get_json()["error"] == "Out of credits"
         assert "used up" in r.get_json()["message"].lower()
 
     def test_5_then_6_returns_402(self, tmp_path):

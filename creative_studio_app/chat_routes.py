@@ -10,6 +10,8 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+from .billing import charge_for_images, unknown_tier_error
+
 
 def create_blueprint(
     *,
@@ -32,12 +34,10 @@ def create_blueprint(
     current_version_node: Callable = lambda *_args: None,
     estimate_cost: Callable = lambda _tier: 0,
     record_provider_results: Callable = lambda *_args, **_kwargs: None,
+    current_session: Callable[[], dict | None] = lambda: None,
+    refund_credits: Callable[[str, int], None] = lambda *_args: None,
 ) -> Blueprint:
     blueprint = Blueprint("chat_routes", __name__)
-
-    def authorized():
-        key, error, _used_trial_credit = require_api_key()
-        return key, current_actor_id(), error
 
     def reader():
         # History / reset / save never generate, so they never spend credits.
@@ -52,7 +52,7 @@ def create_blueprint(
     @blueprint.post("/api/chat")
     @rate_limited
     def chat():
-        api_key, actor_id, error = authorized()
+        actor_id, error = reader()
         if error is not None:
             return error
         data = request.form if request.files else (request.json or {})
@@ -67,6 +67,10 @@ def create_blueprint(
             return jsonify({"error": "Invalid chat session key"}), 400
         if owned_chat(session_key, actor_id) is None and session_key in get_chat_sessions():
             return jsonify({"error": "Chat session not found"}), 404
+        tier = data.get("tier", "balanced")
+        tier_error = unknown_tier_error(tier)
+        if tier_error is not None:
+            return jsonify(tier_error), 400
         session_id = data.get("session_id", new_session_id())
         parent_node_id = data.get("parent_node_id") or None
         parent_node_id = parent_node_id or current_version_node(session_id, actor_id)
@@ -78,18 +82,25 @@ def create_blueprint(
                 input_image = str(save_upload(request.files["image"], "chat_ref"))
             except ValueError as error:
                 return jsonify({"error": str(error)}), 400
+        # One image per turn, charged at the turn's tier after validation.
+        api_key, error, refund = charge_for_images(
+            require_api_key, current_session, refund_credits, tier, 1
+        )
+        if error is not None:
+            return error
         call_started = time.monotonic()
         images, session = run_chat_turn(
             api_key,
             session_key=session_key,
             prompt=prompt,
-            tier=data.get("tier", "balanced"),
+            tier=tier,
             aspect=data.get("aspect_ratio", "1:1"),
             input_image=input_image,
         )
+        refund(1 - sum(1 for image in images if "error" not in image))
         record_provider_results(
             actor_id, session_id, images,
-            estimated_cost_each=estimate_cost(data.get("tier", "balanced")),
+            estimated_cost_each=estimate_cost(tier),
             latency_ms=(time.monotonic() - call_started) * 1000,
         )
         session["_owner_id"] = actor_id

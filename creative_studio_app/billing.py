@@ -22,6 +22,31 @@ def credits_for(tier: str, images: int) -> int:
     return CREDIT_WEIGHT_BY_TIER[tier] * images
 
 
+def unknown_tier_error(tier) -> dict | None:
+    if tier in CREDIT_WEIGHT_BY_TIER:
+        return None
+    return {"error": "Unknown quality tier", "valid_tiers": list(CREDIT_WEIGHT_BY_TIER)}
+
+
+def charge_for_images(require_api_key, current_session, refund_credits, tier: str, images: int):
+    """Spend credits for `images` at `tier` (all-or-nothing) via require_api_key.
+
+    Returns (api_key, error, refund). Call refund(n) with the number of images
+    that were charged but not delivered; it is a no-op for BYOK callers.
+    """
+    api_key, error, used_credits = require_api_key(credits=credits_for(tier, images))
+    if error is not None:
+        return None, error, lambda _undelivered: None
+    session = current_session() if used_credits else None
+    user_id = session["user_id"] if session else None
+
+    def refund(undelivered: int):
+        if user_id and undelivered > 0:
+            refund_credits(user_id, credits_for(tier, undelivered))
+
+    return api_key, None, refund
+
+
 LIVE_KEY_PREFIXES = ("sk_live_", "rk_live_")
 
 

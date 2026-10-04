@@ -276,19 +276,36 @@ def _require_api_key(credits: int = 1) -> tuple:
         "or sign up for a free Photogen account and use one of your 5 trial credits. "
         "We don't store or train on your key — cost is billed directly to your Google account."
     )
+    error = "BYOK or sign-in required"
     if sess and sess.get("credits_remaining", 0) == 0:
-        message = (
-            "Your 5 free trial credits are used up. "
-            "Add your own Gemini API key in the editor sidebar to keep going. "
-            "We don't store or train on your key — cost is billed directly to your Google account."
-        )
+        error = "Out of credits"
+        if _has_subscription(sess["user_id"]):
+            message = (
+                "You've used all of this billing period's plan credits. "
+                "They reset when your plan renews. "
+                "Add your own Gemini API key in the editor sidebar to keep going."
+            )
+        else:
+            message = (
+                "Your 5 free trial credits are used up. "
+                "Choose a plan in Settings → Billing, or add your own Gemini API key in the editor sidebar to keep going. "
+                "We don't store or train on your key — cost is billed directly to your Google account."
+            )
     return None, (
         jsonify({
-            "error": "BYOK or sign-in required",
+            "error": error,
             "message": message,
         }),
         402,
     ), None
+
+
+def _has_subscription(user_id: str) -> bool:
+    with _auth_db() as database:
+        row = database.execute(
+            "SELECT subscription_tier FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    return bool(row and row["subscription_tier"])
 
 
 def _require_access():
@@ -1780,7 +1797,7 @@ app.register_blueprint(
         safe_output_path=_safe_output_relpath,
         get_data_dir=lambda: DATA_DIR,
         new_session_id=new_session_id,
-        run_composite=run_cli_composite,
+        run_composite=lambda *args, **kwargs: run_cli_composite(*args, **kwargs),
         run_export=run_cli_export,
         run_qc=run_cli_qc,
         add_entry=add_entry,
@@ -1796,6 +1813,7 @@ app.register_blueprint(
         resolve_campaign_pack=_resolve_campaign_pack,
         record_campaign_qc=_record_campaign_qc,
         get_campaign=_get_campaign,
+        refund_credits=_refund_credits,
     )
 )
 
@@ -1893,6 +1911,9 @@ app.register_blueprint(
         current_version_node=_current_version_node,
         estimate_cost=cost_for_tier,
         record_provider_results=_record_provider_results,
+        require_access=_require_access,
+        current_session=_current_session,
+        refund_credits=_refund_credits,
     )
 )
 app.register_blueprint(
@@ -2041,7 +2062,7 @@ app.register_blueprint(
         save_upload=_save_upload,
         get_data_dir=lambda: DATA_DIR,
         get_chat_sessions=lambda: _chat_sessions,
-        run_chat_turn=run_cli_chat_turn,
+        run_chat_turn=lambda *args, **kwargs: run_cli_chat_turn(*args, **kwargs),
         chat_history=chat_session_history,
         reset_chat=chat_reset,
         new_session_id=new_session_id,
@@ -2052,6 +2073,8 @@ app.register_blueprint(
         current_version_node=_current_version_node,
         estimate_cost=cost_for_tier,
         record_provider_results=_record_provider_results,
+        current_session=_current_session,
+        refund_credits=_refund_credits,
     )
 )
 app.register_blueprint(
