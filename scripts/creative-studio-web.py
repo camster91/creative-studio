@@ -1799,7 +1799,7 @@ app.register_blueprint(
         new_session_id=new_session_id,
         run_composite=lambda *args, **kwargs: run_cli_composite(*args, **kwargs),
         run_export=run_cli_export,
-        run_qc=run_cli_qc,
+        run_qc=lambda *args, **kwargs: run_cli_qc(*args, **kwargs),
         add_entry=add_entry,
         load_session=load_session,
         save_session=save_session,

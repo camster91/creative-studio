@@ -12,6 +12,7 @@ Every provider call is stubbed; nothing here touches the network.
 Run:  pytest tests/test_credit_metering_endpoints.py -v
 """
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -42,9 +43,12 @@ def cs(tmp_path, monkeypatch):
 
     mod.run_cli_refine = lambda _path, _changes, _key, tier: [result(tier)]
     mod.run_cli_refine_from_variation = lambda **kw: [result(kw["tier"])]
-    mod.run_cli_variations = lambda _key, **kw: (
-        [result(kw["tier"]) for _ in range(kw["count"])], "var-abc"
-    )
+    # Same signature as the real run_cli_variations, so a positional/keyword
+    # mismatch at the call site fails here instead of in production.
+    def fake_variations(prompt, api_key, count, tier, aspect, input_image=None):
+        return [result(tier) for _ in range(count)], "var-abc"
+
+    mod.run_cli_variations = fake_variations
     mod.run_cli_composite = lambda *_a, tier="quality", **_kw: [result(tier)]
     mod.run_cli_chat_turn = lambda _key, **kw: ([result(kw["tier"])], {"turn": 1})
     return mod
@@ -88,6 +92,33 @@ class TestVariations:
         assert r.status_code == 402
         assert _balance(cs, "var-short@x.co") == 7
         assert cs.calls == []
+
+
+def test_variations_route_reaches_real_wrapper(tmp_path, monkeypatch):
+    """Keep the real run_cli_variations wrapper; fake only the provider subprocess.
+
+    The route used to call run_variations(api_key, prompt=...), which raised
+    TypeError ("multiple values for argument 'prompt'") against the real
+    wrapper. Stubbing the wrapper itself hid that.
+    """
+    mod = _load_module(tmp_path, monkeypatch)
+    seen = []
+
+    def fake_run(arguments, **kwargs):
+        seen.append(kwargs["env"]["GEMINI_API_KEY"])
+        target = Path(arguments[arguments.index("--filename") + 1])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (8, 8)).save(target)
+
+    monkeypatch.setattr(mod, "_tracked_provider_run", fake_run)
+    monkeypatch.setattr(mod, "OUTPUT_DIR", tmp_path / "outputs")
+    client, headers = _login(mod, "var-real@x.co", credits=10)
+    r = client.post("/api/variations", headers=headers,
+                    json={"prompt": "a can on a shelf", "count": 2, "tier": "fast"})
+    assert r.status_code == 200, r.get_json()
+    assert len(r.get_json()["images"]) == 2
+    assert seen == ["test-server-key", "test-server-key"]
+    assert _balance(mod, "var-real@x.co") == 10 - 2 * W["fast"]
 
 
 # ─── /api/scene-set ──────────────────────────────────────────────────
@@ -209,6 +240,28 @@ class TestSingleImageEndpoints:
         assert client.post("/api/chat", headers=headers,
                            json={"prompt": "x", "tier": "mega"}).status_code == 400
         assert _balance(cs, "chat-fail@x.co") == 10
+
+
+class TestQc:
+    def test_missing_or_bad_image_is_free(self, cs):
+        cs.run_cli_qc = lambda *_a: pytest.fail("provider must not run")
+        client, headers = _login(cs, "qc-bad@x.co", credits=3)
+        assert client.post("/api/qc", headers=headers, json={}).status_code == 400
+        assert client.post("/api/qc", headers=headers,
+                           json={"image_url": "/image/../../etc/passwd"}).status_code == 400
+        assert _balance(cs, "qc-bad@x.co") == 3
+
+    def test_charges_one_and_refunds_failure(self, cs):
+        client, headers = _login(cs, "qc@x.co", credits=3)
+        cs.run_cli_qc = lambda *_a: {"quality_score": 8}
+        r = client.post("/api/qc", headers=headers, data={"image": (_png(), "a.png")},
+                        content_type="multipart/form-data")
+        assert r.status_code == 200
+        assert _balance(cs, "qc@x.co") == 2
+        cs.run_cli_qc = lambda *_a: {"quality_score": 0, "error": "QC provider request failed"}
+        client.post("/api/qc", headers=headers, data={"image": (_png(), "a.png")},
+                    content_type="multipart/form-data")
+        assert _balance(cs, "qc@x.co") == 2
 
 
 # ─── Out-of-credits wording ──────────────────────────────────────────

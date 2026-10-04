@@ -156,8 +156,8 @@ def create_blueprint(
             return error
         call_started = time.monotonic()
         images, session_key = run_variations(
-            api_key,
             prompt=prompt,
+            api_key=api_key,
             count=count,
             tier=tier,
             aspect=data.get("aspect_ratio", "1:1"),

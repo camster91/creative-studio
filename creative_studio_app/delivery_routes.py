@@ -264,9 +264,9 @@ def create_blueprint(
             return jsonify({"error": "Sign in required"}), 401
         if campaign_id and not get_campaign(campaign_id, account["user_id"]):
             return jsonify({"error": "Campaign not found"}), 404
-        api_key, error, _used_trial_credit = require_api_key()
-        if error is not None:
-            return error
+        access_error = require_access()
+        if access_error is not None:
+            return access_error
         image_url = data.get("image_url")
         if image_url and image_url.startswith("/image/"):
             if campaign_id and image_url[len("/image/"):] not in owned_asset_paths(account["user_id"]):
@@ -283,9 +283,17 @@ def create_blueprint(
                 return jsonify({"error": str(error)}), 400
         else:
             return jsonify({"error": "Image required"}), 400
+        # QC costs one credit, spent only once the image is known to be valid.
+        api_key, error, used_credit = require_api_key()
+        if error is not None:
+            return error
         actor_id = current_actor_id()
         call_started = time.monotonic()
         result = run_qc(str(image), api_key)
+        if used_credit and result.get("error"):
+            charged = current_session()
+            if charged:
+                refund_credits(charged["user_id"], 1)
         ledger_result = dict(result)
         ledger_result["cost"] = result.get("estimated_cost_usd") or 0
         ledger_result["model"] = result.get("model") or "qc-unknown"
