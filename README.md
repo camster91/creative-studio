@@ -20,7 +20,7 @@ before relying on a previously published version.
 ```bash
 cd cli/
 env GEMINI_API_KEY="..." FIGMA_ACCESS_TOKEN="..." bash launch.sh variations \
-  --prompt "G FUEL shelf display" \
+  --prompt "Sample Brand A shelf display" \
   --input-image product.png \
   --tier quality --smart \
   --aspect-ratio 16:10 \
@@ -80,7 +80,7 @@ For repeatable CPG production, start at `/campaigns`: define the brand and SKU
 truth, complete a bounded work order, pass readiness, and press Go. The `/app`
 editor remains available for direct prompt work and detailed iteration.
 
-1. **Login** → See projects: "G FUEL Summer 2026", "Prymal Rebrand"
+1. **Login** → See projects: "Sample Brand A Summer 2026", "Sample Brand B Rebrand"
 2. **New Project** → Select brand profile → Pick scene template
 3. **Upload** → Drag product PNGs (transparent background)
 4. **Brief** → Type description or pick recipe

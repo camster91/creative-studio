@@ -19,7 +19,7 @@ AI generates ONLY the environment (empty shelf, lighting, store interior). Your 
 ```bash
 bash launch.sh composite \
   --prompt "Empty clean light wooden retail shelves in a premium supplement store. Warm overhead track lighting. No products, no bottles, no labels." \
-  --product /tmp/gfuel-tub.png \
+  --product /tmp/sample-tub.png \
   --aspect-ratio 16:9 \
   --tier quality
 ```
@@ -77,7 +77,7 @@ bash launch.sh qc --input output.png
 ```
 
 ### CPG Product Photography Tips
-1. **Subject**: Use exact product name. "G FUEL Berry Bomb tub" not "a pink container"
+1. **Subject**: Use exact product name. "Sample Brand A Berry tub" not "a pink container"
 2. **Style**: "professional product photography", "commercial editorial shot"
 3. **Lighting**: Name real setups
    - `softbox three-point studio lighting` — clean catalog
@@ -107,7 +107,7 @@ bash launch.sh qc --input output.png
 ```bash
 # Step 1: Generate 4 variations
 bash launch.sh variations \
-  --prompt "G FUEL Berry Bomb on a clean wooden retail shelf with other G FUEL products" \
+  --prompt "Sample Brand A Berry on a clean wooden retail shelf with other Sample Brand A products" \
   --input-image product.png \
   --tier quality \
   --variations 4
@@ -116,7 +116,7 @@ bash launch.sh variations \
 bash launch.sh refine \
   --session vars-123456 \
   --pick v2 \
-  --changes "Shelf should be flat and horizontal. Product sits firmly with base touching shelf. Add more G FUEL flavors on surrounding shelves."
+  --changes "Shelf should be flat and horizontal. Product sits firmly with base touching shelf. Add more Sample Brand A flavors on surrounding shelves."
 ```
 
 **Variations**: 4 outputs numbered `v1.png` to `v4.png`, each with a different angle/lighting/DoF.
@@ -155,12 +155,12 @@ The reasoning model (`gemini-3.1-pro-preview`) analyzes your brief and auto-craf
 
 ```json
 {
-  "prompt": "G FUEL Berry Bomb tub, resting firmly on a perfectly flat and level light oak wooden retail shelf...",
+  "prompt": "Sample Brand A Berry tub, resting firmly on a perfectly flat and level light oak wooden retail shelf...",
   "negative_prompt": "floating, tilting, distorted text, plastic texture, messy background",
   "aspect_ratio": "16:9",
   "lighting_setup": "Overhead track lighting with soft shadows and a subtle warm rim light",
   "camera_angle": "Eye-level angle, Shot on Hasselblad H6D medium format",
-  "notes": "Preserve exact G FUEL Berry Bomb tub design"
+  "notes": "Preserve exact Sample Brand A Berry tub design"
 }
 ```
 
@@ -213,7 +213,7 @@ The reasoning model (`gemini-3.1-pro-preview`) analyzes your brief and auto-craf
 
 ```bash
 bash launch.sh direct \
-  --prompt "G FUEL Berry Bomb tub, resting firmly on a flat light oak retail shelf in a premium supplement store, commercial editorial shot, overhead track lighting with soft shadows, shallow depth of field, Shot on Hasselblad H6D, 100mm f/2.8" \
+  --prompt "Sample Brand A Berry tub, resting firmly on a flat light oak retail shelf in a premium supplement store, commercial editorial shot, overhead track lighting with soft shadows, shallow depth of field, Shot on Hasselblad H6D, 100mm f/2.8" \
   --input-image product.png \
   --tier quality --smart
 ```
@@ -239,7 +239,7 @@ bash launch.sh export \
 
 ```bash
 bash launch.sh variations \
-  --prompt "G FUEL shelf display" \
+  --prompt "Sample Brand A shelf display" \
   --input-image product.png \
   --tier quality \
   -v 4

@@ -2,7 +2,7 @@
 # Creative Studio — Iterative Image Workflow
 # Usage:
 #   bash launch.sh direct --prompt "..." --input-image product.png
-#   bash launch.sh chat --name "gfuel-shelf" --input-image product.png
+#   bash launch.sh chat --name "sample-shelf" --input-image product.png
 #
 # The user IS the creative director. This tool just executes prompts reliably.
 
