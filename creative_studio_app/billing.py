@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from .auth import connect
+from .auth import connect, now_iso
 
 
 # Credits charged per generated image, by quality tier. One credit covers
@@ -22,13 +22,24 @@ def credits_for(tier: str, images: int) -> int:
     return CREDIT_WEIGHT_BY_TIER[tier] * images
 
 
+LIVE_KEY_PREFIXES = ("sk_live_", "rk_live_")
+
+
 def configured() -> bool:
     return bool(os.environ.get("STRIPE_SECRET_KEY", "").strip())
+
+
+def live_mode_blocked() -> bool:
+    """Fail closed on live keys until real payments are explicitly enabled."""
+    key = os.environ.get("STRIPE_SECRET_KEY", "").strip()
+    return key.startswith(LIVE_KEY_PREFIXES) and os.environ.get("PHOTOGEN_ALLOW_LIVE_STRIPE") != "1"
 
 
 def stripe_api(stripe_module):
     if not configured():
         raise RuntimeError("Stripe not configured (STRIPE_SECRET_KEY not set)")
+    if live_mode_blocked():
+        raise RuntimeError("Live Stripe key refused (set PHOTOGEN_ALLOW_LIVE_STRIPE=1)")
     stripe_module.api_key = os.environ["STRIPE_SECRET_KEY"]
     return stripe_module
 
@@ -146,10 +157,8 @@ def handle_event(path: Path, stripe, event: dict, plans: dict) -> None:
         subscription_id, customer_id = data.get("subscription"), data.get("customer")
         user_id = user_id or (user_for_customer(path, customer_id) if customer_id else None)
         if user_id and subscription_id:
-            try:
-                record_subscription(path, user_id, stripe.Subscription.retrieve(subscription_id), plans)
-            except Exception:
-                pass
+            # Let lookup failures raise so the webhook returns non-2xx and Stripe retries.
+            record_subscription(path, user_id, stripe.Subscription.retrieve(subscription_id), plans)
     elif event_type in ("customer.subscription.created", "customer.subscription.updated") and user_id:
         record_subscription(path, user_id, data, plans)
     elif event_type == "customer.subscription.deleted" and user_id:
@@ -158,3 +167,36 @@ def handle_event(path: Path, stripe, event: dict, plans: dict) -> None:
         top_up_credits(path, user_id, plans)
     elif event_type == "invoice.payment_failed" and user_id:
         mark_past_due(path, user_id)
+
+
+def event_already_processed(path: Path, event_id: str) -> bool:
+    with connect(path) as database:
+        row = database.execute(
+            "SELECT 1 FROM stripe_events WHERE id = ?", (event_id,)
+        ).fetchone()
+    return row is not None
+
+
+def mark_event_processed(path: Path, event_id: str, event_type: str) -> None:
+    with connect(path) as database:
+        database.execute(
+            "INSERT OR IGNORE INTO stripe_events (id, type, processed_at) VALUES (?, ?, ?)",
+            (event_id, event_type, now_iso()),
+        )
+        database.commit()
+
+
+def process_event(path: Path, stripe, event: dict, plans: dict) -> bool:
+    """Handle an event once. Returns False for an already-processed duplicate.
+
+    The id is recorded only after handling succeeds, so a failed event is
+    retried by Stripe. Handlers are set-based, so a rare concurrent duplicate
+    delivery is harmless.
+    """
+    event_id = event.get("id")
+    if event_id and event_already_processed(path, event_id):
+        return False
+    handle_event(path, stripe, event, plans)
+    if event_id:
+        mark_event_processed(path, event_id, event.get("type", ""))
+    return True

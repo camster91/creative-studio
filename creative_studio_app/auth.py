@@ -166,6 +166,11 @@ def init_schema(path: Path) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_campaign_exceptions_owner
             ON campaign_exceptions(user_id,campaign_id,status,created_at);
+        CREATE TABLE IF NOT EXISTS stripe_events (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            processed_at TEXT NOT NULL
+        );
         """)
         existing = {row[1] for row in database.execute("PRAGMA table_info(users)")}
         for column, declaration in [

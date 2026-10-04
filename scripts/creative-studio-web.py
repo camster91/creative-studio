@@ -1620,6 +1620,8 @@ def _admin_authed() -> bool:
 # The whole billing surface is "fail-closed when unconfigured": if
 # STRIPE_SECRET_KEY isn't set, the checkout / portal / webhook
 # endpoints return 503 with a clear "billing not configured" error.
+# Live keys (sk_live_/rk_live_) are also refused with 503 unless
+# PHOTOGEN_ALLOW_LIVE_STRIPE=1 is set.
 # This way, the rest of the app keeps working in BYOK mode without
 # Stripe ever being set up.
 import stripe as _stripe_lib  # noqa: E402  (after the import block above)
@@ -1914,10 +1916,11 @@ app.register_blueprint(
         auth_db=_auth_db,
         current_session=_current_session,
         stripe_configured=_stripe_configured,
+        stripe_live_blocked=_billing_service.live_mode_blocked,
         stripe_api=_stripe_api,
         get_or_create_customer=_get_or_create_stripe_customer,
         resolve_price_id=_resolve_price_id,
-        handle_event=_billing_service.handle_event,
+        process_event=_billing_service.process_event,
         rate_limited=rate_limited,
     )
 )
