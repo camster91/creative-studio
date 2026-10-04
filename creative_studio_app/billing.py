@@ -7,6 +7,21 @@ from pathlib import Path
 from .auth import connect
 
 
+# Credits charged per generated image, by quality tier. One credit covers
+# roughly $0.05 of provider cost, rounded up: fast ~$0.02, balanced ~$0.045,
+# quality ~$0.09, ultra ~$0.24 (see COSTS / _TIER_MODEL in the web script).
+CREDIT_WEIGHT_BY_TIER = {
+    "fast": 1,
+    "balanced": 1,
+    "quality": 2,
+    "ultra": 5,
+}
+
+
+def credits_for(tier: str, images: int) -> int:
+    return CREDIT_WEIGHT_BY_TIER[tier] * images
+
+
 def configured() -> bool:
     return bool(os.environ.get("STRIPE_SECRET_KEY", "").strip())
 

@@ -14,6 +14,7 @@ from flask import Blueprint, jsonify, request
 def create_blueprint(
     *,
     require_api_key: Callable,
+    require_access: Callable,
     current_actor_id: Callable[[], str | None],
     enforce_prompt_length: Callable,
     safe_filename: Callable[[str], str],
@@ -37,6 +38,10 @@ def create_blueprint(
     def authorized():
         key, error, _used_trial_credit = require_api_key()
         return key, current_actor_id(), error
+
+    def reader():
+        # History / reset / save never generate, so they never spend credits.
+        return current_actor_id(), require_access()
 
     def owned_chat(session_key: str, actor_id: str):
         session = get_chat_sessions().get(session_key)
@@ -117,7 +122,7 @@ def create_blueprint(
     @blueprint.get("/api/chat/<session_key>/history")
     @rate_limited
     def history(session_key):
-        _api_key, actor_id, error = authorized()
+        actor_id, error = reader()
         if error is not None:
             return error
         session = owned_chat(session_key, actor_id)
@@ -134,7 +139,7 @@ def create_blueprint(
     @blueprint.post("/api/chat/<session_key>/reset")
     @rate_limited
     def reset(session_key):
-        _api_key, actor_id, error = authorized()
+        actor_id, error = reader()
         if error is not None:
             return error
         if owned_chat(session_key, actor_id) is None:
@@ -145,7 +150,7 @@ def create_blueprint(
     @blueprint.post("/api/chat/<session_key>/save")
     @rate_limited
     def save(session_key):
-        _api_key, actor_id, error = authorized()
+        actor_id, error = reader()
         if error is not None:
             return error
         if owned_chat(session_key, actor_id) is None:

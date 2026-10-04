@@ -17,6 +17,7 @@ def create_blueprint(
     owned_asset_paths: Callable[[str], set[str]],
     shared_figma_enabled: Callable[[], bool],
     require_api_key: Callable,
+    require_access: Callable,
     get_api_key: Callable[[], str],
     enforce_prompt_length: Callable,
     enforce_daily_limit: Callable,
@@ -295,7 +296,8 @@ def create_blueprint(
     def figma():
         if not shared_figma_enabled():
             return jsonify({"error": "Shared Figma token access is disabled; configure per-user OAuth"}), 503
-        _api_key, error, _used_trial_credit = require_api_key()
+        # Fetching Figma context is not generation; never spend credits.
+        error = require_access()
         if error is not None:
             return error
         url = (request.json or {}).get("url")

@@ -205,7 +205,7 @@ def _get_api_key() -> str:
     return ""
 
 
-def _require_api_key() -> tuple:
+def _require_api_key(credits: int = 1) -> tuple:
     """Return (key, None) if a key is available, else (None, error_response).
 
     Returns a tuple of (Optional[str], Optional[Response]) so callers can do
@@ -222,32 +222,53 @@ def _require_api_key() -> tuple:
        If credits are exhausted, returns 402 with the trial-expired
        message.
 
+    `credits` is how many credits the call costs a signed-in user on
+    the credit path (generation callers pass images x tier weight).
+    The deduction is all-or-nothing: a short balance spends nothing.
+    Only call this from endpoints that actually generate; read-only
+    endpoints use _require_access(), which never spends.
+
     Returns: (key, err, used_trial_credit) where used_trial_credit
-    is True if we burned a credit on this call. The third value
+    is True if we burned credits on this call. The third value
     is None if err is not None.
     """
     key: Optional[str] = _get_api_key()
     if key:
         return key, None, False
 
-    # Try the trial-credit fallback
+    # Try the credit fallback
     sess = _current_session()
-    if sess and sess.get("credits_remaining", 0) > 0:
-        ok, remaining = _use_trial_credit(sess["user_id"])
-        if ok:
-            # Use the server fallback key for the actual generation
-            if SERVER_API_KEY:
-                return SERVER_API_KEY, None, True
-            # Server has no fallback key but user is signed in
-            # with credits — weird state, but we should still
-            # surface a helpful error rather than silently 402.
+    balance = sess.get("credits_remaining", 0) if sess else 0
+    if sess and balance >= credits:
+        # Check the server key BEFORE spending so a misconfigured host
+        # never burns credits on a request that can't run.
+        if not SERVER_API_KEY:
             return None, (
                 jsonify({
-                    "error": "Trial credit burned but no server-side API key configured",
-                    "message": "Set CREATIVE_ALLOW_SERVER_FALLBACK=true and GEMINI_API_KEY on the host.",
+                    "error": "No server-side API key configured for credit-based generation",
+                    "message": "Set GEMINI_API_KEY on the host. No credits were charged.",
                 }),
                 500,
             ), None
+        ok, _remaining = _spend_credits(sess["user_id"], credits)
+        if ok:
+            return SERVER_API_KEY, None, True
+        # Lost a race with a concurrent request; report the fresh balance.
+        sess = _current_session()
+        balance = sess.get("credits_remaining", 0) if sess else 0
+    if sess and 0 < balance < credits:
+        return None, (
+            jsonify({
+                "error": "Not enough credits",
+                "message": (
+                    f"This request needs {credits} credits and you have {balance}. "
+                    "Use fewer variations or a lower quality tier, or add your own Gemini API key."
+                ),
+                "credits_required": credits,
+                "credits_remaining": balance,
+            }),
+            402,
+        ), None
 
     # No key, no credits — return 402
     message = (
@@ -268,6 +289,25 @@ def _require_api_key() -> tuple:
         }),
         402,
     ), None
+
+
+def _require_access():
+    """Non-spending auth gate for read-only / status / cancel endpoints.
+
+    Accepts the same callers as _require_api_key() (own key, server
+    fallback, or a signed-in session) but never touches credits, so
+    polling a job or listing chat history is free. Returns an error
+    response, or None when the caller may proceed.
+    """
+    if _get_api_key() or _current_session():
+        return None
+    return (
+        jsonify({
+            "error": "BYOK or sign-in required",
+            "message": "Add your Gemini API key in the editor sidebar, or sign in.",
+        }),
+        402,
+    )
 
 
 def _trial_credit_response_meta(user_email: str, remaining: int) -> dict:
@@ -1091,6 +1131,14 @@ def _use_trial_credit(user_id: str) -> tuple[bool, int]:
     return _auth_service.use_trial_credit(AUTH_DB, user_id)
 
 
+def _spend_credits(user_id: str, amount: int) -> tuple[bool, int]:
+    return _auth_service.spend_credits(AUTH_DB, user_id, amount)
+
+
+def _refund_credits(user_id: str, amount: int) -> None:
+    _auth_service.refund_credits(AUTH_DB, user_id, amount)
+
+
 def _parse_generations_json(raw: str) -> list:
     return _project_service.parse_generations(raw)
 
@@ -1704,7 +1752,7 @@ app.register_blueprint(
     _create_core_blueprint(
         landing_template=LANDING_TEMPLATE,
         app_template=APP_TEMPLATE,
-        require_api_key=_require_api_key,
+        require_access=_require_access,
         current_actor_id=_current_actor_id,
         job_store=_job_store,
         jobs=_jobs,
@@ -1721,6 +1769,7 @@ app.register_blueprint(
         owned_asset_paths=_owned_asset_paths,
         shared_figma_enabled=lambda: os.environ.get("CREATIVE_ENABLE_SHARED_FIGMA_TOKEN") == "1" and _admin_authed(),
         require_api_key=_require_api_key,
+        require_access=_require_access,
         get_api_key=_get_api_key,
         enforce_prompt_length=_enforce_prompt_length,
         enforce_daily_limit=enforce_daily_limit,
@@ -1792,7 +1841,7 @@ app.register_blueprint(
         run_job_background=_run_job_background,
         jobs=_jobs,
         jobs_lock=_jobs_lock,
-        run_generate=run_cli_generate,
+        run_generate=lambda *args, **kwargs: run_cli_generate(*args, **kwargs),
         add_entry=add_entry,
         load_costs=load_costs,
         save_costs=save_costs,
@@ -1810,6 +1859,8 @@ app.register_blueprint(
         current_version_node=_current_version_node,
         record_provider_results=_record_provider_results,
         fetch_owner_figma_context=_fetch_owner_figma,
+        require_access=_require_access,
+        refund_credits=_refund_credits,
     )
 )
 app.register_blueprint(
@@ -1928,7 +1979,7 @@ app.register_blueprint(
 )
 app.register_blueprint(
     _create_state_blueprint(
-        require_api_key=_require_api_key,
+        require_access=_require_access,
         current_actor_id=_current_actor_id,
         safe_pin_path=_safe_pin_path,
         safe_pin_id=_safe_pin_id,
@@ -1980,6 +2031,7 @@ app.register_blueprint(
 app.register_blueprint(
     _create_chat_blueprint(
         require_api_key=_require_api_key,
+        require_access=_require_access,
         current_actor_id=_current_actor_id,
         enforce_prompt_length=_enforce_prompt_length,
         safe_filename=_safe_filename,
