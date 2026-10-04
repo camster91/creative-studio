@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#faf8f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121114" media="(prefers-color-scheme: dark)">
+<title>Photoshoot — Photogen</title>
+<meta name="description" content="Upload one product photo and get a ready-to-post pack: hero banner, lifestyle shot, square, portrait and story ads, and a white-background cutout.">
+<link rel="stylesheet" href="/static/shoot.css">
+<script src="/static/shoot.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#setup">Skip to the photoshoot</a>
+
+<header class="topbar">
+  <a class="brand" href="/" aria-label="Photogen home">
+    <span class="brand-mark" aria-hidden="true">P</span>
+    <span class="brand-name">Photogen</span>
+  </a>
+  <nav class="topnav" aria-label="Main">
+    <a href="/shoot" aria-current="page">Photoshoot</a>
+    <a href="/campaigns">Campaigns</a>
+    <a href="/app">Advanced studio</a>
+  </nav>
+  <div class="account" id="account">
+    <a class="account-link" id="accountLink" href="/signup">Sign in</a>
+  </div>
+</header>
+
+<main class="layout">
+  <form class="setup" id="setup" novalidate>
+    <header class="intro">
+      <h1>Your product photoshoot, in one click.</h1>
+      <p>Add one product photo. Get a full set of ready-to-post images for your site, ads and marketplaces.</p>
+    </header>
+
+    <section class="step" aria-labelledby="stepPhoto">
+      <h2 class="step-title" id="stepPhoto"><span class="step-num" aria-hidden="true">1</span>Your product</h2>
+      <label class="drop" id="drop" for="photo">
+        <input class="visually-hidden" type="file" id="photo" name="image" accept="image/png,image/jpeg,image/webp" aria-describedby="photoHint">
+        <span class="drop-empty" id="dropEmpty">
+          <svg class="drop-icon" viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="10" width="36" height="28" rx="6" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M15 31l7-8 5 6 4-4 6 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="31" cy="18" r="3" fill="currentColor"/></svg>
+          <span class="drop-title">Add your product photo</span>
+          <span class="drop-sub">Drop it here or <span class="drop-link">choose a file</span></span>
+        </span>
+        <span class="drop-filled" id="dropFilled" hidden>
+          <img id="photoPreview" alt="Your product photo">
+          <span class="drop-file">
+            <span class="drop-file-name" id="photoName"></span>
+            <span class="drop-change">Change photo</span>
+          </span>
+        </span>
+      </label>
+      <p class="hint" id="photoHint">Best results: the product alone on a plain white or transparent background. PNG, JPG or WebP, up to 16 MB.</p>
+    </section>
+
+    <fieldset class="step" aria-describedby="vibeHint">
+      <legend class="step-title"><span class="step-num" aria-hidden="true">2</span>Pick a vibe <span class="optional">optional</span></legend>
+      <p class="hint" id="vibeHint">Not sure? Clean studio works for almost every product.</p>
+      <div class="vibes">
+        {% for vibe in options.vibes %}
+        <label class="vibe">
+          <input type="radio" name="vibe" value="{{ vibe.id }}" {% if vibe.id == options.default_vibe %}checked{% endif %}>
+          <span class="vibe-swatch" aria-hidden="true" style="--c1: {{ vibe.swatch[0] }}; --c2: {{ vibe.swatch[1] }}; --c3: {{ vibe.swatch[2] }};"><span></span></span>
+          <span class="vibe-text">
+            <span class="vibe-name">{{ vibe.label }}</span>
+            <span class="visually-hidden">. {{ vibe.blurb }}</span>
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    <details class="advanced" id="advanced">
+      <summary>Customise <span class="optional">quality, shots, brand note</span></summary>
+      <div class="advanced-body">
+        <fieldset class="adv-group">
+          <legend>Quality</legend>
+          <div class="segmented">
+            {% set tier_names = {"balanced": "Standard", "quality": "High", "ultra": "Ultra"} %}
+            {% for tier, weight in options.tiers.items() %}
+            <label class="seg">
+              <input type="radio" name="tier" value="{{ tier }}" {% if tier == options.default_tier %}checked{% endif %}>
+              <span>{{ tier_names[tier] }}<small>{{ weight }} credit{{ "s" if weight != 1 }} per image</small></span>
+            </label>
+            {% endfor %}
+          </div>
+        </fieldset>
+        <fieldset class="adv-group">
+          <legend>Shots in your pack</legend>
+          <div class="shot-picks">
+            {% for shot in options.shots %}
+            <label class="pick">
+              <input type="checkbox" name="shots" value="{{ shot.id }}" checked>
+              <span>{{ shot.label }} <small>{{ shot.aspect }}</small></span>
+            </label>
+            {% endfor %}
+          </div>
+        </fieldset>
+        <div class="adv-group">
+          <label class="adv-label" for="note">Brand note</label>
+          <textarea id="note" name="note" rows="2" maxlength="300" placeholder="e.g. summer launch, citrus props, keep it playful"></textarea>
+        </div>
+      </div>
+    </details>
+
+    <div class="go">
+      <p class="cost" id="cost" aria-live="polite">
+        <strong id="costCredits">6 credits</strong>
+        <span id="costDetail">6 images · about 2 minutes</span>
+      </p>
+      <p class="balance" id="balance" hidden></p>
+      <div class="notice" id="notice" role="alert" hidden></div>
+      <button class="go-btn" id="goBtn" type="submit">
+        <span class="go-label" id="goLabel">Create my photoshoot</span>
+        <span class="spinner" aria-hidden="true"></span>
+      </button>
+    </div>
+  </form>
+
+  <section class="results" id="results" aria-labelledby="resultsTitle">
+    <header class="results-head">
+      <div>
+        <h2 id="resultsTitle">Your pack</h2>
+        <p class="results-sub" id="resultsSub">Here's what you'll get. Everything is sized for where it's going.</p>
+      </div>
+      <div class="results-actions" id="resultsActions" hidden>
+        <button class="btn-primary" id="zipBtn" type="button">Download all (ZIP)</button>
+        <button class="btn-quiet" id="againBtn" type="button">New shoot</button>
+      </div>
+    </header>
+    <div class="progress" id="progress" hidden>
+      <div class="progress-bar"><span id="progressFill"></span></div>
+      <p class="progress-text" id="progressText" role="status" aria-live="polite"></p>
+    </div>
+    <ol class="pack" id="pack">
+      {% for shot in options.shots %}
+      <li class="tile" data-shot="{{ shot.id }}" data-state="idle">
+        <div class="frame" style="aspect-ratio: {{ shot.aspect | replace(':', ' / ') }};">
+          <span class="frame-ratio" aria-hidden="true">{{ shot.aspect }}</span>
+        </div>
+        <div class="tile-meta">
+          <span class="tile-name">{{ shot.label }}</span>
+          <span class="tile-use">{{ shot.use }}</span>
+        </div>
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+</main>
+
+<script type="application/json" id="shootOptions">{{ options | tojson }}</script>
+</body>
+</html>

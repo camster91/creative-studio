@@ -349,13 +349,14 @@ class TestPageRoutes:
             html = c.get("/").get_data(as_text=True)
             assert 'name="viewport"' in html
 
-    def test_landing_has_campaign_factory_primary_cta_and_studio_fallback(self):
+    def test_landing_has_photoshoot_primary_cta_and_fallbacks(self):
         with cs.app.test_client() as c:
             html = c.get("/").get_data(as_text=True)
+            assert 'href="/shoot"' in html
+            assert "Start a photoshoot" in html
+            assert "No prompts to write" in html
             assert 'href="/campaigns"' in html
             assert 'href="/app"' in html
-            assert "Product truth in" in html
-            assert "No chatbot steering required" in html
             assert "Build a campaign" in html
 
     def test_app_has_scene_types(self):
