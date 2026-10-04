@@ -7,6 +7,12 @@ from collections.abc import Callable
 
 from flask import Blueprint, jsonify, request
 
+from .billing import charge_for_images, unknown_tier_error
+
+# /api/scene-set composites every scene at run_composite's tier; the form
+# tier is not forwarded to the generator, so credits are charged at this one.
+SCENE_SET_TIER = "quality"
+
 
 def create_blueprint(
     *,
@@ -34,13 +40,23 @@ def create_blueprint(
     current_version_node: Callable = lambda *_args: None,
     estimate_cost: Callable = lambda _tier: 0,
     record_provider_results: Callable = lambda *_args, **_kwargs: None,
+    require_access: Callable = lambda: None,
+    current_session: Callable[[], dict | None] = lambda: None,
+    refund_credits: Callable[[str, int], None] = lambda *_args: None,
 ) -> Blueprint:
     blueprint = Blueprint("iteration_routes", __name__)
+
+    def charge(tier: str, images: int):
+        # Spend credits only after the request has been validated.
+        return charge_for_images(require_api_key, current_session, refund_credits, tier, images)
+
+    def delivered(images) -> int:
+        return sum(1 for image in images if "error" not in image)
 
     @blueprint.post("/api/refine")
     @rate_limited
     def refine():
-        api_key, error, _used_trial_credit = require_api_key()
+        error = require_access()
         if error is not None:
             return error
         data = request.json or {}
@@ -58,19 +74,27 @@ def create_blueprint(
         length_error = enforce_prompt_length(full_changes)
         if length_error is not None:
             return length_error
+        tier = data.get("tier", "quality")
+        tier_error = unknown_tier_error(tier)
+        if tier_error is not None:
+            return jsonify(tier_error), 400
         session_id = data.get("session_id", new_session_id())
         parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
         if not validate_version_parent(session_id, owner_id, parent_node_id):
             return jsonify({"error": "Parent version not found"}), 404
+        api_key, error, refund = charge(tier, 1)
+        if error is not None:
+            return error
         call_started = time.monotonic()
         images = run_refine(
             data.get("image_path", ""),
             full_changes,
             api_key,
-            data.get("tier", "quality"),
+            tier,
         )
+        refund(1 - delivered(images))
         record_provider_results(
-            owner_id, session_id, images, estimated_cost_each=estimate_cost(data.get("tier", "quality")),
+            owner_id, session_id, images, estimated_cost_each=estimate_cost(tier),
             latency_ms=(time.monotonic() - call_started) * 1000,
         )
         for image in images:
@@ -92,7 +116,7 @@ def create_blueprint(
     @blueprint.post("/api/variations")
     @rate_limited
     def variations():
-        api_key, error, _used_trial_credit = require_api_key()
+        error = require_access()
         if error is not None:
             return error
         data = request.form if request.files else (request.json or {})
@@ -111,6 +135,9 @@ def create_blueprint(
         if not 1 <= count <= 8:
             return jsonify({"error": "count must be between 1 and 8"}), 400
         tier = data.get("tier", "balanced")
+        tier_error = unknown_tier_error(tier)
+        if tier_error is not None:
+            return jsonify(tier_error), 400
         limit_error = enforce_daily_limit(count, tier)
         if limit_error is not None:
             return limit_error
@@ -124,10 +151,13 @@ def create_blueprint(
         parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
         if not validate_version_parent(session_id, owner_id, parent_node_id):
             return jsonify({"error": "Parent version not found"}), 404
+        api_key, error, refund = charge(tier, count)
+        if error is not None:
+            return error
         call_started = time.monotonic()
         images, session_key = run_variations(
-            api_key,
             prompt=prompt,
+            api_key=api_key,
             count=count,
             tier=tier,
             aspect=data.get("aspect_ratio", "1:1"),
@@ -139,6 +169,7 @@ def create_blueprint(
             latency_ms=(time.monotonic() - call_started) * 1000,
         )
         images = [image for image in images if "error" not in image]
+        refund(count - len(images))
         for image in images:
             if "error" not in image:
                 node_id = add_entry(
@@ -167,7 +198,7 @@ def create_blueprint(
     @blueprint.post("/api/scene-set")
     @rate_limited
     def scene_set():
-        api_key, error, _used_trial_credit = require_api_key()
+        error = require_access()
         if error is not None:
             return error
         if "product" not in request.files:
@@ -189,6 +220,9 @@ def create_blueprint(
             product = save_upload(upload, "sceneset")
         except ValueError as error:
             return jsonify({"error": str(error)}), 400
+        api_key, error, refund = charge(SCENE_SET_TIER, len(scene_prompts))
+        if error is not None:
+            return error
         images = []
         images_lock = threading.Lock()
         scenes = list(scene_prompts)
@@ -203,6 +237,7 @@ def create_blueprint(
                     str(product),
                     api_key,
                     aspect,
+                    tier=SCENE_SET_TIER,
                     name_suffix=scene,
                 )
                 record_provider_results(
@@ -250,6 +285,7 @@ def create_blueprint(
         for thread in threads:
             thread.join(timeout=300)
         images.sort(key=lambda image: scenes.index(image["scene"]))
+        refund(len(scenes) - len(images))
         return jsonify(
             {
                 "message": f"Generated {len(images)}/{len(scenes)} scene(s)",
@@ -263,7 +299,7 @@ def create_blueprint(
     @blueprint.post("/api/variations/<session_key>/refine")
     @rate_limited
     def refine_variation(session_key):
-        api_key, error, _used_trial_credit = require_api_key()
+        error = require_access()
         if error is not None:
             return error
         data = request.json or {}
@@ -281,21 +317,29 @@ def create_blueprint(
             return jsonify({"error": "pick must be a positive integer"}), 400
         if pick < 1:
             return jsonify({"error": "pick must be a positive integer"}), 400
+        tier = data.get("tier", "quality")
+        tier_error = unknown_tier_error(tier)
+        if tier_error is not None:
+            return jsonify(tier_error), 400
         session_id = data.get("session_id", new_session_id())
         parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
         if not validate_version_parent(session_id, owner_id, parent_node_id):
             return jsonify({"error": "Parent version not found"}), 404
+        api_key, error, refund = charge(tier, 1)
+        if error is not None:
+            return error
         call_started = time.monotonic()
         images = run_refine_from_variation(
             session_key=session_key,
             pick_index=pick,
             changes=changes,
-            tier=data.get("tier", "quality"),
+            tier=tier,
             api_key=api_key,
         )
+        refund(1 - delivered(images))
         record_provider_results(
             owner_id, session_id, images,
-            estimated_cost_each=estimate_cost(data.get("tier", "quality")),
+            estimated_cost_each=estimate_cost(tier),
             latency_ms=(time.monotonic() - call_started) * 1000,
         )
         for image in images:
