@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhotoGen: AI Product Photography for DTC &amp; CPG Brands</title>
+  <meta name="description" content="Turn one product photo into studio, lifestyle and ad-ready images for Amazon, Shopify, Instagram and email. Set your brand rules once and press Go.">
+  <!-- Canonical origin: change https://photogen.ashbi.ca across all pages if the marketing domain moves (see README). -->
+  <link rel="canonical" href="https://photogen.ashbi.ca/">
+  <meta name="theme-color" content="#2340FF">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="PhotoGen">
+  <meta property="og:title" content="PhotoGen: your product, shot for every channel">
+  <meta property="og:description" content="Turn one product photo into studio, lifestyle and ad-ready images for every channel. Set your brand rules once and press Go.">
+  <meta property="og:url" content="https://photogen.ashbi.ca/">
+  <meta property="og:image" content="https://photogen.ashbi.ca/assets/og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="PhotoGen: a product on a butter-yellow studio backdrop next to a round blue Go button">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="PhotoGen: your product, shot for every channel">
+  <meta name="twitter:description" content="Turn one product photo into studio, lifestyle and ad-ready images for every channel. Set your brand rules once and press Go.">
+  <meta name="twitter:image" content="https://photogen.ashbi.ca/assets/og.jpg">
+
+  <link rel="icon" href="/assets/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;display=swap">
+  <link rel="preload" as="image" href="/assets/img/hero-studio-set.webp" type="image/webp" fetchpriority="high">
+  <link rel="stylesheet" href="/assets/site.css">
+  <script src="/assets/site.js" defer></script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "PhotoGen",
+    "url": "https://photogen.ashbi.ca/",
+    "applicationCategory": "DesignApplication",
+    "operatingSystem": "Web",
+    "description": "AI product photography for DTC and CPG brands. Turn one product photo into studio, lifestyle and ad-ready images for every channel, built from your brand rules and approved product facts.",
+    "image": "https://photogen.ashbi.ca/assets/og.jpg",
+    "publisher": { "@type": "Organization", "name": "Ashbi Design", "url": "https://ashbi.ca" },
+    "offers": [
+      { "@type": "Offer", "name": "Starter", "price": "19", "priceCurrency": "USD", "description": "100 credits per month", "url": "https://photogen.ashbi.ca/pricing/" },
+      { "@type": "Offer", "name": "Pro", "price": "49", "priceCurrency": "USD", "description": "500 credits per month", "url": "https://photogen.ashbi.ca/pricing/" },
+      { "@type": "Offer", "name": "Studio", "price": "99", "priceCurrency": "USD", "description": "1,500 credits per month", "url": "https://photogen.ashbi.ca/pricing/" }
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      { "@type": "Question", "name": "Will PhotoGen change my label or packaging?", "acceptedAnswer": { "@type": "Answer", "text": "It works from your product photo and your product facts, but AI can still get small details wrong. Check every image against the real pack before you publish." } },
+      { "@type": "Question", "name": "How is this different from a background remover?", "acceptedAnswer": { "@type": "Answer", "text": "It makes complete campaign sets (studio, lifestyle and ad formats) from your brand rules and approved claims, not a single cut-out." } },
+      { "@type": "Question", "name": "What does an image cost?", "acceptedAnswer": { "@type": "Answer", "text": "Simple images cost 1 credit, high-quality images 2, and Ultra images 5. A Pro plan covers about 500 everyday images a month." } },
+      { "@type": "Question", "name": "Can I use my own API key?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Add your Gemini key in the app and generation doesn't use credits." } },
+      { "@type": "Question", "name": "Where does my data go?", "acceptedAnswer": { "@type": "Answer", "text": "Your brand and product records stay in your PhotoGen account. Images and prompts are sent to the image provider (Google Gemini) to generate results. See the Privacy page." } }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="PhotoGen home">
+        <img src="/assets/logo.svg" width="34" height="34" alt="">
+        <span>PhotoGen</span>
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="/#how">How it works</a>
+        <a href="/#example">Examples</a>
+        <a href="/pricing/">Pricing</a>
+      </nav>
+      <div class="header-actions">
+        <a class="header-signin" data-app="/login" href="https://photogen.ashbi.ca/login">Sign in</a>
+        <a class="btn btn--primary" data-app="/signup" href="https://photogen.ashbi.ca/signup">Try it free</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="wrap">
+        <div>
+          <h1 id="hero-title">Your product, shot for every channel. Press Go.</h1>
+          <p class="lede">Upload one product photo, set your brand rules once, and PhotoGen produces studio, lifestyle and ad-ready images in every size you sell in. You review before anything goes live.</p>
+          <div class="hero-cta">
+            <a class="go go--pulse" data-app="/signup" href="https://photogen.ashbi.ca/signup" aria-label="Go: try it free">Go</a>
+            <div class="hero-cta__text">
+              <a class="cta-link" data-app="/signup" href="https://photogen.ashbi.ca/signup">Try it free: 5 images on us</a>
+              <a class="text-link" href="#example">See an example run</a>
+            </div>
+          </div>
+        </div>
+        <div class="hero-media panel panel--butter">
+          <div class="frame">
+            <img src="/assets/img/hero-studio-set.webp" width="2000" height="1116" fetchpriority="high"
+                 alt="A Yuzu Tonic can on a white plinth against a yellow paper backdrop, with a softbox and studio lights either side.">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section--mist" id="example" aria-labelledby="example-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="example-title">One phone photo in. A whole campaign out.</h2>
+          <p class="lede">One run, four channel sizes, the same can every time.</p>
+        </div>
+        <div class="run">
+          <figure>
+            <div class="frame">
+              <img src="/assets/img/before-phone-snapshot.webp" width="1400" height="1400" loading="lazy" decoding="async"
+                   alt="A phone snapshot of a Yuzu Tonic can on a cluttered kitchen counter, next to a dish rack, a sponge and a fruit bowl.">
+            </div>
+            <figcaption>What you upload</figcaption>
+          </figure>
+          <span class="run__arrow" aria-hidden="true">Go</span>
+          <div class="tiles">
+            <figure class="tile">
+              <div class="tile__stage"><img src="/assets/img/channel-marketplace-1x1.webp" width="1400" height="1400" loading="lazy" decoding="async" alt="The can on a clean white background."></div>
+              <figcaption>Marketplace 1:1<span>Amazon and Shopify listings</span></figcaption>
+            </figure>
+            <figure class="tile">
+              <div class="tile__stage"><img src="/assets/img/channel-instagram-4x5.webp" width="1400" height="1738" loading="lazy" decoding="async" alt="A hand lifting the can from a rooftop table with sliced yuzu and an iced drink at golden hour."></div>
+              <figcaption>Instagram 4:5<span>Feed posts and ads</span></figcaption>
+            </figure>
+            <figure class="tile">
+              <div class="tile__stage"><img src="/assets/img/channel-pinterest-2x3.webp" width="1400" height="2087" loading="lazy" decoding="async" alt="Overhead flat lay of the can on yellow with yuzu slices, mint, crushed ice and petals."></div>
+              <figcaption>Pinterest 2:3<span>Pins</span></figcaption>
+            </figure>
+            <figure class="tile">
+              <div class="tile__stage"><img src="/assets/img/channel-email-16x9.webp" width="1400" height="781" loading="lazy" decoding="async" alt="The can mid-splash with yuzu halves on a coral background, with open space on the left for a headline."></div>
+              <figcaption>Email banner 16:9<span>Email and web headers</span></figcaption>
+            </figure>
+          </div>
+        </div>
+        <p class="fine run__note">Example images created with PhotoGen's workflow for a sample product. Not a customer.</p>
+      </div>
+    </section>
+
+    <section class="section" id="how" aria-labelledby="how-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="how-title">How it works</h2>
+          <p class="lede">Three steps. The first two you do once per brand and product.</p>
+        </div>
+        <ol class="steps">
+          <li class="step">
+            <div class="step__top"><img src="/assets/icons/brand-passport.svg" width="56" height="56" alt=""></div>
+            <h3>Set your brand once.</h3>
+            <p>Colours, fonts, tone, and anything that must never appear. It's saved as your Brand Passport.</p>
+          </li>
+          <li class="step">
+            <div class="step__top"><img src="/assets/icons/product-truth.svg" width="56" height="56" alt=""></div>
+            <h3>Add the product and what's true about it.</h3>
+            <p>Exact SKU, verified facts and approved claims, so images never invent a benefit.</p>
+          </li>
+          <li class="step">
+            <div class="step__top"><img src="/assets/icons/go.svg" width="56" height="56" alt=""></div>
+            <h3>Pick channels and press Go.</h3>
+            <p>Fill in a short work order: goal, audience, channels, style and how many variations. PhotoGen checks that nothing is missing, then makes the full set.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section section--mist" aria-labelledby="why-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="why-title">Built like a shoot, not a prompt box.</h2>
+        </div>
+        <div class="benefits">
+          <div class="benefit">
+            <img src="/assets/icons/channels.svg" width="56" height="56" alt="">
+            <div>
+              <h3>Every size, one run.</h3>
+              <p>Square, portrait, Pinterest and banner formats from a single brief.</p>
+            </div>
+          </div>
+          <div class="benefit">
+            <img src="/assets/icons/work-order.svg" width="56" height="56" alt="">
+            <div>
+              <h3>On-brand by default.</h3>
+              <p>Your rules ride along with every generation.</p>
+            </div>
+          </div>
+          <div class="benefit">
+            <img src="/assets/icons/review.svg" width="56" height="56" alt="">
+            <div>
+              <h3>You stay in charge.</h3>
+              <p>Review and refine before anything ships. Nothing posts automatically. Prefer prompts? <a data-app="/app" href="https://photogen.ashbi.ca/app">Prompt Studio</a> gives direct control.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="range-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="range-title">Made for things in packs.</h2>
+        </div>
+        <ul class="range">
+          <li>
+            <figure>
+              <div class="panel panel--butter"><div class="frame"><img src="/assets/img/yuzu-can-studio.webp" width="1400" height="1400" loading="lazy" decoding="async" alt="A drinks can on a white plinth against a yellow backdrop."></div></div>
+              <figcaption>Drinks</figcaption>
+            </figure>
+          </li>
+          <li>
+            <figure>
+              <div class="panel panel--mint"><div class="frame"><img src="/assets/img/serum-mint.webp" width="1400" height="1738" loading="lazy" decoding="async" alt="A dropper bottle of daily serum on stacked stones, with palm-leaf shadows on a mint backdrop."></div></div>
+              <figcaption>Beauty</figcaption>
+            </figure>
+          </li>
+          <li>
+            <figure>
+              <div class="panel panel--coral"><div class="frame"><img src="/assets/img/coffee-bag.webp" width="1400" height="1738" loading="lazy" decoding="async" alt="A kraft coffee bag with a coral House Blend band on a wooden board, with a scoop of beans in window light."></div></div>
+              <figcaption>Pantry</figcaption>
+            </figure>
+          </li>
+        </ul>
+        <p class="range-caption">Drinks, beauty, pantry, supplements: if it has a pack, PhotoGen can shoot it.</p>
+      </div>
+    </section>
+
+    <section class="section section--mist" id="pricing" aria-labelledby="pricing-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="pricing-title">Plans that fit a weekly content calendar.</h2>
+          <p class="lede">Monthly plans. Cancel anytime.</p>
+        </div>
+        <div class="plans">
+          <article class="plan" aria-labelledby="plan-starter">
+            <h3 id="plan-starter">Starter</h3>
+            <p class="plan__price">$19<span> /month</span></p>
+            <p class="plan__credits">100 credits a month</p>
+          </article>
+          <article class="plan plan--pick" aria-labelledby="plan-pro">
+            <p class="plan__flag">Recommended</p>
+            <h3 id="plan-pro">Pro</h3>
+            <p class="plan__price">$49<span> /month</span></p>
+            <p class="plan__credits">500 credits a month</p>
+          </article>
+          <article class="plan" aria-labelledby="plan-studio">
+            <h3 id="plan-studio">Studio</h3>
+            <p class="plan__price">$99<span> /month</span></p>
+            <p class="plan__credits">1,500 credits a month</p>
+          </article>
+        </div>
+        <div class="plans-note">
+          <p>5 free credits when you sign up. Bring your own Gemini key and generate without credits.</p>
+          <a class="text-link" href="/pricing/">See pricing and credits per image</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="faq" aria-labelledby="faq-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="faq-title">Questions brands ask first</h2>
+        </div>
+        <div class="faq">
+          <details>
+            <summary>Will PhotoGen change my label or packaging?</summary>
+            <p>It works from your product photo and your product facts, but AI can still get small details wrong. Check every image against the real pack before you publish.</p>
+          </details>
+          <details>
+            <summary>How is this different from a background remover?</summary>
+            <p>It makes complete campaign sets (studio, lifestyle and ad formats) from your brand rules and approved claims, not a single cut-out. <a href="/compare/photoroom/">See how it compares with Photoroom</a>.</p>
+          </details>
+          <details>
+            <summary>What does an image cost?</summary>
+            <p>Simple images cost 1 credit, high-quality images 2, and Ultra images 5. A Pro plan covers about 500 everyday images a month. <a href="/pricing/">Full credit table</a>.</p>
+          </details>
+          <details>
+            <summary>Can I use my own API key?</summary>
+            <p>Yes. Add your Gemini key in the app and generation doesn't use credits.</p>
+          </details>
+          <details>
+            <summary>Where does my data go?</summary>
+            <p>Your brand and product records stay in your PhotoGen account. Images and prompts are sent to the image provider (Google Gemini) to generate results. See the <a data-app="/privacy" href="https://photogen.ashbi.ca/privacy">Privacy page</a>.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="closer" aria-labelledby="closer-title">
+      <div class="wrap">
+        <div class="panel panel--coral">
+          <h2 id="closer-title">Your next product shoot is one click away.</h2>
+          <div class="closer__row">
+            <a class="go go--on-panel" data-app="/signup" href="https://photogen.ashbi.ca/signup" aria-label="Go: try it free">Go</a>
+            <p>5 free credits. No card required. Sign in with an email link.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="PhotoGen home"><img src="/assets/logo.svg" width="34" height="34" alt=""><span>PhotoGen</span></a>
+          <p>Studio-quality product photos for every channel, built from your real product and brand rules.</p>
+        </div>
+        <nav aria-labelledby="f-product">
+          <h2 id="f-product">Product</h2>
+          <ul>
+            <li><a href="/#how">How it works</a></li>
+            <li><a href="/pricing/">Pricing</a></li>
+            <li><a data-app="/app" href="https://photogen.ashbi.ca/app">Prompt Studio</a></li>
+          </ul>
+        </nav>
+        <nav aria-labelledby="f-compare">
+          <h2 id="f-compare">Compare</h2>
+          <ul>
+            <li><a href="/compare/photoroom/">PhotoGen vs Photoroom</a></li>
+          </ul>
+        </nav>
+        <nav aria-labelledby="f-company">
+          <h2 id="f-company">Company</h2>
+          <ul>
+            <li><a href="https://ashbi.ca">Ashbi Design</a></li>
+            <li><a href="mailto:hello@ashbi.ca">Contact</a></li>
+          </ul>
+        </nav>
+        <nav aria-labelledby="f-legal">
+          <h2 id="f-legal">Legal</h2>
+          <ul>
+            <li><a data-app="/privacy" href="https://photogen.ashbi.ca/privacy">Privacy</a></li>
+            <li><a data-app="/terms" href="https://photogen.ashbi.ca/terms">Terms</a></li>
+          </ul>
+        </nav>
+      </div>
+      <p class="footer-base">© 2026 Ashbi Design, Toronto.</p>
+    </div>
+  </footer>
+</body>
+</html>

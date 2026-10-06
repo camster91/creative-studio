@@ -42,5 +42,8 @@ source-*
 # Tests don't need to ship inside the runtime image
 tests/
 
+# Standalone static marketing site, deployed separately (marketing-site/README.md)
+marketing-site/
+
 # This file
 .dockerignore
