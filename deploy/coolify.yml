@@ -1,0 +1,53 @@
+services:
+  photogen:
+    image: ${PHOTOGEN_IMAGE:?Set a verified immutable image digest}
+    pull_policy: never
+    command:
+      - /app/.venv/bin/gunicorn
+      - -w
+      - "1"
+      - -b
+      - 0.0.0.0:5173
+      - --timeout
+      - "300"
+      - --access-logfile
+      - "-"
+      - --error-logfile
+      - "-"
+      - scripts.creative-studio-web:app
+    restart: unless-stopped
+    read_only: true
+    ports:
+      - "127.0.0.1:15173:5173"
+    environment:
+      PORT: "5173"
+      CREATIVE_DATA_DIR: /app/data
+      CREATIVE_OUTPUT_DIR: /app/outputs
+      CREATIVE_DAILY_LIMIT: "0"
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:?Set a private candidate session secret}
+      PHOTOGEN_ADMIN_SECRET: ${PHOTOGEN_ADMIN_SECRET:?Set a private candidate admin secret}
+    volumes:
+      - type: bind
+        source: /opt/photogen-coolify/data
+        target: /app/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /opt/photogen-coolify/outputs
+        target: /app/outputs
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,nosuid,size=128m
+    networks:
+      - candidate
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5173/api/whoami"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+networks:
+  candidate:
+    driver: bridge

@@ -1,0 +1,127 @@
+name: Build PhotoGen Coolify Image
+
+# Publish only a main push that has passed every existing CI Build job.
+# No SSH, server deployment, provider activation or public route changes.
+on:
+  workflow_run:
+    workflows: [CI Build]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: photogen-coolify-image
+  cancel-in-progress: false
+
+jobs:
+  image:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      IMAGE: ghcr.io/camster91/creative-studio
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Verify release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+      - name: Build the exact tested source
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --tag "$IMAGE:$RELEASE_SHA" \
+            --label "org.opencontainers.image.revision=$RELEASE_SHA" \
+            --label "org.opencontainers.image.source=https://github.com/camster91/creative-studio" .
+          test "$(docker image inspect "$IMAGE:$RELEASE_SHA" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$RELEASE_SHA"
+      - name: Qualify the image without providers or external network
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, secrets
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'photogen-smoke.env'
+          with path.open('w', opener=lambda p, f: os.open(p, f, 0o600)) as stream:
+              stream.write('FLASK_SECRET_KEY=' + secrets.token_urlsafe(48) + '\n')
+              stream.write('PHOTOGEN_ADMIN_SECRET=' + secrets.token_urlsafe(48) + '\n')
+              stream.write('CREATIVE_DAILY_LIMIT=0\n')
+          PY
+          docker run --detach --name photogen-release-smoke --network none \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --memory 1g --cpus 2 \
+            --tmpfs /tmp:rw,nosuid,size=128m \
+            --tmpfs /app/data:rw,nosuid,uid=1000,gid=1000,size=128m \
+            --tmpfs /app/outputs:rw,nosuid,uid=1000,gid=1000,size=128m \
+            --env-file "$RUNNER_TEMP/photogen-smoke.env" \
+            "$IMAGE:$RELEASE_SHA" \
+            /app/.venv/bin/gunicorn -w 1 -b 0.0.0.0:5173 --timeout 300 \
+            scripts.creative-studio-web:app
+          ready=false
+          for attempt in {1..45}; do
+            if docker exec photogen-release-smoke curl --fail --silent --output /dev/null http://127.0.0.1:5173/api/whoami; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+          docker exec -i photogen-release-smoke /app/.venv/bin/python - <<'PY'
+          import json, urllib.error, urllib.request
+          def get(path):
+              with urllib.request.urlopen('http://127.0.0.1:5173' + path, timeout=10) as response:
+                  assert response.status == 200
+                  return response.read().decode()
+          assert 'version' in json.loads(get('/api/whoami'))
+          assert 'Photogen Campaign Factory' in get('/')
+          editor = get('/app')
+          assert all(marker in editor for marker in ('dropzone', 'Generate', 'Scene', 'In-hand', 'Studio', 'Lifestyle'))
+          campaign = get('/campaigns')
+          assert all(marker in campaign for marker in ('Campaign Factory', 'Brand Passport', 'Product Truth', 'READINESS GATE'))
+          try:
+              get('/api/costs')
+          except urllib.error.HTTPError as error:
+              assert error.code == 401
+          else:
+              raise AssertionError('Anonymous access to private costs was accepted')
+          print('Image HTTP and anonymous authorization checks passed')
+          PY
+      - name: Publish the qualified immutable release
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:$RELEASE_SHA"
+          docker image inspect "$IMAGE:$RELEASE_SHA" --format '{{json .RepoDigests}}' > "$RUNNER_TEMP/photogen-image-digests.json"
+          python3 - <<'PY'
+          import json, os, pathlib
+          digests = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'photogen-image-digests.json').read_text())
+          digest = next(item for item in digests if item.startswith(os.environ['IMAGE'] + '@sha256:'))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+              stream.write('Qualified source: `' + os.environ['RELEASE_SHA'] + '`\n\n')
+              stream.write('Immutable image: `' + digest + '`\n\n')
+              stream.write('Coolify promotion requires its separate verified backup and deployment gate.\n')
+          PY
+      - name: Remove the isolated smoke container and temporary credentials
+        if: always()
+        shell: bash
+        run: |
+          docker rm --force photogen-release-smoke 2>/dev/null || true
+          rm -f -- "$RUNNER_TEMP/photogen-smoke.env"
+          docker logout ghcr.io >/dev/null 2>&1 || true

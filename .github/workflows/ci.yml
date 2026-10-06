@@ -41,11 +41,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
-      - name: Install project and test dependencies
-        run: python -m pip install -e '.[test]'
+          python-version: '3.12'
+      - name: Install the verified runtime dependency tool
+        run: python -m pip install uv==0.9.30
+      - name: Install locked project and test dependencies
+        run: uv sync --frozen --extra test --python 3.12
       - name: Run Python tests
-        run: python -m pytest tests/ -q
+        run: uv run --frozen --extra test python -m pytest tests/ -q
       - name: Validate browser JavaScript
         run: node --check static/app.js
 
@@ -61,8 +63,9 @@ jobs:
           cache: 'npm'
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
-      - run: python -m venv .venv && .venv/bin/python -m pip install -e '.[test]'
+          python-version: '3.12'
+      - run: python -m pip install uv==0.9.30
+      - run: uv sync --frozen --extra test --python 3.12
       - run: npm ci --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
       - run: npm test
