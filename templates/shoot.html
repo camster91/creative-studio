@@ -3,10 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#faf8f5" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#121114" media="(prefers-color-scheme: dark)">
-<title>Photoshoot — Photogen</title>
+<meta name="theme-color" content="#FFFFFF">
+<title>Product photoshoot | PhotoGen</title>
 <meta name="description" content="Upload one product photo and get a ready-to-post pack: hero banner, lifestyle shot, square, portrait and story ads, and a white-background cutout.">
+<link rel="icon" href="/static/photogen/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/static/photogen/apple-touch-icon.png">
+<link rel="preload" href="/static/photogen/archivo-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/shoot.css">
 <script src="/static/shoot.js" defer></script>
 </head>
@@ -14,9 +16,9 @@
 <a class="skip" href="#setup">Skip to the photoshoot</a>
 
 <header class="topbar">
-  <a class="brand" href="/" aria-label="Photogen home">
-    <span class="brand-mark" aria-hidden="true">P</span>
-    <span class="brand-name">Photogen</span>
+  <a class="brand" href="/" aria-label="PhotoGen home">
+    <img class="brand-mark" src="/static/photogen/logo-a-aperture-go.svg" alt="" width="36" height="36">
+    <span class="brand-name">PhotoGen</span>
   </a>
   <nav class="topnav" aria-label="Main">
     <a href="/shoot" aria-current="page">Photoshoot</a>
@@ -24,24 +26,25 @@
     <a href="/app">Advanced studio</a>
   </nav>
   <div class="account" id="account">
-    <a class="account-link" id="accountLink" href="/signup">Sign in</a>
+    <a class="account-link" id="accountLink" href="/login">Sign in</a>
   </div>
 </header>
 
-<main class="layout">
+<main class="studio">
+  <header class="intro">
+    <h1>Your product, shot for every channel. Press Go.</h1>
+    <p>One product photo. One vibe. A full set for your store, socials and ads.</p>
+  </header>
+  <div class="layout">
   <form class="setup" id="setup" novalidate>
-    <header class="intro">
-      <h1>Your product photoshoot, in one click.</h1>
-      <p>Add one product photo. Get a full set of ready-to-post images for your site, ads and marketplaces.</p>
-    </header>
 
     <section class="step" aria-labelledby="stepPhoto">
-      <h2 class="step-title" id="stepPhoto"><span class="step-num" aria-hidden="true">1</span>Your product</h2>
+      <h2 class="step-title" id="stepPhoto"><span class="step-num" aria-hidden="true">1</span>Add your product</h2>
       <label class="drop" id="drop" for="photo">
         <input class="visually-hidden" type="file" id="photo" name="image" accept="image/png,image/jpeg,image/webp" aria-describedby="photoHint">
         <span class="drop-empty" id="dropEmpty">
           <svg class="drop-icon" viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="10" width="36" height="28" rx="6" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M15 31l7-8 5 6 4-4 6 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="31" cy="18" r="3" fill="currentColor"/></svg>
-          <span class="drop-title">Add your product photo</span>
+          <span class="drop-title">Your next shoot starts here</span>
           <span class="drop-sub">Drop it here or <span class="drop-link">choose a file</span></span>
         </span>
         <span class="drop-filled" id="dropFilled" hidden>
@@ -52,17 +55,16 @@
           </span>
         </span>
       </label>
-      <p class="hint" id="photoHint">Best results: the product alone on a plain white or transparent background. PNG, JPG or WebP, up to 16 MB.</p>
+      <p class="hint" id="photoHint">PNG, JPG or WebP, up to 16 MB. A plain or transparent background works best.</p>
     </section>
 
     <fieldset class="step" aria-describedby="vibeHint">
-      <legend class="step-title"><span class="step-num" aria-hidden="true">2</span>Pick a vibe <span class="optional">optional</span></legend>
-      <p class="hint" id="vibeHint">Not sure? Clean studio works for almost every product.</p>
+      <legend class="step-title"><span class="step-num" aria-hidden="true">2</span>Pick a vibe</legend>
       <div class="vibes">
         {% for vibe in options.vibes %}
         <label class="vibe">
           <input type="radio" name="vibe" value="{{ vibe.id }}" {% if vibe.id == options.default_vibe %}checked{% endif %}>
-          <span class="vibe-swatch" aria-hidden="true" style="--c1: {{ vibe.swatch[0] }}; --c2: {{ vibe.swatch[1] }}; --c3: {{ vibe.swatch[2] }};"><span></span></span>
+          <span class="vibe-swatch" data-vibe="{{ vibe.id }}" aria-hidden="true"><span></span></span>
           <span class="vibe-text">
             <span class="vibe-name">{{ vibe.label }}</span>
             <span class="visually-hidden">. {{ vibe.blurb }}</span>
@@ -70,6 +72,7 @@
         </label>
         {% endfor %}
       </div>
+      <p class="hint" id="vibeHint">Bright and minimal. Lets the product speak.</p>
     </fieldset>
 
     <details class="advanced" id="advanced">
@@ -106,16 +109,18 @@
     </details>
 
     <div class="go">
-      <p class="cost" id="cost" aria-live="polite">
-        <strong id="costCredits">6 credits</strong>
-        <span id="costDetail">6 images · about 2 minutes</span>
-      </p>
-      <p class="balance" id="balance" hidden></p>
-      <div class="notice" id="notice" role="alert" hidden></div>
-      <button class="go-btn" id="goBtn" type="submit">
-        <span class="go-label" id="goLabel">Create my photoshoot</span>
+      <button class="go-btn" id="goBtn" type="submit" aria-label="Create my photoshoot" aria-describedby="cost notice">
+        <span class="go-face" aria-hidden="true">Go</span>
         <span class="spinner" aria-hidden="true"></span>
       </button>
+      <div class="go-copy">
+        <p class="go-label" id="goLabel">Add a photo, then press Go</p>
+        <p class="cost" id="cost" aria-live="polite">
+          <strong id="costCredits">6 credits</strong><span id="costDetail">6 images, about 2 minutes</span>
+        </p>
+        <p class="balance" id="balance" hidden></p>
+      </div>
+      <div class="notice" id="notice" role="alert" hidden></div>
     </div>
   </form>
 
@@ -123,7 +128,7 @@
     <header class="results-head">
       <div>
         <h2 id="resultsTitle">Your pack</h2>
-        <p class="results-sub" id="resultsSub">Here's what you'll get. Everything is sized for where it's going.</p>
+        <p class="results-sub" id="resultsSub">Six shots. Sized for where you sell.</p>
       </div>
       <div class="results-actions" id="resultsActions" hidden>
         <button class="btn-primary" id="zipBtn" type="button">Download all (ZIP)</button>
@@ -131,7 +136,8 @@
       </div>
     </header>
     <div class="progress" id="progress" hidden>
-      <div class="progress-bar"><span id="progressFill"></span></div>
+      <div class="progress-bar" id="progressBar" role="progressbar" aria-label="Photoshoot progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progressFill"></span></div>
+      <span class="elapsed" id="elapsed"></span>
       <p class="progress-text" id="progressText" role="status" aria-live="polite"></p>
     </div>
     <ol class="pack" id="pack">
@@ -141,13 +147,16 @@
           <span class="frame-ratio" aria-hidden="true">{{ shot.aspect }}</span>
         </div>
         <div class="tile-meta">
-          <span class="tile-name">{{ shot.label }}</span>
-          <span class="tile-use">{{ shot.use }}</span>
+          <span class="tile-name">{{ shot.label }}<span class="tile-aspect">{{ shot.aspect }}</span></span>
+          <span class="tile-use">{{ shot.use | replace("&", "and") }}</span>
         </div>
       </li>
       {% endfor %}
     </ol>
+    <p class="label-check" id="labelCheck" hidden><img src="/static/photogen/review.svg" alt="" width="22" height="22">Check every label against the real pack before you publish.</p>
   </section>
+  </div>
+  <footer class="studio-footer"><span>Made for your next launch.</span><a href="/privacy">Privacy</a><a href="/terms">Terms</a></footer>
 </main>
 
 <script type="application/json" id="shootOptions">{{ options | tojson }}</script>

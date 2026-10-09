@@ -15,14 +15,17 @@
   const TYPES = ['image/png', 'image/jpeg', 'image/webp'];
   const ACTIVE = ['queued', 'running'];
 
-  const state = { file: null, me: null, pack: null, timer: null, starting: false, block: null };
+  const state = { file: null, me: null, pack: null, timer: null, elapsedTimer: null, starting: false, block: null, loadingAccount: Boolean(localStorage.getItem('photogen_session')), ready: false };
 
   const sessionToken = () => localStorage.getItem('photogen_session') || '';
   const ownKey = () => localStorage.getItem('cs_api_key') || '';
+  const usesOwnKey = () => options.provider === 'gemini' && options.accepts_user_key === true && Boolean(ownKey());
+  const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const scrollTo = (element) => element.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
   const authHeaders = () => {
     const headers = {};
     if (sessionToken()) headers['X-Session-Token'] = sessionToken();
-    if (ownKey()) headers['X-API-Key'] = ownKey();
+    if (usesOwnKey()) headers['X-API-Key'] = ownKey();
     return headers;
   };
   const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
@@ -31,11 +34,12 @@
 
   // ── Account & credits ────────────────────────────────────────────────
   async function loadMe() {
-    if (!sessionToken()) { state.me = null; renderAccount(); refresh(); return; }
+    if (!sessionToken()) { state.me = null; state.loadingAccount = false; renderAccount(); refresh(); return; }
     try {
       const response = await fetch('/api/me', { headers: authHeaders() });
       state.me = response.ok ? await response.json() : null;
     } catch (_) { /* offline: keep the last known balance */ }
+    state.loadingAccount = false;
     renderAccount();
     refresh();
   }
@@ -48,7 +52,7 @@
       link.innerHTML = `<span class="credit-dot${credits < 6 ? ' low' : ''}" aria-hidden="true"></span>${escapeHtml(plural(credits, 'credit'))}`;
       link.setAttribute('aria-label', `${plural(credits, 'credit')} left. Manage plan`);
     } else {
-      link.href = '/signup';
+      link.href = '/login';
       link.textContent = 'Sign in';
       link.removeAttribute('aria-label');
     }
@@ -64,13 +68,14 @@
     const shots = selectedShots();
     const cost = packCost();
     const minutes = Math.max(1, Math.ceil((Math.ceil(shots.length / 3) * 50) / 60));
-    $('costCredits').textContent = ownKey() && !state.me ? 'Uses your Gemini key' : plural(cost, 'credit');
-    $('costDetail').textContent = `${plural(shots.length, 'image')} · about ${plural(minutes, 'minute')}`;
+    $('costCredits').textContent = usesOwnKey() ? 'Uses your Gemini key' : plural(cost, 'credit');
+    $('costDetail').textContent = `${plural(shots.length, 'image')}, about ${plural(minutes, 'minute')}`;
 
     const vibe = options.vibes.find((item) => item.id === selectedVibe()) || options.vibes[0];
-    $('vibeHint').textContent = vibe.id === options.default_vibe
-      ? `${vibe.blurb} Not sure? This works for almost every product.`
-      : vibe.blurb;
+    $('vibeHint').textContent = vibe.blurb;
+    const backdrops = { clean: '#FFE07A', sunlit: '#F4DEC0', bold: '#FF8A6B', luxe: '#41424B', fresh: '#8EE0C1' };
+    drop.style.background = backdrops[vibe.id];
+    drop.style.color = vibe.id === 'luxe' ? '#FFFFFF' : '#16181D';
 
     const balance = $('balance');
     if (state.me) {
@@ -92,33 +97,50 @@
     const shots = selectedShots();
     const cost = packCost();
     let block = null;
-    if (!sessionToken() && !ownKey()) {
-      block = { kind: 'signin', html: 'New here? Create a free account to get <strong>5 free credits</strong>. No card needed.' };
-    } else if (state.me && state.me.credits_remaining === 0 && !ownKey()) {
-      block = { kind: 'credits', html: 'You\'re out of credits. <a href="/billing">See plans</a> to keep shooting.' };
-    } else if (state.me && state.me.credits_remaining < cost && !ownKey()) {
+    if (state.loadingAccount && !usesOwnKey()) {
+      block = { kind: 'loading', html: 'Checking your balance…' };
+    } else if (!state.me && !usesOwnKey()) {
+      block = { kind: 'signin', html: 'Get <strong>5 trial credits</strong> when you sign up. Start with five shots or add credits for the full pack.' };
+    } else if (!shots.length) {
+      block = { kind: 'shots', html: 'Choose at least one shot under <strong>Customise</strong>.' };
+    } else if (state.me && state.me.credits_remaining === 0 && !usesOwnKey()) {
+      block = { kind: 'credits', html: 'You\'re out of credits. Add credits to keep shooting. <a href="/billing">See plans</a>' };
+    } else if (state.me && state.me.credits_remaining < cost && !usesOwnKey()) {
       block = {
         kind: 'credits',
-        html: `This pack needs ${plural(cost, 'credit')} and you have ${state.me.credits_remaining}. Untick a shot under <strong>Customise</strong>, or <a href="/billing">top up</a>.`,
+        html: `This pack needs ${plural(cost, 'credit')} and you have ${state.me.credits_remaining}. Choose fewer shots under <strong>Customise</strong>, or add credits. <a href="/billing">See plans</a>`,
       };
-    } else if (!shots.length) {
-      block = { kind: 'shots', html: 'Pick at least one shot under <strong>Customise</strong>.' };
+    } else if (!state.file) {
+      block = { kind: 'photo', html: '' };
     }
     state.block = block;
 
     goBtn.classList.toggle('busy', Boolean(running));
     if (running) {
       goLabel.textContent = state.starting ? 'Starting…' : 'Shooting your pack…';
+      goBtn.setAttribute('aria-label', goLabel.textContent);
       goBtn.setAttribute('aria-disabled', 'true');
     } else if (block && block.kind === 'signin') {
       goLabel.textContent = 'Sign up free to start';
+      goBtn.setAttribute('aria-label', 'Sign up free');
       goBtn.removeAttribute('aria-disabled');
     } else {
-      goLabel.textContent = 'Create my photoshoot';
+      goLabel.textContent = block?.kind === 'photo' ? 'Add a photo, then press Go' : block?.kind === 'loading' ? 'Checking your balance…' : block ? 'One more thing before Go' : 'Ready when you are';
+      goBtn.setAttribute('aria-label', 'Create my photoshoot');
       if (block) goBtn.setAttribute('aria-disabled', 'true');
       else goBtn.removeAttribute('aria-disabled');
     }
-    if (block && !running) showNotice(block.html, block.kind === 'signin' ? 'info' : 'warn');
+    const ready = !block && !running;
+    if (ready && !state.ready) {
+      goBtn.classList.remove('ready');
+      void goBtn.offsetWidth;
+      goBtn.classList.add('ready');
+    }
+    state.ready = ready;
+    form.querySelectorAll('input, textarea, summary').forEach((input) => {
+      if (input.tagName !== 'SUMMARY') input.disabled = Boolean(running);
+    });
+    if (block?.html && !running && notice.dataset.kind !== 'error') showNotice(block.html, block.kind === 'signin' ? 'info' : 'warn');
     else if (!running && notice.dataset.kind !== 'error') hideNotice();
   }
 
@@ -132,7 +154,7 @@
 
   // ── Photo ────────────────────────────────────────────────────────────
   function setFile(file) {
-    if (!file) return;
+    if (!file || state.starting || ACTIVE.includes(state.pack?.status)) return;
     if (!TYPES.includes(file.type)) {
       showNotice('That file type won\'t work. Use a PNG, JPG or WebP photo.', 'error');
       return;
@@ -163,6 +185,11 @@
     event.preventDefault();
     setFile(event.dataTransfer.files[0]);
   });
+  document.addEventListener('paste', (event) => {
+    if (event.target.closest('textarea, input:not([type="file"])')) return;
+    const file = [...(event.clipboardData?.files || [])].find((item) => TYPES.includes(item.type));
+    if (file && !state.starting && !ACTIVE.includes(state.pack?.status)) { event.preventDefault(); setFile(file); }
+  });
   form.addEventListener('change', (event) => { if (event.target.name !== 'image') refresh(); });
 
   // ── Go ───────────────────────────────────────────────────────────────
@@ -190,15 +217,15 @@
       const response = await fetch('/api/shoot', { method: 'POST', headers: authHeaders(), body });
       const data = await response.json().catch(() => ({}));
       if (response.status === 202) {
-        sessionStorage.setItem(PACK_KEY, data.pack_id);
+        localStorage.setItem(PACK_KEY, data.pack_id);
         startPack(data);
-        $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        scrollTo($('results'));
         loadMe();
       } else {
         showError(response.status, data);
       }
     } catch (_) {
-      showNotice('We couldn\'t reach Photogen. Check your connection and try again. You weren\'t charged.', 'error');
+      showNotice('We couldn\'t reach PhotoGen. Check your connection before trying again. If the shoot started, it will appear here when you return.', 'error');
     } finally {
       state.starting = false;
       updateGo();
@@ -222,9 +249,18 @@
   // ── Pack progress ────────────────────────────────────────────────────
   function startPack(pack) {
     state.pack = pack;
+    state.startedAt = pack.created_at ? pack.created_at * 1000 : Date.now();
+    clearInterval(state.elapsedTimer);
+    state.elapsedTimer = setInterval(updateElapsed, 1000);
     renderPack(pack);
     clearTimeout(state.timer);
     if (ACTIVE.includes(pack.status)) state.timer = setTimeout(poll, 2500);
+  }
+
+  function updateElapsed() {
+    if (!state.pack) return;
+    const seconds = Math.max(0, Math.floor((Date.now() - state.startedAt) / 1000));
+    $('elapsed').textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} elapsed`;
   }
 
   async function poll() {
@@ -254,6 +290,9 @@
 
     $('progress').hidden = false;
     $('progressFill').style.width = `${Math.round((finished / pack.total) * 100)}%`;
+    $('progressBar').setAttribute('aria-valuenow', String(Math.round((finished / pack.total) * 100)));
+    updateElapsed();
+    if (!active) clearInterval(state.elapsedTimer);
     let text;
     let title;
     if (active) {
@@ -274,7 +313,10 @@
     $('resultsTitle').textContent = title;
     $('resultsSub').textContent = active ? 'Each image appears here as soon as it\'s done.' : 'Click an image to view it full size.';
     $('progressText').textContent = text;
-    $('resultsActions').hidden = active || !pack.download_url;
+    $('resultsActions').hidden = active;
+    $('zipBtn').hidden = !pack.download_url;
+    $('elapsed').hidden = !active;
+    $('labelCheck').hidden = active || !pack.completed;
 
     const vibe = (options.vibes.find((item) => item.id === pack.vibe) || {}).label || '';
     document.querySelectorAll('.tile').forEach((tile) => {
@@ -301,12 +343,15 @@
 
   function resetPack() {
     clearTimeout(state.timer);
+    clearInterval(state.elapsedTimer);
     state.pack = null;
+    localStorage.removeItem(PACK_KEY);
     sessionStorage.removeItem(PACK_KEY);
     $('progress').hidden = true;
     $('resultsActions').hidden = true;
+    $('labelCheck').hidden = true;
     $('resultsTitle').textContent = 'Your pack';
-    $('resultsSub').textContent = 'Here\'s what you\'ll get. Everything is sized for where it\'s going.';
+    $('resultsSub').textContent = 'Six shots. Sized for where you sell.';
     document.querySelectorAll('.tile').forEach((tile) => {
       tile.dataset.state = 'idle';
       tile.querySelector('.tile-actions')?.remove();
@@ -318,7 +363,7 @@
 
   $('againBtn').addEventListener('click', () => {
     resetPack();
-    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    scrollTo(form);
     form.querySelector('input[name="vibe"]:checked')?.focus();
   });
 
@@ -326,6 +371,7 @@
     const pack = state.pack;
     if (!pack || !pack.download_url) return;
     const button = $('zipBtn');
+    if (button.getAttribute('aria-busy') === 'true') return;
     button.setAttribute('aria-busy', 'true');
     button.textContent = 'Preparing ZIP…';
     try {
@@ -350,12 +396,12 @@
 
   // ── Start ────────────────────────────────────────────────────────────
   async function resume() {
-    const id = sessionStorage.getItem(PACK_KEY);
-    if (!id || (!sessionToken() && !ownKey())) return;
+    const id = localStorage.getItem(PACK_KEY) || sessionStorage.getItem(PACK_KEY);
+    if (!id || (!sessionToken() && !usesOwnKey())) return;
     try {
       const response = await fetch(`/api/shoot/${encodeURIComponent(id)}`, { headers: authHeaders() });
-      if (response.ok) startPack(await response.json());
-      else sessionStorage.removeItem(PACK_KEY);
+      if (response.ok) { localStorage.setItem(PACK_KEY, id); startPack(await response.json()); }
+      else if ([401, 402, 404].includes(response.status)) { localStorage.removeItem(PACK_KEY); sessionStorage.removeItem(PACK_KEY); }
     } catch (_) { /* nothing to resume */ }
   }
 

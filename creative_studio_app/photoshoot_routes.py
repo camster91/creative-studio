@@ -1,6 +1,8 @@
 """One-button photoshoot pack: page, options, start, progress and download."""
 
 import logging
+import math
+import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -10,8 +12,20 @@ from flask import Blueprint, jsonify, render_template, request, send_file
 from . import photoshoot
 from .billing import CREDIT_WEIGHT_BY_TIER, credits_for
 from .compositing import CompositeInputError, validate_foreground_file
+from .costs import check_daily_limit, track_cost
 
 logger = logging.getLogger("creative_studio.photoshoot")
+
+HIGGSFIELD_COST_DEFAULTS = {"balanced": 0.08, "quality": 0.12, "ultra": 0.72}
+
+
+def higgsfield_cost(tier: str) -> float:
+    default = HIGGSFIELD_COST_DEFAULTS[tier]
+    try:
+        estimate = float(os.environ.get(f"HIGGSFIELD_COST_USD_{tier.upper()}") or default)
+        return estimate if math.isfinite(estimate) and estimate > 0 else default
+    except ValueError:
+        return default
 
 def _spawn(work: Callable[[], None]) -> None:
     threading.Thread(target=work, daemon=True, name="photoshoot-pack").start()
@@ -26,7 +40,9 @@ def create_blueprint(
     current_session: Callable[[], dict | None],
     current_actor_id: Callable[[], str | None],
     spend_credits: Callable[[str, int], tuple[bool, int]],
-    refund_credits: Callable[[str, int], None],
+    auth_db: Callable,
+    cost_db: Callable[[], Path],
+    cost_lock,
     save_upload: Callable,
     enforce_daily_limit: Callable,
     get_output_dir: Callable[[], Path],
@@ -38,7 +54,15 @@ def create_blueprint(
     blueprint = Blueprint("photoshoot", __name__)
 
     def options() -> dict:
+        try:
+            provider = select_provider()
+            provider_name = provider.name
+            accepts_user_key = provider.name == "gemini" and provider.accepts_user_key
+        except ValueError:
+            provider_name, accepts_user_key = "higgsfield", False
         return {
+            "provider": provider_name,
+            "accepts_user_key": accepts_user_key,
             "vibes": [
                 {"id": vibe.id, "label": vibe.label, "blurb": vibe.blurb, "swatch": list(vibe.swatch)}
                 for vibe in photoshoot.VIBES.values()
@@ -52,9 +76,8 @@ def create_blueprint(
             "default_tier": photoshoot.DEFAULT_TIER,
         }
 
-    def refund_pack(pack: dict, outputs: int) -> None:
-        if pack.get("user_id") and pack.get("credits_charged") and outputs > 0:
-            refund_credits(pack["user_id"], pack["credits_each"] * outputs)
+    def refund_pack(pack: dict, output: dict) -> None:
+        photoshoot.refund_output_once(auth_db, pack, output)
 
     @blueprint.get("/shoot")
     def shoot_page():
@@ -82,7 +105,7 @@ def create_blueprint(
             return jsonify({"error": "Unknown quality", "valid_tiers": list(photoshoot.PACK_TIERS)}), 400
         shot_ids = photoshoot.parse_shots(form.get("shots"))
         if shot_ids is None:
-            return jsonify({"error": "Pick at least one shot", "valid_shots": list(photoshoot.SHOT_IDS)}), 400
+            return jsonify({"error": "Choose at least one shot", "valid_shots": list(photoshoot.SHOT_IDS)}), 400
         note = photoshoot.clean_note(form.get("note", ""))
         if "image" not in request.files:
             return jsonify({"error": "Add a product photo to start"}), 400
@@ -98,7 +121,19 @@ def create_blueprint(
                 "error": "Photoshoot is not set up yet",
                 "message": "The image service isn't configured on this server. No credits were charged.",
             }), 503
-        limit_error = enforce_daily_limit(len(shot_ids), tier)
+        if provider.name == "higgsfield":
+            try:
+                daily_limit = float(os.environ.get("CREATIVE_DAILY_LIMIT") or "5")
+            except ValueError:
+                daily_limit = 5.0
+            rejection = check_daily_limit(
+                cost_db(), estimated_count=len(shot_ids), tier=tier, daily_limit=daily_limit,
+                tier_models={tier: ("higgsfield", tier)},
+                price_card={"higgsfield": {tier: higgsfield_cost(tier)}}, lock=cost_lock,
+            )
+            limit_error = (jsonify(rejection), 429) if rejection else None
+        else:
+            limit_error = enforce_daily_limit(len(shot_ids), tier)
         if limit_error is not None:
             return limit_error
         try:
@@ -139,10 +174,6 @@ def create_blueprint(
             api_key, charged = "", True
         user_id = session["user_id"] if (session and charged) else None
 
-        def refund_outputs(count: int):
-            if user_id and count > 0:
-                refund_credits(user_id, credits_for(tier, count))
-
         pack = photoshoot.new_pack(
             owner_id=owner_id,
             user_id=user_id,
@@ -155,6 +186,9 @@ def create_blueprint(
         store.live.add(pack["id"])
 
         def record_in_library(state: dict, output: dict) -> None:
+            if state["provider"] == "higgsfield" and output.get("model") != "local-cutout":
+                track_cost(cost_db(), {"higgsfield": {tier: higgsfield_cost(tier)}},
+                           "higgsfield", tier, 1, cost_lock)
             # Shows the shot in History/Library; the pack itself never depends on it.
             try:
                 add_entry("sess_" + state["id"][3:11], {
@@ -172,7 +206,7 @@ def create_blueprint(
                 store, pack["id"],
                 provider=provider, api_key=api_key, product_path=Path(product_path),
                 output_dir=get_output_dir(), to_image_url=to_image_url,
-                refund_outputs=refund_outputs, on_output_done=record_in_library,
+                refund_output=refund_pack, on_output_done=record_in_library,
             )
 
         spawn(work)

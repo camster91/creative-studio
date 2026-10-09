@@ -78,6 +78,28 @@ def _shoot(client, headers, **form):
 # ─── Metering ─────────────────────────────────────────────────────────
 
 class TestMetering:
+    @pytest.mark.parametrize("tier", photoshoot.PACK_TIERS)
+    def test_higgsfield_spend_reaches_shared_daily_limit(self, cs, monkeypatch, tier):
+        from creative_studio_app.costs import load_costs
+        cs.provider.name = "higgsfield"
+        cs.provider.fail = {"story"}
+        monkeypatch.setenv(f"HIGGSFIELD_COST_USD_{tier.upper()}", "0.30")
+        monkeypatch.setenv("CREATIVE_DAILY_LIMIT", "0.95")
+        client, headers = _login(cs, "budget@x.co", credits=100)
+        # One paid render, one failure and a free local cutout.
+        first = _shoot(client, headers, shots="hero,story,cutout", tier=tier)
+        assert first.status_code == 202
+        assert load_costs(cs.COST_DB)["total"] == pytest.approx(0.30)
+        assert load_costs(cs.COST_DB)["image_count"] == 1
+        assert _shoot(client, headers, shots="hero", tier=tier).status_code == 202
+        assert _shoot(client, headers, shots="hero", tier=tier).status_code == 202
+        balance = _balance(cs, "budget@x.co")
+        blocked = _shoot(client, headers, shots="hero", tier=tier)
+        assert blocked.status_code == 429
+        assert blocked.get_json()["spent_today"] == pytest.approx(0.90)
+        assert blocked.get_json()["est_cost"] == pytest.approx(0.30)
+        assert _balance(cs, "budget@x.co") == balance
+
     def test_default_pack_charges_every_output_at_tier_weight(self, cs):
         client, headers = _login(cs, "pack@x.co", credits=20)
         r = _shoot(client, headers)
@@ -145,6 +167,15 @@ class TestMetering:
 # ─── Validation happens before any charge ─────────────────────────────
 
 class TestValidation:
+    def test_explicit_empty_shots_is_rejected_but_omitted_defaults(self, cs):
+        client, headers = _login(cs, "empty@x.co", credits=20)
+        response = _shoot(client, headers, shots="")
+        assert response.status_code == 400
+        assert response.get_json()["error"] == "Choose at least one shot"
+        assert _balance(cs, "empty@x.co") == 20
+        assert cs.provider.calls == []
+        assert _shoot(client, headers).get_json()["total"] == ALL
+
     @pytest.mark.parametrize("form", [
         {"vibe": "vaporwave"},
         {"tier": "fast"},
@@ -198,6 +229,46 @@ class TestValidation:
 # ─── Pack contents, ownership, download ──────────────────────────────
 
 class TestPack:
+    def test_crash_after_refund_before_json_settlement_is_idempotent(self, cs, monkeypatch):
+        cs.provider.fail = {"hero"}
+        client, headers = _login(cs, "crash@x.co", credits=20)
+        original_update = cs._pack_store.update
+
+        def crash_on_settlement(pack_id, change):
+            before = cs._pack_store.load(pack_id)
+            change(before)
+            if before["outputs"][0]["status"] == "failed":
+                raise RuntimeError("simulated process death after SQLite refund")
+            return original_update(pack_id, change)
+
+        monkeypatch.setattr(cs._pack_store, "update", crash_on_settlement)
+        assert _shoot(client, headers, shots="hero", tier="quality").status_code == 500
+        assert _balance(cs, "crash@x.co") == 20
+        monkeypatch.setattr(cs._pack_store, "update", original_update)
+        # Read the persisted pack through a new store, as a restarted process does.
+        restarted = photoshoot.PackStore(cs.DATA_DIR)
+        pack_id = next(restarted._dir.glob("*.json")).stem
+        assert restarted.load(pack_id)["outputs"][0]["status"] == "running"
+        for _ in range(2):
+            recovered = photoshoot.recover_if_orphaned(
+                restarted, restarted.load(pack_id),
+                lambda pack, output: photoshoot.refund_output_once(cs._auth_db, pack, output),
+            )
+        assert recovered["status"] == "failed"
+        assert recovered["credits_refunded"] == W["quality"]
+        assert recovered["outputs"][0]["refunded"] is True
+        assert _balance(cs, "crash@x.co") == 20
+
+    def test_options_only_accept_own_keys_for_gemini(self, cs):
+        client = cs.app.test_client()
+        cs.provider.name = "higgsfield"
+        assert client.get("/api/shoot/options").get_json()["accepts_user_key"] is False
+        cs._select_photoshoot_provider = lambda: GeminiCompositeProvider(lambda *args: [])
+        options = client.get("/api/shoot/options").get_json()
+        assert options["provider"] == "gemini"
+        assert options["accepts_user_key"] is True
+        assert "api_key" not in json.dumps(options)
+
     def test_outputs_have_exact_sizes_and_local_cutout(self, cs):
         client, headers = _login(cs, "sizes@x.co", credits=20)
         pack = _shoot(client, headers, vibe="luxe").get_json()

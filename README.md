@@ -123,3 +123,40 @@ More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/QC.md](docs/QC.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### Product photoshoots (`/shoot`)
+
+Upload a PNG, JPG or WebP (up to 16 MB), choose a vibe and press Go. The pack
+contains six channel formats by default; Customise changes quality, shots and
+a short brand note. Progress resumes when you return. Review each label against
+the real packaging before publishing; download individual shots or the ZIP.
+
+`PHOTOGEN_IMAGE_PROVIDER` selects `auto` (default), `higgsfield` or `gemini`.
+Only Gemini accepts a user's own key. Higgsfield uses the server's account and
+always requires a signed-in user with enough PhotoGen credits.
+
+Successful Higgsfield renders enter the shared `costs.json` daily spend ledger.
+Per-render USD estimates default to $0.08 Balanced, $0.12 High and $0.72 Ultra;
+set `HIGGSFIELD_COST_USD_BALANCED`, `HIGGSFIELD_COST_USD_QUALITY` and
+`HIGGSFIELD_COST_USD_ULTRA` to your account's actual rates. These are planning
+estimates, not provider price guarantees. Invalid or nonpositive overrides use
+the defaults. Local white-background cutouts and failed renders add no provider
+spend. `CREATIVE_DAILY_LIMIT` checks this ledger using the same estimates.
+
+Failed-shot refunds use per-pack/per-shot keys in `photoshoot_refunds` inside
+the existing auth SQLite database. The credit return and guard commit together;
+recovery safely retries the key before settling the pack JSON. Keep both the
+auth database and `data/packs/` in persistent backups.
+
+The shoot page uses the PhotoGen assets in `static/photogen/` and a self-hosted
+Archivo variable Latin font (weight and width axes). The app currently sets
+no CSP. No external font origins are needed.
+
+Refresh the mocked screenshot set with:
+
+```sh
+CI=1 SHOOT_SCREENSHOTS=1 SHOOT_SCREENSHOT_DIR=/workspace/photogen-rebuild/screenshots npx playwright test tests/browser/shoot.spec.js
+```
+
+The run writes the same PNGs to `docs/screenshots/` and the requested directory.
+Sample product photos are illustrative brand assets, not real customer outputs.

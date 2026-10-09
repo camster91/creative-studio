@@ -129,7 +129,7 @@ def clean_note(raw: str) -> str:
 
 def parse_shots(raw) -> list[str] | None:
     """Return the requested shot ids in pack order, or None if invalid/empty."""
-    if raw in (None, ""):
+    if raw is None:
         return list(SHOT_IDS)
     requested = raw if isinstance(raw, list) else str(raw).split(",")
     requested = {str(item).strip() for item in requested if str(item).strip()}
@@ -268,6 +268,7 @@ def public_view(pack: dict) -> dict:
     done = sum(1 for output in outputs if output["status"] == "done")
     return {
         "pack_id": pack["id"],
+        "created_at": pack["created_at"],
         "status": pack["status"],
         "vibe": pack["vibe"],
         "tier": pack["tier"],
@@ -293,6 +294,34 @@ def friendly_error(code: str | None) -> str:
     return FRIENDLY_ERRORS.get(code or "", "This shot didn't come out. Its credits were refunded.")
 
 
+def refund_output_once(auth_db: Callable, pack: dict, output: dict) -> None:
+    """Commit the per-output guard and credit refund in the same SQLite transaction.
+
+    The JSON pack can lag this transaction after a crash. Recovery retries the
+    same key, then repairs the JSON settlement without returning credits twice.
+    This journal belongs to photoshoots; other billing flows remain unchanged.
+    """
+    if not pack.get("user_id") or not pack.get("credits_charged"):
+        return
+    key = f"{pack['id']}:{output['id']}"
+    with auth_db() as database:
+        database.execute("BEGIN IMMEDIATE")
+        database.execute("""CREATE TABLE IF NOT EXISTS photoshoot_refunds (
+            refund_key TEXT PRIMARY KEY, user_id TEXT NOT NULL, credits INTEGER NOT NULL
+        )""")
+        claimed = database.execute(
+            "INSERT OR IGNORE INTO photoshoot_refunds VALUES (?, ?, ?)",
+            (key, pack["user_id"], pack["credits_each"]),
+        )
+        if claimed.rowcount:
+            database.execute(
+                """UPDATE users SET credits_remaining = credits_remaining + ?,
+                   credits_used_today = MAX(0, credits_used_today - ?) WHERE id = ?""",
+                (pack["credits_each"], pack["credits_each"], pack["user_id"]),
+            )
+        database.commit()
+
+
 def run_pack(
     store: PackStore,
     pack_id: str,
@@ -302,7 +331,7 @@ def run_pack(
     product_path: Path,
     output_dir: Path,
     to_image_url: Callable[[str], str],
-    refund_outputs: Callable[[int], None],
+    refund_output: Callable[[dict, dict], None],
     on_output_done: Callable[[dict, dict], None] = lambda *_args: None,
 ) -> dict:
     """Render every output, refunding each failed one as soon as it fails."""
@@ -339,7 +368,7 @@ def run_pack(
                 result = failure("Image service unavailable", "service_unavailable")
         ok = "error" not in result and Path(result.get("path", "")).is_file()
         if not ok:
-            refund_outputs(1)
+            refund_output(pack, output)
 
         def record(state):
             entry = state["outputs"][index]
@@ -348,7 +377,8 @@ def run_pack(
                              url=to_image_url(result["path"]), model=result.get("model"))
             else:
                 entry.update(status="failed", error=friendly_error(result.get("error_code")),
-                             error_code=result.get("error_code") or "failed")
+                             error_code=result.get("error_code") or "failed", refunded=True,
+                             refund_key=f"{pack_id}:{output['id']}")
                 state["credits_refunded"] += state["credits_each"] if state["credits_charged"] else 0
         updated = store.update(pack_id, record)
         if ok:
@@ -359,34 +389,34 @@ def run_pack(
             list(pool.map(lambda pair: render_one(*pair), enumerate(pack["outputs"])))
     finally:
         final = store.update(pack_id, lambda state: state.update(
-            status=finish_status(state["outputs"]), finished_at=time.time()))
+            status=("running" if any(output["status"] in ("pending", "running")
+                                     for output in state["outputs"])
+                    else finish_status(state["outputs"])), finished_at=time.time()))
         store.live.discard(pack_id)
     return final
 
 
-def recover_if_orphaned(store: PackStore, pack: dict, refund_outputs: Callable[[dict, int], None]) -> dict:
+def recover_if_orphaned(store: PackStore, pack: dict, refund_output: Callable[[dict, dict], None]) -> dict:
     """A pack marked active with no live runner was cut off by a restart.
 
-    Fail its unfinished outputs and refund them once (the status change is the guard).
+    Retry the atomic refund keys before repairing unfinished JSON settlements.
     """
     if pack["status"] not in ACTIVE or pack["id"] in store.live:
         return pack
-    unfinished = [0]
-
     def settle(state):
         if state["status"] not in ACTIVE:
             return
         for output in state["outputs"]:
             if output["status"] in ("pending", "running"):
+                if not output.get("refunded"):
+                    refund_output(state, output)
                 output.update(status="failed", error=friendly_error("interrupted"),
-                              error_code="interrupted")
-                unfinished[0] += 1
-                if state["credits_charged"]:
+                              error_code="interrupted", refund_key=f"{state['id']}:{output['id']}")
+                if state["credits_charged"] and not output.get("refunded"):
                     state["credits_refunded"] += state["credits_each"]
+                output["refunded"] = True
         state["status"] = finish_status(state["outputs"])
     settled = store.update(pack["id"], settle)
-    if unfinished[0]:
-        refund_outputs(settled, unfinished[0])
     return settled
 
 
