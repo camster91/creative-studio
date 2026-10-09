@@ -65,6 +65,9 @@ from creative_studio_app.core_routes import create_blueprint as _create_core_blu
 from creative_studio_app.delivery_routes import create_blueprint as _create_delivery_blueprint
 from creative_studio_app.generation_routes import create_blueprint as _create_generation_blueprint
 from creative_studio_app.iteration_routes import create_blueprint as _create_iteration_blueprint
+from creative_studio_app import photoshoot as _photoshoot
+from creative_studio_app.photoshoot_routes import create_blueprint as _create_photoshoot_blueprint
+from creative_studio_app.providers import select_provider as _select_image_provider
 from creative_studio_app.jobs import (
     DurableJobStore,
     evict_old_jobs as _evict_jobs,
@@ -1914,6 +1917,38 @@ app.register_blueprint(
         require_access=_require_access,
         current_session=_current_session,
         refund_credits=_refund_credits,
+    )
+)
+_pack_store = _photoshoot.PackStore(DATA_DIR)
+
+
+def _select_photoshoot_provider():
+    return _select_image_provider(lambda *args, **kwargs: run_cli_composite(*args, **kwargs))
+
+
+def _spawn_photoshoot(work):
+    threading.Thread(target=work, daemon=True, name="photoshoot-pack").start()
+
+
+app.register_blueprint(
+    _create_photoshoot_blueprint(
+        store=_pack_store,
+        select_provider=lambda: _select_photoshoot_provider(),
+        require_api_key=_require_api_key,
+        require_access=_require_access,
+        current_session=_current_session,
+        current_actor_id=_current_actor_id,
+        spend_credits=_spend_credits,
+        auth_db=_auth_db,
+        cost_db=lambda: COST_DB,
+        cost_lock=_json_lock,
+        save_upload=_save_upload,
+        enforce_daily_limit=enforce_daily_limit,
+        get_output_dir=lambda: OUTPUT_DIR,
+        to_image_url=image_url,
+        rate_limited=rate_limited,
+        add_entry=add_entry,
+        spawn=lambda work: _spawn_photoshoot(work),
     )
 )
 app.register_blueprint(

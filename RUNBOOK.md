@@ -281,3 +281,22 @@ docker start photogen
 
 This legacy copy is local-only and is not a substitute for the encrypted
 off-host workflow or an isolated restore drill.
+
+## Photoshoot spend and recovery
+
+For `/shoot`, configure the server image provider with `PHOTOGEN_IMAGE_PROVIDER`
+(`auto`, `higgsfield`, or `gemini`). Keep all credentials outside the repository.
+Higgsfield accepts no user Gemini key; it requires an account and PhotoGen credits.
+
+The shared `CREATIVE_DAILY_LIMIT` ledger now includes each successful paid
+Higgsfield output. Its estimates default to $0.08 / $0.12 / $0.72 USD per image
+at Balanced / High / Ultra. Override with `HIGGSFIELD_COST_USD_BALANCED`,
+`HIGGSFIELD_COST_USD_QUALITY`, `HIGGSFIELD_COST_USD_ULTRA` to match your provider
+account. Only positive finite estimates are accepted; invalid values fall back
+to defaults. Failed renders and local cutouts do not add spend.
+
+Pack JSON files live under `data/packs/`. Restart recovery fails unfinished
+outputs and returns their credits. `photoshoot_refunds` in the auth database
+records a unique pack/shot refund key atomically with the balance update, so a
+crash before JSON settlement cannot duplicate the refund. Preserve that table
+with the existing auth DB backup. Polls and ZIP downloads remain free.
