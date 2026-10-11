@@ -48,3 +48,6 @@
 .exception-row label {
   margin-top: 6px;
 }
+
+/* Phone: let the nav wrap so the Photoshoot link never causes horizontal overflow. */
+@media (max-width:560px){.topbar{height:auto;min-height:68px;flex-wrap:wrap;row-gap:6px;padding-top:10px;padding-bottom:10px}.topbar nav{flex-wrap:wrap;gap:4px 12px}}
