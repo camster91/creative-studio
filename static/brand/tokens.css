@@ -1,0 +1,43 @@
+/*
+ * Packstage design tokens (draft, pending Bianca's sign-off).
+ * Shared by the app and the marketing site. Colours come from a photo studio:
+ * seamless paper, gaffer tape, an 18% grey card, a cobalt backdrop, a spotlight.
+ * Contrast (WCAG): ink on paper 14.8:1, cobalt on paper 6.9:1,
+ * white on cobalt 7.1:1, quiet text on paper 4.9:1.
+ * Grey card is for borders and dividers only (3.1:1, too light for text).
+ */
+:root {
+  --ps-paper: #FBFBFA;       /* seamless white: page background */
+  --ps-ink: #22252B;         /* gaffer: text, wordmark */
+  --ps-quiet: #6B6F78;       /* secondary text */
+  --ps-grey-card: #8E9196;   /* borders and rules only */
+  --ps-cobalt: #2B46D6;      /* backdrop cobalt: the one accent, buttons, links */
+  --ps-spotlight: #FFD447;   /* spotlight: rare highlight, never behind text smaller than 24px */
+
+  --ps-font-display: "Archivo", "Helvetica Neue", Arial, sans-serif; /* set at wdth 125, wght 700-800 */
+  --ps-font-body: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+
+  /* Type scale (1.25 ratio) */
+  --ps-text-sm: 0.875rem;
+  --ps-text-base: 1rem;
+  --ps-text-lg: 1.25rem;
+  --ps-text-xl: 1.5625rem;
+  --ps-text-2xl: 1.953rem;
+  --ps-text-3xl: 2.441rem;
+  --ps-text-4xl: 3.052rem;
+
+  --ps-radius-sm: 4px;       /* inputs */
+  --ps-radius-md: 6px;       /* buttons, the carton */
+  --ps-space: 8px;           /* base spacing step */
+  --ps-measure: 68ch;        /* max line length for body copy */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ps-paper: #1B1D22;
+    --ps-ink: #F2F2EF;
+    --ps-quiet: #A7AAB2;
+    --ps-grey-card: #4A4D55;
+    --ps-cobalt: #7C8FF0;
+  }
+}
