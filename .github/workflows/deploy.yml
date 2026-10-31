@@ -3,6 +3,10 @@ name: Deploy Creative Studio
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '.github/**'
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch:
     inputs:
       operation:
