@@ -7,14 +7,14 @@
   "input_image_required": true,
   "prompt_template": "A person {action} with this exact {product_name}. Natural {setting}. {time_of_day} lighting. {camera_distance} shot. Authentic candid moment. Slight motion blur on hands. {dof}. Warm color grading. Lifestyle editorial photography.",
   "placeholders": {
-    "product_name": "G FUEL shaker bottle",
+    "product_name": "Sample Brand A shaker bottle",
     "action": "shaking a drink",
     "setting": "modern kitchen counter with protein tubs in background",
     "time_of_day": "Morning window light",
     "camera_distance": "Medium close-up",
     "dof": "Shallow depth of field with soft bokeh"
   },
-  "example_prompt": "A person shaking a drink with this exact G FUEL shaker bottle. Natural modern kitchen counter with protein tubs in background. Morning window light. Medium close-up shot. Authentic candid moment. Slight motion blur on hands. Shallow depth of field with soft bokeh. Warm color grading. Lifestyle editorial photography.",
+  "example_prompt": "A person shaking a drink with this exact Sample Brand A shaker bottle. Natural modern kitchen counter with protein tubs in background. Morning window light. Medium close-up shot. Authentic candid moment. Slight motion blur on hands. Shallow depth of field with soft bokeh. Warm color grading. Lifestyle editorial photography.",
   "tips": [
     "Specify 'exact product' + 'this' to anchor the input image",
     "Motion blur on hands keeps the scene feeling natural",

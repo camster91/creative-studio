@@ -7,6 +7,8 @@ import time
 
 from flask import Blueprint, jsonify, request
 
+from .billing import CREDIT_WEIGHT_BY_TIER
+
 
 def create_blueprint(
     *,
@@ -37,6 +39,9 @@ def create_blueprint(
     current_version_node: Callable = lambda *_args: None,
     record_provider_results: Callable = lambda *_args, **_kwargs: None,
     fetch_owner_figma_context: Callable | None = None,
+    require_access: Callable = lambda: None,
+    refund_credits: Callable[[str, int], None] = lambda *_args: None,
+    credit_weights: dict = CREDIT_WEIGHT_BY_TIER,
 ) -> Blueprint:
     blueprint = Blueprint("generation_routes", __name__)
 
@@ -72,44 +77,33 @@ def create_blueprint(
         length_error = enforce_prompt_length(prompt)
         if length_error is not None:
             return length_error
-        api_key, error, used_trial_credit = require_api_key()
-        if error is not None:
-            return error
+        # Cheap, non-spending auth gate first; credits are only charged
+        # once every input below has been validated.
+        access_error = require_access()
+        if access_error is not None:
+            return access_error
         owner_id = current_actor_id()
         parent_node_id = data.get("parent_node_id") or None
+        raw_variations = data.get("variations", 1)
+        if isinstance(raw_variations, bool):
+            return jsonify({"error": "variations must be an integer from 1 to 8"}), 400
         try:
-            variations = int(data.get("variations", 1))
+            variations = int(raw_variations)
         except (TypeError, ValueError):
             return jsonify({"error": "variations must be an integer from 1 to 8"}), 400
         if not 1 <= variations <= 8:
             return jsonify({"error": "variations must be between 1 and 8"}), 400
         mode = data.get("mode", "direct")
         tier = data.get("tier", "balanced")
+        if tier not in credit_weights:
+            return jsonify({
+                "error": "Unknown quality tier",
+                "valid_tiers": list(credit_weights),
+            }), 400
         aspect = data.get("aspect_ratio", "16:9")
         session_id = data.get("session_id", new_session_id())
-        parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
-        if not validate_version_parent(session_id, owner_id, parent_node_id):
-            return jsonify({"error": "Parent version not found"}), 404
-        limit_error = enforce_daily_limit(variations, tier)
-        if limit_error is not None:
-            return limit_error
-        figma_url = data.get("figma_url")
-        if figma_url:
-            file_key, node_id = parse_figma_url(figma_url)
-            if file_key:
-                context = (
-                    fetch_owner_figma_context(owner_id, file_key, node_id)
-                    if fetch_owner_figma_context else fetch_figma_context(file_key, node_id)
-                )
-                if "error" not in context:
-                    prompt = enhance_prompt_with_figma(prompt, context)
-                    length_error = enforce_prompt_length(prompt)
-                    if length_error is not None:
-                        return length_error
-                elif fetch_owner_figma_context:
-                    return jsonify(context), int(context.get("status", 502))
-
-        if variations > 1 and durable_jobs_enabled:
+        batch_mode = variations > 1 and durable_jobs_enabled
+        if batch_mode:
             estimated_cost = estimate_cost(tier) * variations
             if max_job_cost > 0 and estimated_cost > max_job_cost:
                 return jsonify({
@@ -124,6 +118,45 @@ def create_blueprint(
             )
             if not isinstance(idempotency_key, str) or not idempotency_key.isascii() or len(idempotency_key) > 128:
                 return jsonify({"error": "Invalid idempotency key"}), 400
+        parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
+        if not validate_version_parent(session_id, owner_id, parent_node_id):
+            return jsonify({"error": "Parent version not found"}), 404
+        limit_error = enforce_daily_limit(variations, tier)
+        if limit_error is not None:
+            return limit_error
+
+        # Charge per image x tier weight, all-or-nothing.
+        credits_per_image = credit_weights[tier]
+        credits_charged = credits_per_image * variations
+        api_key, error, used_trial_credit = require_api_key(credits=credits_charged)
+        if error is not None:
+            return error
+        billed = current_session() if used_trial_credit else None
+        billed_user_id = billed["user_id"] if billed else None
+
+        def refund(undelivered_images: int):
+            if billed_user_id and undelivered_images > 0:
+                refund_credits(billed_user_id, credits_per_image * undelivered_images)
+
+        figma_url = data.get("figma_url")
+        if figma_url:
+            file_key, node_id = parse_figma_url(figma_url)
+            if file_key:
+                context = (
+                    fetch_owner_figma_context(owner_id, file_key, node_id)
+                    if fetch_owner_figma_context else fetch_figma_context(file_key, node_id)
+                )
+                if "error" not in context:
+                    prompt = enhance_prompt_with_figma(prompt, context)
+                    length_error = enforce_prompt_length(prompt)
+                    if length_error is not None:
+                        refund(variations)
+                        return length_error
+                elif fetch_owner_figma_context:
+                    refund(variations)
+                    return jsonify(context), int(context.get("status", 502))
+
+        if batch_mode:
             owner_id = current_actor_id()
             fingerprint = hashlib.sha256(json.dumps({
                 "prompt": prompt,
@@ -138,9 +171,12 @@ def create_blueprint(
                     owner_id, idempotency_key, fingerprint, estimated_cost
                 )
             except ValueError as error:
+                refund(variations)
                 return jsonify({"error": str(error)}), 409
             job_id = job["id"]
             if not created:
+                # The original request already paid for this job.
+                refund(variations)
                 return jsonify({
                     "job_id": job_id,
                     "status": job["status"],
@@ -153,6 +189,7 @@ def create_blueprint(
                 images = []
                 for index in range(variations):
                     if job_store.cancellation_requested(job_id):
+                        refund(variations - len(images))
                         return {
                             "_job_status": "cancelled",
                             "images": images,
@@ -170,6 +207,7 @@ def create_blueprint(
                     )
                     if not batch or "error" in batch[0]:
                         failure = batch[0] if batch else {}
+                        refund(variations - len(images))
                         return {
                             "_job_status": "failed",
                             "_job_error_code": failure.get("error_code", "provider_failed"),
@@ -194,6 +232,7 @@ def create_blueprint(
                         actual_cost=sum(item.get("cost", 0) for item in images),
                     )
                     if job_store.cancellation_requested(job_id):
+                        refund(variations - len(images))
                         return {
                             "_job_status": "cancelled",
                             "images": images,
@@ -215,15 +254,16 @@ def create_blueprint(
                 }
 
             run_job_background(job_id, generate_batch)
-            return jsonify(
-                {
-                    "job_id": job_id,
-                    "status": "running",
-                    "message": "Generation started",
-                    "idempotency_key": idempotency_key,
-                    "estimated_cost": round(estimated_cost, 4),
-                }
-            )
+            response = {
+                "job_id": job_id,
+                "status": "running",
+                "message": "Generation started",
+                "idempotency_key": idempotency_key,
+                "estimated_cost": round(estimated_cost, 4),
+            }
+            if used_trial_credit:
+                response["credits_charged"] = credits_charged
+            return jsonify(response)
 
         call_started = time.monotonic()
         images = run_generate(
@@ -240,6 +280,8 @@ def create_blueprint(
                     session_id, mode, prompt, aspect, image, owner_id,
                     parent_node_id,
                 )
+        delivered = sum(1 for image in images if "error" not in image)
+        refund(variations - delivered)
         persist_session_count()
         payload = {
             "message": f"Generated {len(images)} image(s)",
@@ -252,6 +294,7 @@ def create_blueprint(
                 payload.update(
                     {
                         "trial_credit_used": True,
+                        "credits_charged": credits_per_image * delivered,
                         "credits_remaining": session["credits_remaining"],
                     }
                 )

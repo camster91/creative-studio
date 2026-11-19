@@ -166,6 +166,11 @@ def init_schema(path: Path) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_campaign_exceptions_owner
             ON campaign_exceptions(user_id,campaign_id,status,created_at);
+        CREATE TABLE IF NOT EXISTS stripe_events (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            processed_at TEXT NOT NULL
+        );
         """)
         existing = {row[1] for row in database.execute("PRAGMA table_info(users)")}
         for column, declaration in [
@@ -284,14 +289,21 @@ def session_from_token(path: Path, token: str) -> dict | None:
 
 def use_trial_credit(path: Path, user_id: str) -> tuple[bool, int]:
     """Atomically decrement a positive balance, preventing concurrent overspend."""
+    return spend_credits(path, user_id, 1)
+
+
+def spend_credits(path: Path, user_id: str, amount: int) -> tuple[bool, int]:
+    """Atomically deduct `amount` credits, or nothing if the balance is short."""
+    if amount < 1:
+        raise ValueError("amount must be a positive integer")
     with connect(path) as database:
         database.execute("BEGIN IMMEDIATE")
         updated = database.execute(
             """UPDATE users
-               SET credits_remaining = credits_remaining - 1,
-                   credits_used_today = credits_used_today + 1
-               WHERE id = ? AND credits_remaining > 0""",
-            (user_id,),
+               SET credits_remaining = credits_remaining - ?,
+                   credits_used_today = credits_used_today + ?
+               WHERE id = ? AND credits_remaining >= ?""",
+            (amount, amount, user_id, amount),
         )
         if updated.rowcount != 1:
             database.rollback()
@@ -301,3 +313,18 @@ def use_trial_credit(path: Path, user_id: str) -> tuple[bool, int]:
         ).fetchone()["credits_remaining"]
         database.commit()
         return True, int(remaining)
+
+
+def refund_credits(path: Path, user_id: str, amount: int) -> None:
+    """Return credits for work that was charged but never delivered."""
+    if amount < 1:
+        return
+    with connect(path) as database:
+        database.execute(
+            """UPDATE users
+               SET credits_remaining = credits_remaining + ?,
+                   credits_used_today = MAX(0, credits_used_today - ?)
+               WHERE id = ?""",
+            (amount, amount, user_id),
+        )
+        database.commit()

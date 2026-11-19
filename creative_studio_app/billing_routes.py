@@ -1,10 +1,17 @@
 """Stripe billing Flask routes."""
 
+import logging
 import os
 from collections.abc import Callable
 
 from flask import Blueprint, jsonify, render_template, request
 
+logger = logging.getLogger(__name__)
+
+LIVE_KEY_REFUSED = {
+    "error": "Live Stripe keys are disabled",
+    "message": "Set PHOTOGEN_ALLOW_LIVE_STRIPE=1 on the host to accept real payments.",
+}
 
 def create_blueprint(
     *,
@@ -14,10 +21,11 @@ def create_blueprint(
     auth_db: Callable,
     current_session: Callable[[], dict | None],
     stripe_configured: Callable[[], bool],
+    stripe_live_blocked: Callable[[], bool],
     stripe_api: Callable,
     get_or_create_customer: Callable[[dict], str],
     resolve_price_id: Callable[[str], str],
-    handle_event: Callable,
+    process_event: Callable,
     rate_limited: Callable,
 ) -> Blueprint:
     blueprint = Blueprint("billing", __name__)
@@ -54,6 +62,8 @@ def create_blueprint(
                     "message": "Set STRIPE_SECRET_KEY on the host to enable paid plans.",
                 }
             ), 503
+        if stripe_live_blocked():
+            return jsonify(LIVE_KEY_REFUSED), 503
         plan = ((request.json or {}).get("plan") or "").strip()
         if plan not in plans:
             return jsonify(
@@ -95,6 +105,8 @@ def create_blueprint(
             return jsonify({"error": "Sign in required"}), 401
         if not stripe_configured():
             return jsonify({"error": "Billing not configured"}), 503
+        if stripe_live_blocked():
+            return jsonify(LIVE_KEY_REFUSED), 503
         with auth_db() as database:
             user = database.execute(
                 "SELECT * FROM users WHERE id = ?", (session["user_id"],)
@@ -113,6 +125,8 @@ def create_blueprint(
     def billing_webhook():
         if not stripe_configured():
             return "Stripe not configured", 503
+        if stripe_live_blocked():
+            return LIVE_KEY_REFUSED["error"], 503
         webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
         if not webhook_secret:
             return "Webhook secret not configured", 503
@@ -125,7 +139,14 @@ def create_blueprint(
             )
         except Exception as error:
             return f"Invalid signature: {error}", 400
-        handle_event(auth_db_path, stripe, event, plans)
+        try:
+            process_event(auth_db_path, stripe, event, plans)
+        except Exception:
+            # Non-2xx makes Stripe retry; the event id is not recorded.
+            logger.exception(
+                "Stripe webhook %s (%s) failed", event.get("id"), event.get("type")
+            )
+            return "Webhook processing failed", 500
         return "", 200
 
     @blueprint.get("/settings/billing")

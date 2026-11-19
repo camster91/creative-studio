@@ -8,6 +8,8 @@ from collections.abc import Callable
 
 from flask import Blueprint, jsonify, request, send_file
 
+from .billing import charge_for_images, unknown_tier_error
+
 
 def create_blueprint(
     *,
@@ -17,6 +19,7 @@ def create_blueprint(
     owned_asset_paths: Callable[[str], set[str]],
     shared_figma_enabled: Callable[[], bool],
     require_api_key: Callable,
+    require_access: Callable,
     get_api_key: Callable[[], str],
     enforce_prompt_length: Callable,
     enforce_daily_limit: Callable,
@@ -41,6 +44,7 @@ def create_blueprint(
     resolve_campaign_pack: Callable = lambda *_args: None,
     record_campaign_qc: Callable = lambda *_args: None,
     get_campaign: Callable = lambda *_args: None,
+    refund_credits: Callable[[str, int], None] = lambda *_args: None,
 ) -> Blueprint:
     blueprint = Blueprint("delivery_routes", __name__)
 
@@ -111,10 +115,13 @@ def create_blueprint(
         length_error = enforce_prompt_length(prompt)
         if length_error is not None:
             return length_error
-        api_key, error, _used_trial_credit = require_api_key()
+        error = require_access()
         if error is not None:
             return error
         tier = request.form.get("tier", "balanced")
+        tier_error = unknown_tier_error(tier)
+        if tier_error is not None:
+            return jsonify(tier_error), 400
         try:
             variations = min(8, max(1, int(request.form.get("variations", "1"))))
         except ValueError:
@@ -134,10 +141,17 @@ def create_blueprint(
         parent_node_id = parent_node_id or current_version_node(session_id, owner_id)
         if not validate_version_parent(session_id, owner_id, parent_node_id):
             return jsonify({"error": "Parent version not found"}), 404
+        # Each variation is one composited image, charged at the request tier.
+        api_key, error, refund = charge_for_images(
+            require_api_key, current_session, refund_credits, tier, variations
+        )
+        if error is not None:
+            return error
         call_started = time.monotonic()
         images = []
         for index in range(variations):
             images.extend(run_composite(prompt, str(product), api_key, aspect, tier=tier, name_suffix=f"{index + 1}-{new_session_id()[:6]}"))
+        refund(variations - sum(1 for image in images if "error" not in image))
         record_provider_results(
             owner_id, session_id, images, estimated_cost_each=estimate_cost(tier),
             latency_ms=(time.monotonic() - call_started) * 1000,
@@ -250,9 +264,9 @@ def create_blueprint(
             return jsonify({"error": "Sign in required"}), 401
         if campaign_id and not get_campaign(campaign_id, account["user_id"]):
             return jsonify({"error": "Campaign not found"}), 404
-        api_key, error, _used_trial_credit = require_api_key()
-        if error is not None:
-            return error
+        access_error = require_access()
+        if access_error is not None:
+            return access_error
         image_url = data.get("image_url")
         if image_url and image_url.startswith("/image/"):
             if campaign_id and image_url[len("/image/"):] not in owned_asset_paths(account["user_id"]):
@@ -269,9 +283,17 @@ def create_blueprint(
                 return jsonify({"error": str(error)}), 400
         else:
             return jsonify({"error": "Image required"}), 400
+        # QC costs one credit, spent only once the image is known to be valid.
+        api_key, error, used_credit = require_api_key()
+        if error is not None:
+            return error
         actor_id = current_actor_id()
         call_started = time.monotonic()
         result = run_qc(str(image), api_key)
+        if used_credit and result.get("error"):
+            charged = current_session()
+            if charged:
+                refund_credits(charged["user_id"], 1)
         ledger_result = dict(result)
         ledger_result["cost"] = result.get("estimated_cost_usd") or 0
         ledger_result["model"] = result.get("model") or "qc-unknown"
@@ -295,7 +317,8 @@ def create_blueprint(
     def figma():
         if not shared_figma_enabled():
             return jsonify({"error": "Shared Figma token access is disabled; configure per-user OAuth"}), 503
-        _api_key, error, _used_trial_credit = require_api_key()
+        # Fetching Figma context is not generation; never spend credits.
+        error = require_access()
         if error is not None:
             return error
         url = (request.json or {}).get("url")

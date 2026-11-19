@@ -80,7 +80,7 @@ def test_batch_endpoint_replay_does_not_repeat_provider_calls(tmp_path):
 
     app.register_blueprint(generation_blueprint(
         enforce_prompt_length=lambda _prompt: None,
-        require_api_key=lambda: ("key", None, False),
+        require_api_key=lambda **_kwargs: ("key", None, False),
         enforce_daily_limit=lambda _count, _tier: None,
         parse_figma_url=lambda _url: (None, None),
         fetch_figma_context=lambda *_args: {},
@@ -117,7 +117,7 @@ def test_per_job_budget_rejects_before_provider_or_job_creation(tmp_path):
     store = DurableJobStore(tmp_path / "jobs.db")
     calls = []
     app.register_blueprint(generation_blueprint(
-        enforce_prompt_length=lambda _prompt: None, require_api_key=lambda: ("key", None, False),
+        enforce_prompt_length=lambda _prompt: None, require_api_key=lambda **_kwargs: ("key", None, False),
         enforce_daily_limit=lambda *_args: None, parse_figma_url=lambda _url: (None, None),
         fetch_figma_context=lambda *_args: {}, enhance_prompt_with_figma=lambda p, _c: p,
         new_session_id=lambda: "sess_deadbeef", new_job_id=lambda: "fallback",

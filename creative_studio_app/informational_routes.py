@@ -1,4 +1,4 @@
-"""Status, documentation, privacy, and history Flask blueprint."""
+"""Status, documentation, privacy, terms, and history Flask blueprint."""
 
 from collections.abc import Callable
 
@@ -33,6 +33,10 @@ def create_blueprint(
     @blueprint.get("/privacy")
     def privacy_page():
         return render_template("privacy.html")
+
+    @blueprint.get("/terms")
+    def terms_page():
+        return render_template("terms.html")
 
     @blueprint.get("/history")
     def history_page():

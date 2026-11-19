@@ -206,7 +206,7 @@ jobs:
             docker run -d \
               --name photogen-stage \
               --restart unless-stopped \
-              -p 5174:5173 \
+              -p 127.0.0.1:5174:5173 \
               -v /root/photogen-stage-data:/app/data \
               -v /root/photogen-stage-outputs:/app/outputs \
               --env-file /root/.env.photogen-stage \

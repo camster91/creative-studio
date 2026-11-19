@@ -18,7 +18,7 @@ Commands:
 
 Usage:
     bash launch.sh direct --prompt "..." --input-image ref.png
-    bash launch.sh chat --name "gfuel-shelf" --input-image ref.png
+    bash launch.sh chat --name "sample-shelf" --input-image ref.png
     bash launch.sh analyze --input layout.png
 """
 

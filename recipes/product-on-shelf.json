@@ -7,7 +7,7 @@
   "input_image_required": true,
   "prompt_template": "Place this exact {product_name} on a clean {shelf_material} retail shelf in a {store_type}. The {product_type} sits firmly with its base touching the shelf surface. Add a soft natural contact shadow directly beneath it. {lighting} lighting. {camera_angle} camera angle. {dof}. Surrounding products visible but blurred in background. Professional product photography.",
   "placeholders": {
-    "product_name": "G FUEL Berry Bomb tub",
+    "product_name": "Sample Brand A Berry tub",
     "product_type": "tub",
     "shelf_material": "wooden",
     "store_type": "GNC supplement store",
@@ -15,7 +15,7 @@
     "camera_angle": "Eye-level",
     "dof": "Shallow depth of field"
   },
-  "example_prompt": "Place this exact G FUEL Berry Bomb tub on a clean wooden retail shelf in a GNC store. The tub sits firmly with its base touching the shelf surface. Add a soft natural contact shadow directly beneath it. Warm overhead fluorescent lighting. Eye-level camera angle. Shallow depth of field. Surrounding supplement products visible but blurred in background. Professional product photography.",
+  "example_prompt": "Place this exact Sample Brand A Berry tub on a clean wooden retail shelf in a GNC store. The tub sits firmly with its base touching the shelf surface. Add a soft natural contact shadow directly beneath it. Warm overhead fluorescent lighting. Eye-level camera angle. Shallow depth of field. Surrounding supplement products visible but blurred in background. Professional product photography.",
   "tips": [
     "Always mention 'base touching shelf' to prevent floating products",
     "Add 'contact shadow' for grounding",

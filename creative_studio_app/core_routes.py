@@ -11,7 +11,7 @@ def create_blueprint(
     *,
     landing_template: str,
     app_template: str,
-    require_api_key: Callable,
+    require_access: Callable,
     current_actor_id: Callable[[], str | None],
     job_store,
     jobs: dict,
@@ -32,7 +32,8 @@ def create_blueprint(
     @blueprint.get("/api/jobs/<job_id>")
     @rate_limited
     def job_status(job_id):
-        _key, auth_error, _used_trial = require_api_key()
+        # Polling and cancelling are free: never spend credits here.
+        auth_error = require_access()
         if auth_error:
             return auth_error
         actor_id = current_actor_id()
@@ -66,7 +67,8 @@ def create_blueprint(
     @blueprint.post("/api/jobs/<job_id>/cancel")
     @rate_limited
     def cancel_job(job_id):
-        _key, auth_error, _used_trial = require_api_key()
+        # Polling and cancelling are free: never spend credits here.
+        auth_error = require_access()
         if auth_error:
             return auth_error
         actor_id = current_actor_id()
