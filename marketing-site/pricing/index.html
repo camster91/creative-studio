@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhotoGen Pricing: Plans and Credits per Image</title>
+  <meta name="description" content="PhotoGen plans start at $19 a month for 100 credits. See how many product images each plan covers, credits per quality tier, and how to generate free with your own Gemini key.">
+  <link rel="canonical" href="https://photogen.ashbi.ca/pricing/">
+  <meta name="theme-color" content="#2340FF">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="PhotoGen">
+  <meta property="og:title" content="PhotoGen pricing: plans and credits per image">
+  <meta property="og:description" content="Starter $19, Pro $49, Studio $99 a month. 5 free credits when you sign up.">
+  <meta property="og:url" content="https://photogen.ashbi.ca/pricing/">
+  <meta property="og:image" content="https://photogen.ashbi.ca/assets/og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="PhotoGen: a product on a butter-yellow studio backdrop next to a round blue Go button">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="PhotoGen pricing: plans and credits per image">
+  <meta name="twitter:description" content="Starter $19, Pro $49, Studio $99 a month. 5 free credits when you sign up.">
+  <meta name="twitter:image" content="https://photogen.ashbi.ca/assets/og.jpg">
+
+  <link rel="icon" href="/assets/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;display=swap">
+  <link rel="stylesheet" href="/assets/site.css">
+  <script src="/assets/site.js" defer></script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "name": "PhotoGen",
+    "description": "AI product photography for DTC and CPG brands, billed as monthly credit plans.",
+    "image": "https://photogen.ashbi.ca/assets/og.jpg",
+    "brand": { "@type": "Brand", "name": "PhotoGen" },
+    "offers": [
+      { "@type": "Offer", "name": "Starter", "price": "19", "priceCurrency": "USD", "description": "100 credits per month", "url": "https://photogen.ashbi.ca/pricing/" },
+      { "@type": "Offer", "name": "Pro", "price": "49", "priceCurrency": "USD", "description": "500 credits per month", "url": "https://photogen.ashbi.ca/pricing/" },
+      { "@type": "Offer", "name": "Studio", "price": "99", "priceCurrency": "USD", "description": "1,500 credits per month", "url": "https://photogen.ashbi.ca/pricing/" }
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      { "@type": "Question", "name": "What is a credit?", "acceptedAnswer": { "@type": "Answer", "text": "Credits pay for generated images. Fast and Balanced images cost 1 credit each, Quality images 2 and Ultra images 5." } },
+      { "@type": "Question", "name": "Do unused credits roll over?", "acceptedAnswer": { "@type": "Answer", "text": "No. Your balance resets to your plan's monthly credits at the start of each billing cycle." } },
+      { "@type": "Question", "name": "Can I generate without credits?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Add your own Gemini API key in the app and generation doesn't use credits. Google bills your key directly." } },
+      { "@type": "Question", "name": "How do I cancel?", "acceptedAnswer": { "@type": "Answer", "text": "Plans are monthly. Cancel anytime from the billing settings in the app, which open the Stripe customer portal." } },
+      { "@type": "Question", "name": "Do I need a card to try it?", "acceptedAnswer": { "@type": "Answer", "text": "No. Sign up with an email link and you get 5 free credits." } }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="PhotoGen home">
+        <img src="/assets/logo.svg" width="34" height="34" alt="">
+        <span>PhotoGen</span>
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="/#how">How it works</a>
+        <a href="/#example">Examples</a>
+        <a href="/pricing/" aria-current="page">Pricing</a>
+      </nav>
+      <div class="header-actions">
+        <a class="header-signin" data-app="/login" href="https://photogen.ashbi.ca/login">Sign in</a>
+        <a class="btn btn--primary" data-app="/signup" href="https://photogen.ashbi.ca/signup">Try it free</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-head" aria-labelledby="page-title">
+      <div class="wrap">
+        <h1 id="page-title">Pay for the images you make.</h1>
+        <p class="lede">Every plan is monthly and includes a set number of credits. Simple images cost 1 credit, so a Pro plan covers about 500 everyday images a month. Start with 5 free credits; no card needed.</p>
+      </div>
+    </section>
+
+    <section class="section section--mist" aria-labelledby="plans-title" style="padding-top: clamp(2.5rem, 5vw, 4rem)">
+      <div class="wrap">
+        <h2 id="plans-title" class="visually-hidden">Plans</h2>
+        <!-- Plans and credits must match _BILLING_PLANS in scripts/creative-studio-web.py. -->
+        <div class="plans">
+          <article class="plan" aria-labelledby="plan-starter">
+            <h3 id="plan-starter">Starter</h3>
+            <p class="plan__price">$19<span> /month</span></p>
+            <p class="plan__credits">100 credits a month</p>
+            <ul>
+              <li>≈ 100 Balanced images</li>
+              <li>≈ 20 Ultra images</li>
+              <li>For a brand testing one product line</li>
+            </ul>
+            <a class="btn btn--ghost" data-app="/signup" href="https://photogen.ashbi.ca/signup">Start free, then pick Starter</a>
+          </article>
+          <article class="plan plan--pick" aria-labelledby="plan-pro">
+            <p class="plan__flag">Recommended</p>
+            <h3 id="plan-pro">Pro</h3>
+            <p class="plan__price">$49<span> /month</span></p>
+            <p class="plan__credits">500 credits a month</p>
+            <ul>
+              <li>≈ 500 Balanced images</li>
+              <li>≈ 100 Ultra images</li>
+              <li>Fresh listing, ad and social sets every week</li>
+            </ul>
+            <a class="btn btn--primary" data-app="/signup" href="https://photogen.ashbi.ca/signup">Start free, then pick Pro</a>
+          </article>
+          <article class="plan" aria-labelledby="plan-studio">
+            <h3 id="plan-studio">Studio</h3>
+            <p class="plan__price">$99<span> /month</span></p>
+            <p class="plan__credits">1,500 credits a month</p>
+            <ul>
+              <li>≈ 1,500 Balanced images</li>
+              <li>≈ 300 Ultra images</li>
+              <li>For several brands, or an agency running clients</li>
+            </ul>
+            <a class="btn btn--ghost" data-app="/signup" href="https://photogen.ashbi.ca/signup">Start free, then pick Studio</a>
+          </article>
+        </div>
+        <p class="plans-note fine">Monthly billing through Stripe. Cancel anytime from the Stripe customer portal in your billing settings. Credits reset each billing cycle and don't roll over.</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="credits-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="credits-title">Credits per image</h2>
+          <p class="lede">You choose the quality tier for each run. Higher tiers cost more to make, so they use more credits per image.</p>
+        </div>
+        <!--
+          Credit weights must match CREDIT_WEIGHT_BY_TIER in billing.py once PR #152
+          (fix/photogen-credit-metering) merges. Update this table and the ≈ figures above if they change.
+        -->
+        <div class="table-wrap">
+          <table>
+            <caption class="visually-hidden">Credits per image by quality tier, and images per plan</caption>
+            <thead>
+              <tr>
+                <th scope="col">Quality tier</th>
+                <th scope="col" class="num">Credits per image</th>
+                <th scope="col" class="num">Starter</th>
+                <th scope="col" class="num">Pro</th>
+                <th scope="col" class="num">Studio</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Fast</th><td class="num">1</td><td class="num">≈ 100</td><td class="num">≈ 500</td><td class="num">≈ 1,500</td></tr>
+              <tr><th scope="row">Balanced</th><td class="num">1</td><td class="num">≈ 100</td><td class="num">≈ 500</td><td class="num">≈ 1,500</td></tr>
+              <tr><th scope="row">Quality</th><td class="num">2</td><td class="num">≈ 50</td><td class="num">≈ 250</td><td class="num">≈ 750</td></tr>
+              <tr><th scope="row">Ultra</th><td class="num">5</td><td class="num">≈ 20</td><td class="num">≈ 100</td><td class="num">≈ 300</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="fine" style="margin-top: 1rem">Plan columns show images per month at that tier. Mixed runs land in between.</p>
+      </div>
+    </section>
+
+    <section class="section section--mist" aria-labelledby="byok-title">
+      <div class="wrap">
+        <div class="section-head" style="margin-bottom: 0">
+          <h2 id="byok-title">Bring your own Gemini key</h2>
+          <p class="lede">Add your own Google Gemini API key in the app and generation doesn't use credits. Google bills your key directly at its own rates. Your key is stored in your browser, not in PhotoGen's database.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="faq-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="faq-title">Pricing questions</h2>
+        </div>
+        <div class="faq">
+          <details>
+            <summary>What is a credit?</summary>
+            <p>Credits pay for generated images. Fast and Balanced images cost 1 credit each, Quality images 2 and Ultra images 5.</p>
+          </details>
+          <details>
+            <summary>Do unused credits roll over?</summary>
+            <p>No. Your balance resets to your plan's monthly credits at the start of each billing cycle.</p>
+          </details>
+          <details>
+            <summary>Can I generate without credits?</summary>
+            <p>Yes. Add your own Gemini API key in the app and generation doesn't use credits. Google bills your key directly.</p>
+          </details>
+          <details>
+            <summary>How do I cancel?</summary>
+            <p>Plans are monthly. Cancel anytime from the billing settings in the app, which open the Stripe customer portal.</p>
+          </details>
+          <details>
+            <summary>Do I need a card to try it?</summary>
+            <p>No. Sign up with an email link and you get 5 free credits.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="closer" aria-labelledby="closer-title">
+      <div class="wrap">
+        <div class="panel panel--coral">
+          <h2 id="closer-title">Try it on your own product.</h2>
+          <div class="closer__row">
+            <a class="go go--on-panel" data-app="/signup" href="https://photogen.ashbi.ca/signup" aria-label="Go: try it free">Go</a>
+            <p>5 free credits. No card required. Sign in with an email link.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="PhotoGen home"><img src="/assets/logo.svg" width="34" height="34" alt=""><span>PhotoGen</span></a>
+          <p>Studio-quality product photos for every channel, built from your real product and brand rules.</p>
+        </div>
+        <nav aria-labelledby="f-product">
+          <h2 id="f-product">Product</h2>
+          <ul>
+            <li><a href="/#how">How it works</a></li>
+            <li><a href="/pricing/">Pricing</a></li>
+            <li><a data-app="/app" href="https://photogen.ashbi.ca/app">Prompt Studio</a></li>
+          </ul>
+        </nav>
+        <nav aria-labelledby="f-compare">
+          <h2 id="f-compare">Compare</h2>
+          <ul>
+            <li><a href="/compare/photoroom/">PhotoGen vs Photoroom</a></li>
+          </ul>
+        </nav>
+        <nav aria-labelledby="f-company">
+          <h2 id="f-company">Company</h2>
+          <ul>
+            <li><a href="https://ashbi.ca">Ashbi Design</a></li>
+            <li><a href="mailto:hello@ashbi.ca">Contact</a></li>
+          </ul>
+        </nav>
+        <nav aria-labelledby="f-legal">
+          <h2 id="f-legal">Legal</h2>
+          <ul>
+            <li><a data-app="/privacy" href="https://photogen.ashbi.ca/privacy">Privacy</a></li>
+            <li><a data-app="/terms" href="https://photogen.ashbi.ca/terms">Terms</a></li>
+          </ul>
+        </nav>
+      </div>
+      <p class="footer-base">© 2026 Ashbi Design, Toronto.</p>
+    </div>
+  </footer>
+</body>
+</html>
