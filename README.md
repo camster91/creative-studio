@@ -1,6 +1,6 @@
 # Creative Studio (Photogen)
 
-AI product photography for CPG and DTC brands. Your exact prompt goes straight to the image model, with no hidden "creative director" rewriting.
+AI product photography for CPG and DTC brands. In the CLI's `direct` mode your exact prompt goes straight to the image model, with no hidden "creative director" rewriting.
 
 ## What it is
 
@@ -9,7 +9,11 @@ Creative Studio is two tools that share one generation core:
 - **Web app (Photogen):** a Flask app where marketing teams upload a product photo, pick a scene, and generate on-brand product shots. A guided Campaign Factory turns brand and SKU details into repeatable, checked production runs.
 - **CLI:** a command-line tool for power users that runs the same Google Gemini image pipeline from the terminal, including a variations then refine workflow and Figma-aware generation.
 
-The goal is predictable product imagery: the real packaging is composited into AI-generated scenes, so the product itself is never hallucinated.
+The goal is predictable product imagery. With compositing, the real packaging is placed on top of an AI-generated scene instead of being redrawn. Other modes send your photo to an image model, which can change the product, so check every label before publishing.
+
+## Status
+
+Version 4.6.0. The web app and CLI are built and have tests. No workflow in this repo deploys the app: the VPS that ran it is shut down, and the `main` workflow only builds, pushes and smoke-tests a Docker image. `RUNBOOK.md` and the backup and uptime workflows describe that old host, and those two workflows are switched off. Billing stays off until Stripe is configured, and live Stripe keys are refused unless explicitly allowed.
 
 ## Key features
 
@@ -17,6 +21,7 @@ The goal is predictable product imagery: the real packaging is composited into A
 
 - Text-to-image and image-to-image generation with Google Gemini, using your own API key (BYOK) or an optional shared key
 - Product compositing: upload transparent packaging and the AI builds only the scene around it
+- Product photoshoots (`/shoot`) through Higgsfield or Gemini: see [below](#product-photoshoots-shoot)
 - Scene presets (In-hand, Studio, Action, Lifestyle, With props) and six aspect ratios
 - Four quality tiers (fast, balanced, quality, ultra) with per-image cost tracking
 - Batch generation with background jobs and streaming partial results
@@ -24,7 +29,7 @@ The goal is predictable product imagery: the real packaging is composited into A
 - Pin annotations, refine, variations, and a multi-turn chat mode
 - Advisory quality checks (QC) and multi-format export bundles (ZIP)
 - Campaign Factory: Brand Passport, SKU Product Truth, deterministic readiness checks, and channel export bundles
-- Accounts with magic-link login, Stripe billing, Figma OAuth for design context
+- Accounts with magic-link login (needs SMTP), optional Stripe billing, optional Figma OAuth for design context
 - Server-side daily spend limit, rate limiting, upload validation, and owner-scoped data
 - Privacy-safe provider ledger (no prompts, images, or keys stored) for cost, latency, and outcome metrics
 
@@ -43,18 +48,18 @@ The goal is predictable product imagery: the real packaging is composited into A
 | `export` | Crop one image into Amazon, Shopify, Meta, Pinterest, web hero, and print formats |
 | `review` | Browse output folders |
 
-Most generation commands accept `--tier`, `--aspect-ratio`, and `--smart` (prompt enhancement with a reasoning model). Prompt recipes live in `recipes/`.
+Generation commands accept `--aspect-ratio`. `direct`, `figma`, `variations` and `composite` accept `--tier`. `direct` and `figma` accept `--smart` (prompt enhancement with a reasoning model). Prompt recipes live in `recipes/`.
 
 ## Tech stack
 
 - **Backend:** Python 3.10+, Flask, gunicorn
-- **AI:** Google Gemini via `google-genai`
+- **AI:** Google Gemini via `google-genai`; optional Higgsfield API for photoshoots
 - **Images:** Pillow
 - **Data:** SQLite plus JSON on persistent volumes
 - **Payments:** Stripe
 - **Frontend:** server-rendered HTML templates with vanilla JavaScript and CSS
 - **Tooling:** uv, pytest, Playwright (browser release gate with axe-core), Docker
-- **CI:** GitHub Actions (pytest, JS syntax check, Playwright, CodeQL)
+- **CI:** GitHub Actions (pytest, JS syntax check, Playwright). A CodeQL workflow exists but is switched off
 
 ## Getting started
 
@@ -66,22 +71,26 @@ cd creative-studio
 make install            # creates .venv and installs the app with test deps
 ```
 
-Configuration is read from environment variables. Copy `.env.example` as a reference for the available settings (never commit real keys).
+The `make` commands and scripts expect macOS, Linux or WSL.
+
+Configuration is read from environment variables; the app does not load a `.env` file itself. See `.env.example` for the main settings and [docs/PRODUCTION.md](docs/PRODUCTION.md) for sign-in email, limits and secrets. Never commit real keys. Stripe uses `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` and `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_STUDIO`; `PHOTOGEN_ALLOW_LIVE_STRIPE=1` allows live keys.
 
 ### Run the web app
 
 ```bash
-export GEMINI_API_KEY="your-key"
+export CREATIVE_DATA_DIR="$PWD/data" CREATIVE_OUTPUT_DIR="$PWD/outputs"
 .venv/bin/python scripts/creative-studio-web.py --port 5173
 ```
 
-Then open http://localhost:5173. The editor is at `/app` and the Campaign Factory at `/campaigns`.
+Then open http://localhost:5173. The editor is at `/app`, the Campaign Factory at `/campaigns` and photoshoots at `/shoot`. Paste your Gemini key in the editor sidebar. To use a shared server key instead, set both `GEMINI_API_KEY` and `CREATIVE_ALLOW_SERVER_FALLBACK=true`.
 
 Or run it in Docker:
 
 ```bash
 make build
-docker run -p 5173:5173 -e GEMINI_API_KEY="your-key" creative-studio:latest
+docker run -p 5173:5173 \
+  -v creative-data:/app/data -v creative-outputs:/app/outputs \
+  creative-studio:latest
 ```
 
 ### Run the CLI
@@ -102,8 +111,10 @@ make test               # pytest suite in tests/
 make test-js            # syntax check for static/app.js
 npm ci
 npx playwright install chromium
-npm test                # Playwright browser release gate (starts the app itself)
+CI=1 npm test           # Playwright browser release gate (starts the app itself)
 ```
+
+Without `CI=1`, Playwright looks for Google Chrome at its macOS path. The browser tests need the `.venv` from `make install`.
 
 ## Project structure
 
@@ -114,17 +125,14 @@ templates/             HTML pages (landing, editor, campaigns, billing, auth)
 static/                Frontend JavaScript and CSS
 recipes/               Prompt recipe templates
 content/blog/          Blog posts served by the app
+marketing-site/        Separate static marketing site
 tests/                 pytest suite and Playwright browser tests
-docs/                  Architecture, QC, and release notes
+docs/                  Architecture, production, QC, and release notes
 ```
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/QC.md](docs/QC.md), and [SECURITY.md](SECURITY.md).
 
-## License
-
-MIT. See [LICENSE](LICENSE).
-
-### Product photoshoots (`/shoot`)
+## Product photoshoots (`/shoot`)
 
 Upload a PNG, JPG or WebP (up to 16 MB), choose a vibe and press Go. The pack
 contains six channel formats by default; Customise changes quality, shots and
@@ -155,8 +163,12 @@ no CSP. No external font origins are needed.
 Refresh the mocked screenshot set with:
 
 ```sh
-CI=1 SHOOT_SCREENSHOTS=1 SHOOT_SCREENSHOT_DIR=/workspace/photogen-rebuild/screenshots npx playwright test tests/browser/shoot.spec.js
+CI=1 SHOOT_SCREENSHOTS=1 SHOOT_SCREENSHOT_DIR=/tmp/photogen-screenshots npx playwright test tests/browser/shoot.spec.js
 ```
 
 The run writes the same PNGs to `docs/screenshots/` and the requested directory.
 Sample product photos are illustrative brand assets, not real customer outputs.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
